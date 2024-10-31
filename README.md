@@ -1,5 +1,3 @@
-# HDR to SDR Converter
-
 This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The application allows you to select an input video file, specify an output file name, adjust the gamma value, and monitor the conversion progress.
 
 ## Features
@@ -14,11 +12,12 @@ This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The 
 
 - Python 3.x
 - FFmpeg
+
 ## Installation
 
 ### Normal Installation
 
-1. Download the latest release from the [releases page](<releases-url>).
+1. Download the latest release from the [releases page](https://github.com/<your-username>/<your-repo>/releases).
 2. Extract the downloaded zip file.
 3. Run the `hdr_to_sdr_converter.exe` file.
 
@@ -26,7 +25,7 @@ This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The 
 
 1. Clone the repository:
     ```sh
-    git clone <repository-url>
+    git clone https://github.com/<your-username>/<your-repo>.git
     cd <repository-directory>
     ```
 
@@ -36,6 +35,7 @@ This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The 
     ```
 
 3. Ensure FFmpeg is installed and available in your system's PATH.
+
 ### Development Usage
 
 1. Run the application:
@@ -47,4 +47,4 @@ This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The 
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

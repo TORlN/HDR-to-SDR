@@ -14,7 +14,28 @@ This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The 
 
 - Python 3.x
 - FFmpeg
+## Installation
 
+### Normal Installation
+
+1. Download the latest release from the [releases page](<releases-url>).
+2. Extract the downloaded zip file.
+3. Run the `hdr_to_sdr_converter.exe` file.
+
+### Development Installation
+
+1. Clone the repository:
+    ```sh
+    git clone <repository-url>
+    cd <repository-directory>
+    ```
+
+2. Install the required Python packages:
+    ```sh
+    pip install -r requirements.txt
+    ```
+
+3. Ensure FFmpeg is installed and available in your system's PATH.
 ## Installation
 
 1. Clone the repository:

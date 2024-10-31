@@ -36,7 +36,7 @@ This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The 
     ```
 
 3. Ensure FFmpeg is installed and available in your system's PATH.
-## Usage
+## Development Usage
 
 1. Run the application:
     ```sh

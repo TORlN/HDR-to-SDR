@@ -45,6 +45,22 @@ This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The 
 
 2. Use the GUI to select an input file, specify the output file name, adjust the gamma value, and start the conversion.
 
+### Compiling the Executable
+
+If you want to compile the executable yourself, you can use PyInstaller. Follow these steps:
+
+1. Install PyInstaller:
+    ```sh
+    pip install pyinstaller
+    ```
+
+2. Compile the executable:
+    ```sh
+    pyinstaller --onefile --noconsole hdr_to_sdr_converter.py
+    ```
+
+3. The compiled executable will be located in the `dist` directory.
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

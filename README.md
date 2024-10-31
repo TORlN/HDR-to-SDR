@@ -56,7 +56,7 @@ If you want to compile the executable yourself, you can use PyInstaller. Follow 
 
 2. Compile the executable:
     ```sh
-    pyinstaller --onefile --noconsole hdr_to_sdr_converter.py
+    pyinstaller --onefile --noconsole main.py
     ```
 
 3. The compiled executable will be located in the `dist` directory.

@@ -6,6 +6,7 @@ import subprocess
 import re
 import threading
 import webbrowser
+import multiprocessing
 
 def get_video_properties(input_file):
     """Use ffprobe to get relevant properties of the input file."""
@@ -46,19 +47,24 @@ def convert_hdr_to_sdr(input_file, output_file):
         if not overwrite:
             return  # Stop the process if user selects "No"
 
+    # Set up multi-core processing
+    num_cores = multiprocessing.cpu_count()
+    
     # Disable buttons, gamma slider, and update "Start Conversion" button text
     browse_button.config(state="disabled")
     start_button.config(state="disabled", text="Converting...")
     gamma_slider.config(state="disabled")
     
-    # Construct FFmpeg command with properties to match the original file
+    # Construct FFmpeg command with multi-threaded CPU processing
     cmd = [
         'ffmpeg', '-i', input_file,
         '-vf', f'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap=reinhard,eq=gamma={gamma_value}',
-        '-vcodec', properties['codec_name'],
+        '-c:v', properties['codec_name'],
         '-b:v', str(properties['bit_rate']),
         '-s', f"{properties['width']}x{properties['height']}",
         '-r', str(properties['frame_rate']),
+        '-threads', str(num_cores),  # Use all available CPU cores
+        '-preset', 'faster',         # Optimize speed/quality balance
         '-acodec', properties['audio_codec'],
         '-b:a', str(properties['audio_bit_rate']),
         output_file,
@@ -66,14 +72,16 @@ def convert_hdr_to_sdr(input_file, output_file):
     ]
     
     process = subprocess.Popen(
-        cmd, stderr=subprocess.PIPE, universal_newlines=True,
+        cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, universal_newlines=True,
         creationflags=subprocess.CREATE_NO_WINDOW  # Prevent terminal window from opening (Windows-only)
     )
     
     progress_pattern = re.compile(r'time=(\d+:\d+:\d+\.\d+)')
 
     def update_progress():
+        error_message = ""
         for line in process.stderr:
+            error_message += line
             # Extract current time from FFmpeg's output
             match = progress_pattern.search(line)
             if match:
@@ -89,7 +97,7 @@ def convert_hdr_to_sdr(input_file, output_file):
             if open_after_conversion.get():  # Check if the user wants to open the file
                 webbrowser.open(output_file)  # Open file with the default media player
         else:
-            messagebox.showerror("Error", f"Conversion failed with code {process.returncode}")
+            messagebox.showerror("Error", f"Conversion failed with code {process.returncode}\n{error_message}")
 
         # Re-enable buttons, gamma slider, and reset "Start Conversion" button text
         browse_button.config(state="normal")

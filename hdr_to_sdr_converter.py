@@ -8,26 +8,34 @@ import threading
 import webbrowser
 
 def get_video_properties(input_file):
-    """Use ffprobe to get the video bitrate and duration of the input file."""
+    """Use ffprobe to get relevant properties of the input file."""
     try:
         probe = ffmpeg.probe(input_file)
         video_stream = next(stream for stream in probe['streams'] if stream['codec_type'] == 'video')
+        audio_stream = next((stream for stream in probe['streams'] if stream['codec_type'] == 'audio'), None)
         
-        # Extract duration and bitrate
-        duration = float(video_stream['duration'])
-        bitrate = int(video_stream.get('bit_rate', 5000000))  # Default to 5 Mbps if not available
+        # Extract relevant properties
+        properties = {
+            "width": int(video_stream['width']),
+            "height": int(video_stream['height']),
+            "bit_rate": int(video_stream.get('bit_rate', 5000000)),  # Default to 5 Mbps if not available
+            "codec_name": video_stream['codec_name'],
+            "frame_rate": eval(video_stream['r_frame_rate']),
+            "audio_codec": audio_stream['codec_name'] if audio_stream else 'aac',
+            "audio_bit_rate": int(audio_stream['bit_rate']) if audio_stream and 'bit_rate' in audio_stream else 128000,
+            "duration": float(video_stream['duration'])
+        }
         
-        return duration, bitrate
+        return properties
     except Exception as e:
         messagebox.showerror("Error", f"Failed to get video properties: {e}")
-        return None, None
+        return None
 
 def convert_hdr_to_sdr(input_file, output_file):
-    duration, bitrate = get_video_properties(input_file)
+    properties = get_video_properties(input_file)
     
-    if duration is None or bitrate is None:
-        messagebox.showerror("Error", "Failed to retrieve video properties.")
-        return
+    if properties is None:
+        return  # Stop if unable to retrieve properties
     
     # Get the selected gamma value from the slider
     gamma_value = gamma_var.get()
@@ -43,14 +51,16 @@ def convert_hdr_to_sdr(input_file, output_file):
     start_button.config(state="disabled", text="Converting...")
     gamma_slider.config(state="disabled")
     
-    # Run FFmpeg as a subprocess to capture its progress
+    # Construct FFmpeg command with properties to match the original file
     cmd = [
         'ffmpeg', '-i', input_file,
         '-vf', f'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap=reinhard,eq=gamma={gamma_value}',
-        '-vcodec', 'h264_nvenc',
-        '-b:v', str(bitrate),
-        '-preset', 'slow',
-        '-acodec', 'aac',
+        '-vcodec', properties['codec_name'],
+        '-b:v', str(properties['bit_rate']),
+        '-s', f"{properties['width']}x{properties['height']}",
+        '-r', str(properties['frame_rate']),
+        '-acodec', properties['audio_codec'],
+        '-b:a', str(properties['audio_bit_rate']),
         output_file,
         '-y'  # Overwrite output file if it exists
     ]
@@ -70,7 +80,7 @@ def convert_hdr_to_sdr(input_file, output_file):
                 current_time = match.group(1)
                 hours, minutes, seconds = map(float, current_time.split(':'))
                 elapsed = hours * 3600 + minutes * 60 + seconds
-                progress_var.set((elapsed / duration) * 100)
+                progress_var.set((elapsed / properties['duration']) * 100)
                 progress_bar.update_idletasks()
 
         process.wait()  # Wait for the process to finish

@@ -1,3 +1,4 @@
+import os
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from conversion import start_conversion
@@ -35,7 +36,7 @@ def create_main_window(root):
     open_after_conversion_check = tk.Checkbutton(root, text="Open file after conversion", variable=open_after_conversion)
     open_after_conversion_check.pack(pady=5)
 
-    start_button = tk.Button(root, text="Start Conversion", command=lambda: start_conversion(input_path_var, output_path_var, gamma_var, progress_var, open_after_conversion, browse_button, start_button, gamma_slider))
+    start_button = tk.Button(root, text="Start Conversion", command=lambda: start_conversion(input_path_var, output_path_var, gamma_var, progress_var, open_after_conversion, browse_button, start_button, gamma_slider, root))
     start_button.pack(pady=20)
 
     root.geometry("400x450")

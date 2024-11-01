@@ -3,10 +3,11 @@ import subprocess
 import threading
 import webbrowser
 import multiprocessing
+import re
 from tkinter import messagebox
 from utils import get_video_properties
 
-def start_conversion(input_path_var, output_path_var, gamma_var, progress_var, open_after_conversion, browse_button, start_button, gamma_slider):
+def start_conversion(input_path_var, output_path_var, gamma_var, progress_var, open_after_conversion, browse_button, start_button, gamma_slider, root):
     input_file = input_path_var.get()
     output_file = output_path_var.get()
 
@@ -46,6 +47,8 @@ def start_conversion(input_path_var, output_path_var, gamma_var, progress_var, o
         '-y'
     ]
 
+    print(f"Running command: {' '.join(cmd)}")  # Debugging information
+
     process = subprocess.Popen(
         cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, universal_newlines=True,
         creationflags=subprocess.CREATE_NO_WINDOW
@@ -56,6 +59,7 @@ def start_conversion(input_path_var, output_path_var, gamma_var, progress_var, o
     def update_progress():
         error_message = ""
         for line in process.stderr:
+            print(line)  # Debugging information
             error_message += line
             match = progress_pattern.search(line)
             if match:
@@ -63,7 +67,7 @@ def start_conversion(input_path_var, output_path_var, gamma_var, progress_var, o
                 hours, minutes, seconds = map(float, current_time.split(':'))
                 elapsed = hours * 3600 + minutes * 60 + seconds
                 progress_var.set((elapsed / properties['duration']) * 100)
-                progress_bar.update_idletasks()
+                root.update_idletasks()  # Update the progress bar in the main thread
         process.wait()
         if process.returncode == 0:
             messagebox.showinfo("Success", f"Conversion complete! Output saved to: {output_file}")

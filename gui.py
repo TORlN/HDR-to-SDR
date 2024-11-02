@@ -8,25 +8,11 @@ from utils import extract_frame_with_conversion, extract_frame
 from PIL import Image, ImageTk
 
 DEFAULT_MIN_SIZE = (550, 150)
-
-process = None  # Add this global variable to track the conversion process
+process = None  # Global variable to track the conversion process
 
 def select_file(input_path_var, output_path_var, gamma_var, original_image_label, converted_image_label, display_image_var, error_label, original_title_label, converted_title_label, button_frame, image_frame, progress_bar, control_frame, convert_button, open_after_conversion_checkbutton, action_frame):
     """
     Opens a file dialog for the user to select a video file and sets the input and output path variables.
-    Args:
-        input_path_var (tkinter.StringVar): A Tkinter StringVar to store the selected input file path.
-        output_path_var (tk.StringVar): A Tkinter StringVar to store the generated output file path.
-        gamma_var (tk.DoubleVar): A Tkinter DoubleVar to store the gamma correction value.
-        original_image_label (tk.Label): A Tkinter Label to display the original frame.
-        converted_image_label (tk.Label): A Tkinter Label to display the converted frame.
-        display_image_var (tk.BooleanVar): A Tkinter BooleanVar to store the state of the display image checkbox.
-        error_label (tk.Label): A Tkinter Label to display error messages.
-        button_frame (ttk.Frame): The frame containing the convert button and open file checkbox.
-        image_frame (ttk.Frame): The frame containing the image previews.
-        progress_bar (ttk.Progressbar): The progress bar widget.
-        control_frame (ttk.Frame): The control frame containing the input and output widgets.
-        action_frame (ttk.Frame): The frame containing the convert button, cancel button, and open file after conversion checkbox.
     """
     file_path = filedialog.askopenfilename(filetypes=[("Video files", "*.mp4;*.mkv;*.mov")])
     if file_path:
@@ -38,64 +24,92 @@ def select_file(input_path_var, output_path_var, gamma_var, original_image_label
         update_frame_preview(input_path_var, gamma_var, original_image_label, converted_image_label, display_image_var, error_label, original_title_label, converted_title_label, button_frame, progress_bar, control_frame, convert_button, open_after_conversion_checkbutton)
 
 def update_frame_preview(input_path_var, gamma_var, original_image_label, converted_image_label, display_image_var, error_label, original_title_label, converted_title_label, button_frame, progress_bar, control_frame, convert_button, open_after_conversion_checkbutton):
+    """
+    Updates the frame preview images based on the selected video and gamma value.
+    """
+    global cancel_button  # Ensure cancel_button is defined
     if display_image_var.get() and input_path_var.get():
         try:
             video_path = input_path_var.get()
             if not video_path:
                 raise ValueError("No video path provided.")
 
-            # Extract the original frame from the video
-            original_image = extract_frame(video_path)
-            original_image_resized = original_image.resize((960, 540), Image.Resampling.LANCZOS)  # Resize to 540p
-            original_photo = ImageTk.PhotoImage(original_image_resized)
-
-            # Extract the converted frame from the video
-            converted_image = extract_frame_with_conversion(video_path, gamma_var.get())
-            converted_image_resized = converted_image.resize((960, 540), Image.Resampling.LANCZOS)  # Resize to 540p
-            converted_photo = ImageTk.PhotoImage(converted_image_resized)
-
-            # Update the image labels
-            original_image_label.config(image=original_photo)
-            original_image_label.image = original_photo
-            converted_image_label.config(image=converted_photo)
-            converted_image_label.image = converted_photo
+            # Extract and display the original and converted frames
+            display_frames(video_path, gamma_var, original_image_label, converted_image_label)
             error_label.config(text="")
             original_title_label.grid()
             converted_title_label.grid()
-            original_image_label.master.master.geometry("")  # Reset window size to fit images
-            original_image_label.master.master.update_idletasks()
-            new_width = original_image_label.master.master.winfo_width()
-            new_height = original_image_label.master.master.winfo_height()
-            original_image_label.master.master.minsize(new_width, new_height)
+            adjust_window_size(original_image_label)
 
             # Move buttons and progress bar to the image frame
-            button_frame.grid(row=2, column=0, columnspan=3, pady=(5, 0), sticky=tk.N)
-            progress_bar.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E))
+            arrange_widgets(button_frame, progress_bar, open_after_conversion_checkbutton, convert_button, cancel_button, image_frame=True)
         except Exception as e:
-            error_label.config(text=f"Error displaying image: {e}")
-            original_image_label.config(image='')
-            converted_image_label.config(image='')
-            original_title_label.grid_remove()
-            converted_title_label.grid_remove()
-            original_image_label.master.master.minsize(*DEFAULT_MIN_SIZE)  # Revert to default minimum size
+            handle_preview_error(e, error_label, original_image_label, converted_image_label, original_title_label, converted_title_label)
     else:
-        original_image_label.config(image='')
-        converted_image_label.config(image='')
-        original_title_label.grid_remove()
-        converted_title_label.grid_remove()
-        original_image_label.master.master.minsize(*DEFAULT_MIN_SIZE)  # Revert to default minimum size
+        clear_preview(original_image_label, converted_image_label, original_title_label, converted_title_label)
+        arrange_widgets(button_frame, progress_bar, open_after_conversion_checkbutton, convert_button, cancel_button, image_frame=False)
 
-        # Move buttons and progress bar to the control frame
+def display_frames(video_path, gamma_var, original_image_label, converted_image_label):
+    """
+    Extracts and displays the original and converted frames from the video.
+    """
+    original_image = extract_frame(video_path)
+    original_image_resized = original_image.resize((960, 540), Image.Resampling.LANCZOS)  # Resize to 540p
+    original_photo = ImageTk.PhotoImage(original_image_resized)
+
+    converted_image = extract_frame_with_conversion(video_path, gamma_var.get())
+    converted_image_resized = converted_image.resize((960, 540), Image.Resampling.LANCZOS)  # Resize to 540p
+    converted_photo = ImageTk.PhotoImage(converted_image_resized)
+
+    original_image_label.config(image=original_photo)
+    original_image_label.image = original_photo
+    converted_image_label.config(image=converted_photo)
+    converted_image_label.image = converted_photo
+
+def adjust_window_size(original_image_label):
+    """
+    Adjusts the window size to fit the displayed images.
+    """
+    original_image_label.master.master.geometry("")  # Reset window size to fit images
+    original_image_label.master.master.update_idletasks()
+    new_width = original_image_label.master.master.winfo_width()
+    new_height = original_image_label.master.master.winfo_height()
+    original_image_label.master.master.minsize(new_width, new_height)
+
+def arrange_widgets(button_frame, progress_bar, open_after_conversion_checkbutton, convert_button, cancel_button, image_frame):
+    """
+    Arranges the widgets in the appropriate frames.
+    """
+    if image_frame:
+        button_frame.grid(row=2, column=0, columnspan=3, pady=(5, 0), sticky=tk.N)
+        progress_bar.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E))
+    else:
         button_frame.grid(row=5, column=0, columnspan=3, pady=(5, 0), sticky=tk.N)
         progress_bar.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E))
-        convert_button.grid(row=1, column=1, columnspan=1, sticky=tk.N)  # Center convert button
-        open_after_conversion_checkbutton.grid(row=0, column=0, columnspan=3, pady=(0, 5), sticky=tk.N)  # Center open after conversion checkbox
+    open_after_conversion_checkbutton.grid(row=1, column=0, padx=(5, 5), sticky=tk.N)
+    convert_button.grid(row=1, column=1, padx=(5, 5), pady=(0, 10), sticky=tk.N)
+    cancel_button.grid_remove()  # Ensure cancel button is hidden
+
+def handle_preview_error(e, error_label, original_image_label, converted_image_label, original_title_label, converted_title_label):
+    """
+    Handles errors that occur during frame preview update.
+    """
+    error_label.config(text=f"Error displaying image: {e}")
+    clear_preview(original_image_label, converted_image_label, original_title_label, converted_title_label)
+
+def clear_preview(original_image_label, converted_image_label, original_title_label, converted_title_label):
+    """
+    Clears the frame preview images and resets the window size.
+    """
+    original_image_label.config(image='')
+    converted_image_label.config(image='')
+    original_title_label.grid_remove()
+    converted_title_label.grid_remove()
+    original_image_label.master.master.minsize(*DEFAULT_MIN_SIZE)  # Revert to default minimum size
 
 def create_main_window(root):
     """
     Creates the main window for the HDR to SDR Converter application.
-    Parameters:
-    root (tk.Tk): The root window of the Tkinter application.
     """
     root.title("HDR to SDR Converter")
     sv_ttk.set_theme("dark")
@@ -109,14 +123,34 @@ def create_main_window(root):
     open_after_conversion_var = tk.BooleanVar()
     display_image_var = tk.BooleanVar(value=True)
     
-    # Main Frame for Input, Output, and Controls
+    control_frame, image_frame, action_frame, button_frame, progress_bar, original_image_label, converted_image_label, original_title_label, converted_title_label, error_label, open_after_conversion_checkbutton, convert_button, cancel_button = create_widgets(root, input_path_var, output_path_var, gamma_var, progress_var, open_after_conversion_var, display_image_var)
+    
+    interactable_elements = [
+        control_frame, image_frame, action_frame, button_frame, progress_bar, original_image_label, converted_image_label, original_title_label, converted_title_label, error_label, open_after_conversion_checkbutton, convert_button, cancel_button
+    ]
+    
+    configure_grid(control_frame, image_frame, root)
+    
+    # Initial Frame Preview Update
+    if input_path_var.get():
+        update_frame_preview(
+            input_path_var, gamma_var, original_image_label,
+            converted_image_label, display_image_var, error_label,
+            original_title_label, converted_title_label,
+            button_frame, progress_bar, control_frame, convert_button, open_after_conversion_checkbutton
+        )
+
+def create_widgets(root, input_path_var, output_path_var, gamma_var, progress_var, open_after_conversion_var, display_image_var):
+    """
+    Creates and arranges the widgets in the main window.
+    """
     control_frame = ttk.Frame(root, padding="10")
     control_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N))
     
     # Input File Widgets
     ttk.Label(control_frame, text="Input File:").grid(row=0, column=0, sticky=tk.W)
     input_entry = ttk.Entry(control_frame, textvariable=input_path_var, width=40)
-    input_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 10))  # Adjusted padding
+    input_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 10))
     browse_button = ttk.Button(
         control_frame, 
         text="Browse", 
@@ -126,15 +160,15 @@ def create_main_window(root):
             button_frame, image_frame, progress_bar, control_frame, convert_button, open_after_conversion_checkbutton, action_frame
         )
     )
-    browse_button.grid(row=0, column=2, sticky=tk.W, padx=(5, 0))  # Added padding
+    browse_button.grid(row=0, column=2, sticky=tk.W, padx=(5, 0))
     
     # Output File Widgets
     ttk.Label(control_frame, text="Output File:").grid(row=1, column=0, sticky=tk.W)
-    output_entry = ttk.Entry(control_frame, textvariable=output_path_var, width=40)  # Set width to 40
-    output_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=(10, 10))  # Adjusted padding
+    output_entry = ttk.Entry(control_frame, textvariable=output_path_var, width=40)
+    output_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=(10, 10))
     
     # Gamma Adjustment Widgets
-    ttk.Label(control_frame, text="Gamma:").grid(row=2, column=0, sticky=tk.W)  # Renamed to "Gamma"
+    ttk.Label(control_frame, text="Gamma:").grid(row=2, column=0, sticky=tk.W)
     gamma_slider = ttk.Scale(
         control_frame, 
         variable=gamma_var, 
@@ -148,9 +182,9 @@ def create_main_window(root):
             button_frame, progress_bar, control_frame, convert_button, open_after_conversion_checkbutton
         )
     )
-    gamma_slider.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=(10, 10))  # Adjusted padding
+    gamma_slider.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=(10, 10))
     gamma_entry = ttk.Entry(control_frame, textvariable=gamma_var, width=5)
-    gamma_entry.grid(row=2, column=2, sticky=tk.W, padx=(5, 0))  # Added padding to align with browse button
+    gamma_entry.grid(row=2, column=2, sticky=tk.W, padx=(5, 0))
     gamma_entry.bind(
         '<Return>', 
         lambda event: update_frame_preview(
@@ -171,7 +205,7 @@ def create_main_window(root):
             button_frame, progress_bar, control_frame, convert_button, open_after_conversion_checkbutton
         )
     )
-    display_image_checkbutton.grid(row=3, column=0, columnspan=3, sticky=tk.W)
+    display_image_checkbutton.grid(row=3, column=0, columnspan=3, pady=(0, 0), sticky=tk.W)
     
     # Image Frame for Displaying Images
     image_frame = ttk.Frame(root, padding="10")
@@ -212,7 +246,7 @@ def create_main_window(root):
         text="Open output file after conversion",
         variable=open_after_conversion_var
     )
-    open_after_conversion_checkbutton.grid(row=0, column=0, pady=(0, 5), sticky=tk.W)  # Move to the left
+    open_after_conversion_checkbutton.grid(row=1, column=0, padx=(5, 5), sticky=tk.N)
     
     convert_button = ttk.Button(
         action_frame, 
@@ -222,14 +256,15 @@ def create_main_window(root):
             progress_var, open_after_conversion_var.get(), interactable_elements, root, cancel_button
         )
     )
-    convert_button.grid(row=0, column=1, padx=(5, 5), sticky=tk.N)  # Center convert button
+    convert_button.grid(row=1, column=1, padx=(5, 5), pady=(0, 10), sticky=tk.N)
     
+    global cancel_button  # Ensure cancel_button is defined
     cancel_button = ttk.Button(
         action_frame, 
         text="Cancel",
         command=lambda: cancel_conversion(process, interactable_elements, cancel_button)
     )
-    cancel_button.grid(row=0, column=2, padx=(5, 5), sticky=tk.N)  # Adjusted padding for centering
+    cancel_button.grid(row=1, column=2, padx=(5, 5), pady=(0, 10), sticky=tk.N)
     cancel_button.grid_remove()  # Hide cancel button initially
     
     progress_bar = ttk.Progressbar(image_frame, variable=progress_var, maximum=100)
@@ -239,14 +274,12 @@ def create_main_window(root):
         browse_button, convert_button, gamma_slider, open_after_conversion_checkbutton, display_image_checkbutton, input_entry, output_entry, gamma_entry
     ]
     
-    convert_button.config(
-        command=lambda: convert_video(
-            input_path_var.get(), output_path_var.get(), gamma_var.get(),
-            progress_var, open_after_conversion_var.get(), interactable_elements, root, cancel_button
-        )
-    )
-    
-    # Configure column and row weights
+    return control_frame, image_frame, action_frame, button_frame, progress_bar, original_image_label, converted_image_label, original_title_label, converted_title_label, error_label, open_after_conversion_checkbutton, convert_button, cancel_button
+
+def configure_grid(control_frame, image_frame, root):
+    """
+    Configures the grid layout for the main window and frames.
+    """
     control_frame.columnconfigure(0, weight=1)
     control_frame.columnconfigure(1, weight=1)
     control_frame.columnconfigure(2, weight=1)
@@ -265,21 +298,14 @@ def create_main_window(root):
     image_frame.rowconfigure(2, weight=0)
     image_frame.rowconfigure(3, weight=0)
     
-    # Adjust root grid configuration to remove excess space
     root.grid_rowconfigure(0, weight=0)
     root.grid_rowconfigure(1, weight=1)
     root.grid_columnconfigure(0, weight=1)
-    
-    # Initial Frame Preview Update
-    if input_path_var.get():
-        update_frame_preview(
-            input_path_var, gamma_var, original_image_label,
-            converted_image_label, display_image_var, error_label,
-            original_title_label, converted_title_label,
-            button_frame, progress_bar, control_frame, convert_button, open_after_conversion_checkbutton
-        )
 
 def validate_gamma_entry(value, gamma_var, input_path_var, original_image_label, converted_image_label, display_image_var, error_label, original_title_label, converted_title_label, button_frame, progress_bar, control_frame, convert_button, open_after_conversion_checkbutton):
+    """
+    Validates the gamma entry value and updates the frame preview.
+    """
     try:
         value = float(value)
         gamma_var.set(value)
@@ -293,15 +319,6 @@ def validate_gamma_entry(value, gamma_var, input_path_var, original_image_label,
 def convert_video(input_path, output_path, gamma, progress_var, open_after_conversion, interactable_elements, root, cancel_button):
     """
     Converts the video from HDR to SDR.
-    Args:
-        input_path (str): The path to the input video file.
-        output_path (str): The path to save the converted video file.
-        gamma (float): The gamma correction value.
-        progress_var (tk.DoubleVar): A Tkinter DoubleVar to update the progress bar.
-        open_after_conversion (bool): Whether to open the output file after conversion.
-        interactable_elements (list): List of interactable elements to be disabled during conversion.
-        root (tk.Tk): The root Tkinter window.
-        cancel_button (ttk.Button): The cancel button widget.
     """
     global process  # Ensure process is global to allow cancellation
     try:
@@ -318,10 +335,6 @@ def convert_video(input_path, output_path, gamma, progress_var, open_after_conve
 def cancel_conversion(process, interactable_elements, cancel_button):
     """
     Cancels the ongoing video conversion process.
-    Args:
-        process (subprocess.Popen): The process to be terminated.
-        interactable_elements (list): List of interactable elements to be re-enabled.
-        cancel_button (ttk.Button): The cancel button widget.
     """
     if process:
         process.terminate()

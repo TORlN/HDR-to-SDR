@@ -7,103 +7,88 @@ import re
 from tkinter import messagebox
 from utils import get_video_properties
 
-def start_conversion(input_path_var, output_path_var, gamma_var, progress_var, open_after_conversion, browse_button, start_button, gamma_slider, root):
+cancelled = False  # Flag to track if the cancel button was hit
+process = None  # Global process variable
+
+def cancel_conversion():
+    global cancelled, process
+    cancelled = True
+    if process:
+        process.terminate()
+
+def start_conversion(input_path, output_path, gamma, progress_var, interactable_elements, root, open_after_conversion, cancel_button):
     """
-    Starts the conversion process from HDR to SDR using the specified parameters.
+    Starts the conversion process from HDR to SDR.
     Args:
-        input_path_var (tk.StringVar): The variable holding the input file path.
-        output_path_var (tk.StringVar): The variable holding the output file path.
-        gamma_var (tk.DoubleVar): The variable holding the gamma correction value.
-        progress_var (tk.DoubleVar): The variable holding the progress percentage.
-        open_after_conversion (tk.BooleanVar): A flag indicating whether to open the output file after conversion.
-        browse_button (tk.Button): The browse button widget.
-        start_button (tk.Button): The start button widget.
-        gamma_slider (tk.Scale): The gamma slider widget.
+        input_path (str): The path to the input video file.
+        output_path (str): The path to save the converted video file.
+        gamma (float): The gamma correction value.
+        progress_var (tk.DoubleVar): A Tkinter DoubleVar to update the progress bar.
+        interactable_elements (list): List of interactable elements to be disabled during conversion.
         root (tk.Tk): The root Tkinter window.
-    Returns:
-        None
+        open_after_conversion (bool): Whether to open the output file after conversion.
+        cancel_button (ttk.Button): The cancel button widget.
     """
-    # Get the input and output file paths
-    input_file = input_path_var.get()
-    output_file = output_path_var.get()
+    global process, cancelled
+    cancelled = False  # Reset the cancelled flag at the start of conversion
 
     # Check if input and output files are selected
-    if not input_file or not output_file:
+    if not input_path or not output_path:
         messagebox.showwarning("Warning", "Please select both an input file and specify an output file.")
         return
     
     # Check if the input file exists
-    properties = get_video_properties(input_file)
+    properties = get_video_properties(input_path)
     if properties is None:
         return
     
-    # Get the gamma value
-    gamma_value = gamma_var.get()
-
-    # Check if the output file already exists
-    if os.path.exists(output_file):
-        overwrite = messagebox.askyesno("File Exists", f"{output_file} already exists. Do you want to overwrite it?")
-        if not overwrite:
-            return
     # Set the number of cores to use for conversion
     num_cores = multiprocessing.cpu_count()
 
-    # Disable the browse button, start button, and gamma slider during conversion
-    browse_button.config(state="disabled")
-    start_button.config(state="disabled", text="Converting...")
-    gamma_slider.config(state="disabled")
+    # Disable all interactable elements during conversion
+    for element in interactable_elements:
+        element.config(state="disabled")
 
-    # Run the ffmpeg command to convert the video
+    # Attach the cancel_conversion function to the cancel button
+    cancel_button.config(command=cancel_conversion)
+
+    # Construct the ffmpeg command to convert the video
     cmd = [
-        'ffmpeg', '-i', input_file,
-        '-vf', f'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap=reinhard,eq=gamma={gamma_value}',
+        'ffmpeg', '-i', input_path,
+        '-vf', f'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap=reinhard,eq=gamma={gamma},scale={properties["width"]}:{properties["height"]}',
         '-c:v', properties['codec_name'],
         '-b:v', str(properties['bit_rate']),
-        '-s', f"{properties['width']}x{properties['height']}",
         '-r', str(properties['frame_rate']),
+        '-aspect', f'{properties["width"]}/{properties["height"]}',
         '-threads', str(num_cores),
         '-preset', 'faster',
         '-acodec', properties['audio_codec'],
         '-b:a', str(properties['audio_bit_rate']),
-        output_file,
+        output_path,
         '-y'
     ]
+    
     # Print the command for debugging
-    print(f"Running command: {' '.join(cmd)}")  # Debugging information
+    print(f"Running command: {' '.join(cmd)}")
+
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = subprocess.SW_HIDE
 
     # Start the conversion process
     process = subprocess.Popen(
         cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, universal_newlines=True,
-        creationflags=subprocess.CREATE_NO_WINDOW
+        startupinfo=startupinfo
     )
     
     # Define a regex pattern to extract the progress from the ffmpeg output
     progress_pattern = re.compile(r'time=(\d+:\d+:\d+\.\d+)')
     
-    # Define a function to update the progress bar and handle the completion status
     def update_progress():
         """
-        Monitors the progress of a subprocess performing a conversion task, updates a progress bar,
+        Monitors the progress of the conversion task, updates the progress bar,
         and handles the completion status.
-        This function reads the standard error output of a subprocess line by line, extracts the 
-        current progress using a regex pattern, and updates a progress bar accordingly. It also 
-        handles the final status of the subprocess, displaying a success or error message based on 
-        the return code.
-        Side Effects:
-            - Updates a progress bar in the GUI.
-            - Displays message boxes for success or error.
-            - Opens the output file in a web browser if the conversion is successful and the user 
-              has opted to open the file after conversion.
-            - Re-enables GUI controls after the conversion process is complete.
-        Raises:
-            None
-        Note:
-            This function assumes the existence of certain global variables and GUI elements such 
-            as `process`, `progress_pattern`, `properties`, `root`, `progress_var`, `messagebox`, 
-            `output_file`, `open_after_conversion`, `webbrowser`, `browse_button`, `start_button`, 
-            and `gamma_slider`.
         """
-        # Read the standard error output line by line
         error_message = ""
         for line in process.stderr:
             print(line)  # Debugging information
@@ -115,19 +100,23 @@ def start_conversion(input_path_var, output_path_var, gamma_var, progress_var, o
                 elapsed = hours * 3600 + minutes * 60 + seconds
                 progress_var.set((elapsed / properties['duration']) * 100)
                 root.update_idletasks()  # Update the progress bar in the main thread
-        # Wait for the process to complete
+        
         process.wait()
         if process.returncode == 0:
-            messagebox.showinfo("Success", f"Conversion complete! Output saved to: {output_file}")
-            if open_after_conversion.get():
-                webbrowser.open(output_file) # Open the output file in the default web browser/application
-        else:
+            messagebox.showinfo("Success", f"Conversion complete! Output saved to: {output_path}")
+            if open_after_conversion:
+                webbrowser.open(output_path)
+        elif not cancelled:
             messagebox.showerror("Error", f"Conversion failed with code {process.returncode}\n{error_message}")
+        else:
+            messagebox.showwarning("Cancelled", "Conversion was cancelled.")
             
-        # Re-enable the GUI controls
-        browse_button.config(state="normal")
-        start_button.config(state="normal", text="Start Conversion")
-        gamma_slider.config(state="normal")
+        # Re-enable all interactable elements after conversion
+        for element in interactable_elements:
+            element.config(state="normal")
+        cancel_button.grid_remove()  # Hide cancel button
         
     # Start the progress update thread
     threading.Thread(target=update_progress).start()
+    
+    return process  # Return the process object

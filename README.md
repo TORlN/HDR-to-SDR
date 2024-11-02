@@ -2,11 +2,11 @@ This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The 
 
 ## Features
 
-- Select input video files with extensions `.mp4`, `.mkv`, and `.mov`.
-- Specify the output file name.
-- Adjust gamma value using a slider.
-- Monitor conversion progress with a progress bar.
-- Option to open the output file after conversion.
+- **Select Input Video Files**: Choose from video files with extensions `.mp4`, `.mkv`, and `.mov`.
+- **Specify Output File Name**: Define the name and location of the converted SDR video file.
+- **Adjust Gamma Value**: Use a slider to adjust the gamma value for the conversion process, allowing for fine-tuning of the output video.
+- **Monitor Conversion Progress**: A progress bar displays the current status of the conversion process.
+- **Open Output File**: Option to automatically open the output file after the conversion is complete.
 
 ## Requirements
 
@@ -38,28 +38,32 @@ This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The 
 
 ### Development Usage
 
-1. Run the application:
+1. Create a virtual environment:
     ```sh
-    python hdr_to_sdr_converter.py
+    python -m venv .venv
     ```
 
-2. Use the GUI to select an input file, specify the output file name, adjust the gamma value, and start the conversion.
+2. Activate the virtual environment:
+    - On Windows:
+        ```sh
+        .venv\Scripts\activate
+        ```
+    - On macOS/Linux:
+        ```sh
+        source .venv/bin/activate
+        ```
 
-### Compiling the Executable
-
-If you want to compile the executable yourself, you can use PyInstaller. Follow these steps:
-
-1. Install PyInstaller:
+3. Install the required packages:
     ```sh
-    pip install pyinstaller
+    pip install -r requirements.txt
     ```
 
-2. Compile the executable:
+4. Compile the executable:
     ```sh
-    pyinstaller --onefile --noconsole --name "HDR to SDR Converter" --icon=icon.ico main.py
+    pyinstaller --onefile --noconsole --name "HDR_to_SDR_Converter" --icon=icon.ico --add-data ".venv/Lib/site-packages/sv_ttk;sv_ttk" main.py
     ```
-
-3. The compiled executable will be located in the `dist` directory.
+5. The compiled executable will be located in the `dist` directory.
+...
 
 ## License
 

@@ -1,5 +1,10 @@
 import tkinter as tk
 from gui import create_main_window
+# import logging
+from PIL import Image
+
+# Suppress specific logging message from the Pillow library
+# logging.getLogger("PIL.PngImagePlugin").setLevel(logging.ERROR)
 
 """
 This script initializes and runs a Tkinter GUI application.

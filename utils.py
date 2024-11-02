@@ -61,7 +61,6 @@ def extract_frame(video_path):
     """
     cmd = [
         'ffmpeg', '-i', video_path,
-        '-vf', 'zscale=transfer=linear',  # Keep original HDR properties
         '-vframes', '1', '-f', 'image2pipe', '-'
     ]
     

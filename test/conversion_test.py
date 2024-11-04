@@ -38,10 +38,14 @@ class TestConversionManager(unittest.TestCase):
         mock_process.wait.return_value = 0
         mock_popen.return_value = mock_process
 
-        root = Tk()
-        progress_var = DoubleVar()  # Use DoubleVar for progress_var
+        # Create a mocked GUI instance with a 'root' attribute
+        mock_gui = MagicMock()
+        mock_gui.root = Tk()  # Ensure root is a Tk instance
+        mock_gui.root.after = MagicMock()
+
+        progress_var = DoubleVar(master=mock_gui.root)  # Ensure DoubleVar is created with the root window
         interactable_elements = []
-        cancel_button = ttk.Button(root)
+        cancel_button = MagicMock()
 
         manager = ConversionManager()
         manager.start_conversion(
@@ -50,7 +54,7 @@ class TestConversionManager(unittest.TestCase):
             2.2,
             progress_var,
             interactable_elements,
-            root,
+            mock_gui,  # Pass the mocked GUI instance
             False,
             cancel_button
         )
@@ -67,17 +71,20 @@ class TestConversionManager(unittest.TestCase):
 
         # Create a mock GUI instance with a 'root' attribute
         mock_gui = MagicMock()
-        mock_gui.root = MagicMock()
-
-        # Mock the 'after' method to execute the callback immediately
-        mock_gui.root.after = MagicMock(side_effect=lambda delay, func: func())
+        mock_gui.root = Tk()  # Ensure root is a Tk instance
+        mock_gui.root.after = MagicMock()
+        mock_gui.root.destroy = MagicMock()
 
         interactable_elements = []
-        cancel_button = ttk.Button(MagicMock())
+        cancel_button = MagicMock()
 
         manager = ConversionManager()
         manager.process = mock_process
         manager.cancel_conversion(mock_gui, interactable_elements, cancel_button)
+
+        # Execute the scheduled callbacks
+        for call in mock_gui.root.after.call_args_list:
+            call[0][1]()  # Execute the callback function
 
         mock_process.terminate.assert_called_once()
         self.assertTrue(manager.cancelled)
@@ -102,10 +109,14 @@ class TestConversionManager(unittest.TestCase):
         mock_process.wait.return_value = 1
         mock_popen.return_value = mock_process
 
-        root = Tk()
-        progress_var = DoubleVar()  # Use DoubleVar for progress_var
+        # Create a mocked GUI instance with a 'root' attribute
+        mock_gui = MagicMock()
+        mock_gui.root = Tk()  # Ensure root is a Tk instance
+        mock_gui.root.after = MagicMock()
+
+        progress_var = DoubleVar(master=mock_gui.root)  # Ensure DoubleVar is created with the root window
         interactable_elements = []
-        cancel_button = ttk.Button(root)
+        cancel_button = MagicMock()
 
         manager = ConversionManager()
         manager.start_conversion(
@@ -114,24 +125,35 @@ class TestConversionManager(unittest.TestCase):
             2.2,
             progress_var,
             interactable_elements,
-            root,
+            mock_gui,  # Pass the mocked GUI instance
             False,
             cancel_button
         )
 
-        # Assuming handle_completion shows a messagebox, which should be mocked if needed
+        # Additional assertions can be added here as needed
 
-    @patch('src.conversion.messagebox.showwarning')  # Mock the showwarning popup
+    @patch('src.conversion.messagebox.showwarning')
     def test_start_conversion_invalid_paths(self, mock_showwarning):
         """Test start_conversion with invalid input or output paths."""
         manager = ConversionManager()
-        manager.start_conversion('', 'output.mkv', 2.2, None, [], None, False, None)
+        mock_gui = MagicMock()
+        mock_gui.root = Tk()  # Ensure root is a Tk instance
+        mock_gui.root.after = MagicMock()
+        progress_var = DoubleVar(master=mock_gui.root)  # Ensure DoubleVar is created with the root window
+        interactable_elements = []
+        cancel_button = MagicMock()
+
+        manager.start_conversion('', 'output.mkv', 2.2, progress_var, interactable_elements, mock_gui, False, cancel_button)
         mock_showwarning.assert_called_once_with(
             "Warning", "Please select both an input file and specify an output file."
         )
 
-        manager.start_conversion('input.mp4', '', 2.2, None, [], None, False, None)
-        self.assertEqual(mock_showwarning.call_count, 2)
+        mock_showwarning.reset_mock()
+        manager.start_conversion('input.mp4', '', 2.2, progress_var, interactable_elements, mock_gui, False, cancel_button)
+        self.assertEqual(mock_showwarning.call_count, 1)
+        mock_showwarning.assert_called_with(
+            "Warning", "Please select both an input file and specify an output file."
+        )
 
     @patch('src.conversion.get_video_properties')
     @patch('src.conversion.messagebox.showwarning')  # Mock the showwarning popup
@@ -139,7 +161,14 @@ class TestConversionManager(unittest.TestCase):
         """Test start_conversion when get_video_properties returns None."""
         mock_get_props.return_value = None
         manager = ConversionManager()
-        manager.start_conversion('input.mp4', 'output.mkv', 2.2, None, [], None, False, None)
+        mock_gui = MagicMock()
+        mock_gui.root = Tk()  # Ensure root is a Tk instance
+        mock_gui.root.after = MagicMock()
+        progress_var = DoubleVar(master=mock_gui.root)  # Ensure DoubleVar is created with the root window
+        interactable_elements = []
+        cancel_button = MagicMock()
+
+        manager.start_conversion('input.mp4', 'output.mkv', 2.2, progress_var, interactable_elements, mock_gui, False, cancel_button)
         mock_showwarning.assert_called_once_with(
             "Warning", "Failed to retrieve video properties."
         )
@@ -184,7 +213,7 @@ class TestConversionManager(unittest.TestCase):
         ]
         self.assertEqual(cmd, expected_cmd)
 
-    @patch('src.conversion.messagebox.showinfo')  # Ensure this path matches the actual import in src.conversion
+    @patch('src.conversion.messagebox.showinfo')  # Mock the showinfo popup
     @patch('src.conversion.webbrowser.open')
     def test_handle_completion_success(self, mock_webbrowser_open, mock_showinfo):
         """Test handle_completion for a successful conversion."""
@@ -196,26 +225,22 @@ class TestConversionManager(unittest.TestCase):
         # Create a mock GUI instance with a 'root' attribute
         mock_gui = MagicMock()
         mock_gui.root = Tk()  # Ensure root is a Tk instance
-        # Mock the 'after' method to execute the callback immediately
         mock_gui.root.after = MagicMock(side_effect=lambda delay, func: func())
 
-        cancel_button = ttk.Button(MagicMock())  # Ensure cancel_button is not None
-        cancel_button.grid = MagicMock()  # Mock grid method
+        cancel_button = MagicMock()
+        cancel_button.grid_remove = MagicMock()
 
         with patch.object(manager, 'enable_ui') as mock_enable_ui:
             manager.handle_completion(
-                gui_instance=mock_gui,
-                interactable_elements=[],
-                cancel_button=cancel_button,
-                output_path='output.mkv',
-                open_after_conversion=True,
-                error_messages=error_messages
+                mock_gui, [], cancel_button, 'output.mkv', True, error_messages
             )
+
             mock_showinfo.assert_called_once_with(
                 "Success", "Conversion complete! Output saved to: output.mkv"
             )
             mock_webbrowser_open.assert_called_once_with('output.mkv')
             mock_enable_ui.assert_called_once_with([])
+            cancel_button.grid_remove.assert_called_once()
 
     @patch('src.conversion.messagebox.showerror')  # Mock the showerror popup
     def test_handle_completion_failure(self, mock_showerror):
@@ -228,25 +253,23 @@ class TestConversionManager(unittest.TestCase):
         # Create a mock GUI instance with a 'root' attribute
         mock_gui = MagicMock()
         mock_gui.root = Tk()  # Ensure root is a Tk instance
-        # Mock the 'after' method to execute the callback immediately
         mock_gui.root.after = MagicMock(side_effect=lambda delay, func: func())
 
-        cancel_button = ttk.Button(MagicMock())  # Ensure cancel_button is not None
-        cancel_button.grid = MagicMock()  # Mock grid method
+        cancel_button = MagicMock()
+        cancel_button.grid_remove = MagicMock()
+
+        manager.cancelled = False  # Ensure it's not cancelled
 
         with patch.object(manager, 'enable_ui') as mock_enable_ui:
             manager.handle_completion(
-                gui_instance=mock_gui,
-                interactable_elements=[],
-                cancel_button=cancel_button,
-                output_path='output.mkv',
-                open_after_conversion=False,
-                error_messages=error_messages
+                mock_gui, [], cancel_button, 'output.mkv', False, error_messages
             )
+
             mock_showerror.assert_called_once_with(
-                "Error", "Conversion failed with code 1\nerror message"
+                "Error", f"Conversion failed with code 1\nerror message"
             )
             mock_enable_ui.assert_called_once_with([])
+            cancel_button.grid_remove.assert_called_once()
 
     @patch('src.conversion.messagebox.showwarning')
     def test_verify_paths(self, mock_showwarning):

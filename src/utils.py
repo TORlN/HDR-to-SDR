@@ -9,7 +9,7 @@ import logging
 import sys  # Added import
 
 # Logging configuration
-LOGGING_ENABLED = True  # Set to False to disable logging
+LOGGING_ENABLED = False  # Set to False to disable logging
 
 if LOGGING_ENABLED:
     logging.basicConfig(level=logging.DEBUG, filename='debug.log', filemode='w',

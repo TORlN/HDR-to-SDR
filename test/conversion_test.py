@@ -334,9 +334,9 @@ class TestConversionManager(unittest.TestCase):
             self.assertEqual(process, mock_process)
 
     @patch('src.conversion.subprocess.STARTUPINFO')
-    @patch('ctypes.windll.kernel32.GetStartupInfoW', create=True)  # Correctly mock ctypes.windll
+    @patch('ctypes.windll', create=True)  # Correctly mock ctypes.windll
     @patch('src.conversion.subprocess.Popen')
-    def test_start_ffmpeg_process_windows(self, mock_popen, mock_getstartupinfo, mock_startupinfo):
+    def test_start_ffmpeg_process_windows(self, mock_popen, mock_windll, mock_startupinfo):
         """Test start_ffmpeg_process on Windows platforms."""
         if sys.platform != 'win32':
             self.skipTest("Windows platform required for this test.")
@@ -346,6 +346,9 @@ class TestConversionManager(unittest.TestCase):
         startupinfo_instance.dwFlags = 0  # Initial dwFlags
         startupinfo_instance.wShowWindow = None  # Initial wShowWindow
         mock_startupinfo.return_value = startupinfo_instance
+
+        # Mock GetStartupInfoW method
+        mock_windll.kernel32.GetStartupInfoW = MagicMock()
 
         with patch('sys.platform', 'win32'):
             manager = ConversionManager()

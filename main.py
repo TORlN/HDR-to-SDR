@@ -1,10 +1,7 @@
 import tkinter as tk
-from gui import create_main_window
-# import logging
+from tkinterdnd2 import TkinterDnD, DND_FILES
+from gui import HDRConverterGUI
 from PIL import Image
-
-# Suppress specific logging message from the Pillow library
-# logging.getLogger("PIL.PngImagePlugin").setLevel(logging.ERROR)
 
 """
 This script initializes and runs a Tkinter GUI application.
@@ -20,7 +17,7 @@ Execution:
 """
 
 if __name__ == "__main__":
-    # Create the main Tkinter window
-    root = tk.Tk()
-    create_main_window(root)
+    # Create the main TkinterDnD window
+    root = TkinterDnD.Tk()
+    app = HDRConverterGUI(root)
     root.mainloop()

@@ -5,10 +5,18 @@ import subprocess
 import os
 import numpy as np
 import io
-# import logging
+import logging
 
-# Configure logging
-# logging.basicConfig(level=logging.DEBUG, filename='debug.log', filemode='w', format='%(name=s - %(levelname=s - %(message=s')
+# Logging configuration
+LOGGING_ENABLED = True  # Set to False to disable logging
+
+if LOGGING_ENABLED:
+    logging.basicConfig(level=logging.DEBUG, filename='debug.log', filemode='w',
+                        format='%(name)s - %(levelname)s - %(message)s')
+else:
+    logging.basicConfig(level=logging.WARNING)  # Change to WARNING to suppress DEBUG logs
+
+FFMPEG_FILTER = 'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap=reinhard,eq=gamma={gamma},scale={width}:{height}'
 
 def run_ffmpeg_command(cmd):
     """
@@ -28,7 +36,7 @@ def run_ffmpeg_command(cmd):
     out, err = process.communicate()
     
     if process.returncode != 0:
-        # logging.error(f"ffmpeg error: {err.decode('utf-8')}")
+        logging.error(f"ffmpeg error: {err.decode('utf-8')}")
         raise RuntimeError(f"ffmpeg error: {err.decode('utf-8')}")
     
     return out
@@ -44,7 +52,7 @@ def extract_frame_with_conversion(video_path, gamma):
     """
     cmd = [
         'ffmpeg', '-i', video_path,
-        '-vf', f'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap=reinhard,eq=gamma={gamma}',
+        '-vf', FFMPEG_FILTER.format(gamma=gamma, width='iw', height='ih'),
         '-vframes', '1', '-f', 'image2pipe', '-'
     ]
     
@@ -102,6 +110,6 @@ def get_video_properties(input_file):
         }
         return properties
     except Exception as e:
-        # logging.error(f"Failed to get video properties: {e}")
+        logging.error(f"Failed to get video properties: {e}")
         messagebox.showerror("Error", f"Failed to get video properties: {e}")
         return None

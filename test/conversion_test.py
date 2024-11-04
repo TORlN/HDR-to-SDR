@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 from src.conversion import ConversionManager
 from src.utils import get_video_properties
-from tkinter import Tk
+from tkinter import Tk, DoubleVar  # Added DoubleVar import
 from tkinter import ttk
 from PIL import Image
 from src.utils import FFMPEG_FILTER
@@ -38,7 +38,7 @@ class TestConversionManager(unittest.TestCase):
         mock_popen.return_value = mock_process
 
         root = Tk()
-        progress_var = ttk.Progressbar(root).master
+        progress_var = DoubleVar()  # Use DoubleVar for progress_var
         interactable_elements = []
         cancel_button = ttk.Button(root)
 
@@ -102,7 +102,7 @@ class TestConversionManager(unittest.TestCase):
         mock_popen.return_value = mock_process
 
         root = Tk()
-        progress_var = ttk.Progressbar(root).master
+        progress_var = DoubleVar()  # Use DoubleVar for progress_var
         interactable_elements = []
         cancel_button = ttk.Button(root)
 

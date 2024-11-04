@@ -334,8 +334,8 @@ class TestConversionManager(unittest.TestCase):
             self.assertEqual(process, mock_process)
 
     @patch('src.conversion.subprocess.STARTUPINFO')
-    @patch('ctypes.windll.kernel32.GetStartupInfoW')  # Use ctypes to access Windows API
-    @patch('src.conversion.subprocess.Popen')  # Add missing patch
+    @patch('ctypes.windll.kernel32.GetStartupInfoW', create=True)  # Correctly mock ctypes.windll
+    @patch('src.conversion.subprocess.Popen')
     def test_start_ffmpeg_process_windows(self, mock_popen, mock_getstartupinfo, mock_startupinfo):
         """Test start_ffmpeg_process on Windows platforms."""
         if sys.platform != 'win32':

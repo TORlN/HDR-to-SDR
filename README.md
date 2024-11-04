@@ -1,4 +1,4 @@
-This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The application allows you to select an input video file, **drag and drop files into the application**, specify an output file name, adjust the gamma value, and monitor the conversion progress.
+This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The application allows you to select an input video file, drag and drop files into the application, specify an output file name, adjust the gamma value, and monitor the conversion progress.
 
 ## Features
 
@@ -11,7 +11,7 @@ This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The 
 
 ## Requirements
 
-- Python 3.x
+- Python 3.10 and above
 - FFmpeg
 
 ## Installation
@@ -61,7 +61,7 @@ This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The 
 
 4. Compile the executable:
     ```sh
-    pyinstaller --onefile --noconsole --name "HDR_to_SDR_Converter" --icon=icon.ico --add-data ".venv/Lib/site-packages/sv_ttk;sv_ttk" --add-data ".venv/Lib/site-packages/tkinterdnd2;tkinterdnd2" main.py
+    pyinstaller --onefile --noconsole --name "HDR_to_SDR_Converter" --icon=logo/icon.ico --add-data ".venv/Lib/site-packages/sv_ttk;sv_ttk" --add-data ".venv/Lib/site-packages/tkinterdnd2;tkinterdnd2" src/main.py
     ```
 5. The compiled executable will be located in the `dist` directory.
 

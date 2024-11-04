@@ -1,0 +1,5 @@
+ffmpeg-python
+Pillow
+numpy
+tkinterdnd2
+sv_ttk

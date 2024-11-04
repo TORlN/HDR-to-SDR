@@ -8,6 +8,7 @@ import logging
 from tkinter import messagebox
 from utils import get_video_properties, FFMPEG_FILTER
 from tkinterdnd2 import DND_FILES
+import sys  # Added import
 
 class ConversionManager:
     """
@@ -17,7 +18,7 @@ class ConversionManager:
     def __init__(self):
         self.process = None       # Subprocess for the ffmpeg conversion
         self.cancelled = False    # Flag to indicate if the conversion was cancelled
-        self.drop_target_registered = False  # Track drop target registration status
+        # Removed drop_target_registered attribute
 
     def start_conversion(self, input_path, output_path, gamma, progress_var,
                          interactable_elements, root, open_after_conversion,
@@ -42,6 +43,7 @@ class ConversionManager:
 
         properties = get_video_properties(input_path)
         if properties is None:
+            messagebox.showwarning("Warning", "Failed to retrieve video properties.")
             return
 
         self.disable_ui(interactable_elements)
@@ -56,13 +58,7 @@ class ConversionManager:
             progress_var, properties['duration'], root, interactable_elements,
             cancel_button, output_path, open_after_conversion)).start()
 
-        # Safely unregister drop target
-        if self.drop_target_registered:
-            try:
-                root.drop_target_unregister()
-                self.drop_target_registered = False
-            except Exception as e:
-                logging.error(f"Error unregistering drop target: {e}")
+        # Removed drop target unregister logic
 
     def verify_paths(self, input_path, output_path):
         """Verify that the input and output paths are valid."""
@@ -106,13 +102,18 @@ class ConversionManager:
 
     def start_ffmpeg_process(self, cmd):
         """Start the ffmpeg subprocess with the given command."""
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
+        startupinfo = None
+        if sys.platform == 'win32':
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
 
         process = subprocess.Popen(
-            cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE,
-            universal_newlines=True, startupinfo=startupinfo
+            cmd,
+            stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            universal_newlines=True,
+            startupinfo=startupinfo
         )
         return process
 
@@ -166,13 +167,7 @@ class ConversionManager:
         self.enable_ui(interactable_elements)
         cancel_button.grid_remove()  # Hide the cancel button
 
-        # Safely re-register drop target
-        if not self.drop_target_registered:
-            try:
-                root.drop_target_register(DND_FILES)
-                self.drop_target_registered = True
-            except Exception as e:
-                logging.error(f"Error registering drop target: {e}")
+        # Removed drop target register logic
 
     def cancel_conversion(self, root, interactable_elements, cancel_button):
         """
@@ -186,13 +181,7 @@ class ConversionManager:
             self.enable_ui(interactable_elements)
             cancel_button.grid_remove()
 
-            # Safely re-register drop target
-            if not self.drop_target_registered:
-                try:
-                    root.drop_target_register(DND_FILES)
-                    self.drop_target_registered = True
-                except Exception as e:
-                    logging.error(f"Error registering drop target: {e}")
+            # Removed drop target register logic
 
 # Instantiate the ConversionManager
 conversion_manager = ConversionManager()

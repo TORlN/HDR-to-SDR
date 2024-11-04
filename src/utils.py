@@ -6,9 +6,10 @@ import os
 import numpy as np
 import io
 import logging
+import sys  # Added import
 
 # Logging configuration
-LOGGING_ENABLED = False  # Set to False to disable logging
+LOGGING_ENABLED = True  # Set to False to disable logging
 
 if LOGGING_ENABLED:
     logging.basicConfig(level=logging.DEBUG, filename='debug.log', filemode='w',
@@ -21,18 +22,12 @@ else:
 FFMPEG_FILTER = 'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap=reinhard,eq=gamma={gamma},scale={width}:{height}'
 
 def run_ffmpeg_command(cmd):
-    """
-    Runs an ffmpeg command and returns the output.
-    Args:
-        cmd (list): The ffmpeg command to run.
-    Returns:
-        bytes: The output from the command.
-    Raises:
-        RuntimeError: If the ffmpeg command fails.
-    """
-    startupinfo = subprocess.STARTUPINFO()
-    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    startupinfo.wShowWindow = subprocess.SW_HIDE
+    if sys.platform == "win32":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+    else:
+        startupinfo = None
     
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, startupinfo=startupinfo)
     out, err = process.communicate()
@@ -114,4 +109,5 @@ def get_video_properties(input_file):
     except Exception as e:
         logging.error(f"Failed to get video properties: {e}")
         messagebox.showerror("Error", f"Failed to get video properties: {e}")
+        return None
         return None

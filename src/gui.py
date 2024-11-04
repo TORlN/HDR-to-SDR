@@ -42,6 +42,7 @@ class HDRConverterGUI:
 
         # Removed self.process since it's managed by conversion_manager
         self.cancelled = False  # Flag to track cancellation
+        self.drop_target_registered = False  # Track drop target registration status
 
     def create_widgets(self):
         """Create and arrange the widgets in the main window."""
@@ -187,7 +188,9 @@ class HDRConverterGUI:
 
     def select_file(self):
         """Open a file dialog for the user to select a video file."""
-        file_path = filedialog.askopenfilename(filetypes=[("Video files", "*.mp4;*.mkv;*.mov")])
+        file_path = filedialog.askopenfilename(
+            filetypes=[("MP4 files", "*.mp4"), ("MKV files", "*.mkv"), ("MOV files", "*.mov")]
+        )
         if file_path:
             self.input_path_var.set(file_path)
             self.output_path_var.set(os.path.splitext(file_path)[0] + "_sdr.mp4")
@@ -302,7 +305,9 @@ class HDRConverterGUI:
 
             # Disable UI elements and prepare for conversion
             self.cancel_button.grid()  # Show cancel button
-            self.root.drop_target_unregister()
+            if self.drop_target_registered:
+                self.root.drop_target_unregister()
+                self.drop_target_registered = False
 
             # Start the conversion using the conversion_manager instance
             conversion_manager.start_conversion(
@@ -319,3 +324,10 @@ class HDRConverterGUI:
         conversion_manager.cancel_conversion(
             self.root, self.interactable_elements, self.cancel_button
         )
+        # Safely re-register drop target
+        if not self.drop_target_registered:
+            try:
+                self.root.drop_target_register(DND_FILES)
+                self.drop_target_registered = True
+            except Exception as e:
+                logging.error(f"Error registering drop target: {e}")

@@ -2,6 +2,7 @@ import sys
 import os
 import subprocess  # Added import
 import multiprocessing  # Added import
+import ctypes  # Added import for SW_HIDE
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 import unittest
 from unittest.mock import patch, MagicMock
@@ -309,10 +310,9 @@ class TestConversionManager(unittest.TestCase):
             self.assertEqual(process, mock_process)
 
     @patch('src.conversion.subprocess.STARTUPINFO')
-    @patch('src.conversion.subprocess.STARTF_USESHOWWINDOW', new=1)  # Assign integer value
-    @patch('src.conversion.subprocess.SW_HIDE', new=0)               # Assign integer value
-    @patch('src.conversion.subprocess.Popen')
-    def test_start_ffmpeg_process_windows(self, mock_popen, mock_startupinfo):
+    @patch('ctypes.windll.kernel32.GetStartupInfoW')  # Use ctypes to access Windows API
+    @patch('src.conversion.subprocess.Popen')  # Add missing patch
+    def test_start_ffmpeg_process_windows(self, mock_popen, mock_getstartupinfo, mock_startupinfo):
         """Test start_ffmpeg_process on Windows platforms."""
         if sys.platform != 'win32':
             self.skipTest("Windows platform required for this test.")
@@ -335,9 +335,9 @@ class TestConversionManager(unittest.TestCase):
             self.assertEqual(startupinfo_instance.dwFlags, 1, 
                              "dwFlags should include STARTF_USESHOWWINDOW (1)")
             
-            # Assert that wShowWindow was set to SW_HIDE (0)
+            # Assert that wShowWindow was set to the correct constant value for SW_HIDE
             self.assertEqual(startupinfo_instance.wShowWindow, 0, 
-                             "wShowWindow should be set to SW_HIDE (0)")
+                             "wShowWindow should be set to SW_HIDE")
 
             # Assert that Popen was called with the correct parameters
             mock_popen.assert_called_once_with(

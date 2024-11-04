@@ -162,8 +162,7 @@ class ConversionManager:
                 error_message = ''.join(error_messages)
                 messagebox.showerror(
                     "Error", f"Conversion failed with code {self.process.returncode}\n{error_message}")
-            else:
-                messagebox.showwarning("Cancelled", "Conversion was cancelled.")
+            # Removed the else block to prevent double message boxes on cancellation
 
             self.enable_ui(interactable_elements)
             cancel_button.grid_remove()  # Hide the cancel button

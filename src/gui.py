@@ -341,3 +341,8 @@ class HDRConverterGUI:
         if self.drop_target_registered:
             self.root.drop_target_unregister()
             self.drop_target_registered = False
+
+    def disable_ui(self, elements):
+        """Disable the specified UI elements."""
+        for element in elements:
+            element.config(state='disabled')

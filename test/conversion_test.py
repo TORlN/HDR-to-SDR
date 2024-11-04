@@ -63,13 +63,19 @@ class TestConversionManager(unittest.TestCase):
         mock_process = MagicMock()
         mock_popen.return_value = mock_process
 
-        root = Tk()
+        # Create a mock GUI instance with a 'root' attribute
+        mock_gui = MagicMock()
+        mock_gui.root = MagicMock()
+
+        # Mock the 'after' method to execute the callback immediately
+        mock_gui.root.after.side_effect = lambda delay, func: func()
+
         interactable_elements = []
-        cancel_button = ttk.Button(root)
+        cancel_button = ttk.Button(MagicMock())
 
         manager = ConversionManager()
         manager.process = mock_process
-        manager.cancel_conversion(root, interactable_elements, cancel_button)
+        manager.cancel_conversion(mock_gui, interactable_elements, cancel_button)
 
         mock_process.terminate.assert_called_once()
         self.assertTrue(manager.cancelled)
@@ -176,7 +182,7 @@ class TestConversionManager(unittest.TestCase):
         ]
         self.assertEqual(cmd, expected_cmd)
 
-    @patch('src.conversion.messagebox.showinfo')
+    @patch('src.conversion.messagebox.showinfo')  # Ensure this path matches the actual import in src.conversion
     @patch('src.conversion.webbrowser.open')
     def test_handle_completion_success(self, mock_webbrowser_open, mock_showinfo):
         """Test handle_completion for a successful conversion."""
@@ -185,13 +191,18 @@ class TestConversionManager(unittest.TestCase):
         manager.process.returncode = 0
         error_messages = []
 
-        root = Tk()
-        cancel_button = ttk.Button(root)  # Ensure cancel_button is not None
-        cancel_button.grid()  # Ensure the button is part of the grid
+        # Create a mock GUI instance with a 'root' attribute
+        mock_gui = MagicMock()
+        mock_gui.root = MagicMock()
+        # Mock the 'after' method to execute the callback immediately
+        mock_gui.root.after.side_effect = lambda delay, func: func()
+
+        cancel_button = ttk.Button(MagicMock())  # Ensure cancel_button is not None
+        cancel_button.grid = MagicMock()  # Mock grid method
 
         with patch.object(manager, 'enable_ui') as mock_enable_ui:
             manager.handle_completion(
-                root=root,
+                gui_instance=mock_gui,
                 interactable_elements=[],
                 cancel_button=cancel_button,
                 output_path='output.mkv',
@@ -204,7 +215,7 @@ class TestConversionManager(unittest.TestCase):
             mock_webbrowser_open.assert_called_once_with('output.mkv')
             mock_enable_ui.assert_called_once_with([])
 
-    @patch('src.conversion.messagebox.showerror')
+    @patch('src.conversion.messagebox.showerror')  # Mock the showerror popup
     def test_handle_completion_failure(self, mock_showerror):
         """Test handle_completion for a failed conversion."""
         manager = ConversionManager()
@@ -212,13 +223,18 @@ class TestConversionManager(unittest.TestCase):
         manager.process.returncode = 1
         error_messages = ['error message']
 
-        root = Tk()
-        cancel_button = ttk.Button(root)  # Ensure cancel_button is not None
-        cancel_button.grid()  # Ensure the button is part of the grid
+        # Create a mock GUI instance with a 'root' attribute
+        mock_gui = MagicMock()
+        mock_gui.root = MagicMock()
+        # Mock the 'after' method to execute the callback immediately
+        mock_gui.root.after.side_effect = lambda delay, func: func()
+
+        cancel_button = ttk.Button(MagicMock())  # Ensure cancel_button is not None
+        cancel_button.grid = MagicMock()  # Mock grid method
 
         with patch.object(manager, 'enable_ui') as mock_enable_ui:
             manager.handle_completion(
-                root=root,
+                gui_instance=mock_gui,
                 interactable_elements=[],
                 cancel_button=cancel_button,
                 output_path='output.mkv',
@@ -292,31 +308,38 @@ class TestConversionManager(unittest.TestCase):
             )
             self.assertEqual(process, mock_process)
 
-    @patch('src.conversion.subprocess.STARTUPINFO', create=True)
-    @patch('src.conversion.subprocess.STARTF_USESHOWWINDOW', create=True)
-    @patch('src.conversion.subprocess.SW_HIDE', create=True)
+    @patch('src.conversion.subprocess.STARTUPINFO')
+    @patch('src.conversion.subprocess.STARTF_USESHOWWINDOW', new=1)  # Assign integer value
+    @patch('src.conversion.subprocess.SW_HIDE', new=0)               # Assign integer value
     @patch('src.conversion.subprocess.Popen')
-    def test_start_ffmpeg_process_windows(self, mock_popen, mock_sw_hide, mock_startf_useshowwindow, mock_startupinfo):
+    def test_start_ffmpeg_process_windows(self, mock_popen, mock_startupinfo):
         """Test start_ffmpeg_process on Windows platforms."""
         if sys.platform != 'win32':
-            return True
+            self.skipTest("Windows platform required for this test.")
+        
+        # Create a mock StartupInfo instance
+        startupinfo_instance = MagicMock()
+        startupinfo_instance.dwFlags = 0  # Initial dwFlags
+        startupinfo_instance.wShowWindow = None  # Initial wShowWindow
+        mock_startupinfo.return_value = startupinfo_instance
 
-        mock_startupinfo.return_value.dwFlags = 0
         with patch('sys.platform', 'win32'):
             manager = ConversionManager()
             cmd = ['ffmpeg', '-i', 'input.mp4', 'output.mkv']
             mock_process = MagicMock()
             mock_popen.return_value = mock_process
 
-            startupinfo_instance = MagicMock()
-            mock_startupinfo.return_value = startupinfo_instance
-
             manager.start_ffmpeg_process(cmd)
 
-            self.assertEqual(startupinfo_instance.dwFlags & mock_startf_useshowwindow, 
-                           mock_startf_useshowwindow)
-            self.assertEqual(startupinfo_instance.wShowWindow, mock_sw_hide)
+            # Assert that dwFlags was updated with STARTF_USESHOWWINDOW (1)
+            self.assertEqual(startupinfo_instance.dwFlags, 1, 
+                             "dwFlags should include STARTF_USESHOWWINDOW (1)")
+            
+            # Assert that wShowWindow was set to SW_HIDE (0)
+            self.assertEqual(startupinfo_instance.wShowWindow, 0, 
+                             "wShowWindow should be set to SW_HIDE (0)")
 
+            # Assert that Popen was called with the correct parameters
             mock_popen.assert_called_once_with(
                 cmd,
                 stderr=subprocess.PIPE,
@@ -327,3 +350,4 @@ class TestConversionManager(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+

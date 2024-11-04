@@ -41,8 +41,22 @@ class HDRConverterGUI:
         self.root.dnd_bind('<<Drop>>', self.handle_file_drop)
         self.drop_target_registered = True  # Set to True after registering
 
+        # Bind the window close event
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
         # Removed self.process since it's managed by conversion_manager
         self.cancelled = False  # Flag to track cancellation
+
+    def on_close(self):
+        """Handle the window close event by cancelling ongoing conversions and cleaning up."""
+        if conversion_manager.process and conversion_manager.process.poll() is None:
+            if messagebox.askokcancel("Quit", "A conversion is in progress. Do you want to cancel and exit?"):
+                conversion_manager.cancel_conversion(
+                    self, self.interactable_elements, self.cancel_button
+                )
+                self.root.destroy()
+        else:
+            self.root.destroy()
 
     def create_widgets(self):
         """Create and arrange the widgets in the main window."""

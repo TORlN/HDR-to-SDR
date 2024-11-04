@@ -3,6 +3,7 @@ import os
 import subprocess  # Added import
 import multiprocessing  # Added import
 import ctypes  # Added import for SW_HIDE
+import threading  # Added import for threading
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 import unittest
 from unittest.mock import patch, MagicMock
@@ -69,7 +70,7 @@ class TestConversionManager(unittest.TestCase):
         mock_gui.root = MagicMock()
 
         # Mock the 'after' method to execute the callback immediately
-        mock_gui.root.after.side_effect = lambda delay, func: func()
+        mock_gui.root.after = MagicMock(side_effect=lambda delay, func: func())
 
         interactable_elements = []
         cancel_button = ttk.Button(MagicMock())
@@ -194,9 +195,9 @@ class TestConversionManager(unittest.TestCase):
 
         # Create a mock GUI instance with a 'root' attribute
         mock_gui = MagicMock()
-        mock_gui.root = MagicMock()
+        mock_gui.root = Tk()  # Ensure root is a Tk instance
         # Mock the 'after' method to execute the callback immediately
-        mock_gui.root.after.side_effect = lambda delay, func: func()
+        mock_gui.root.after = MagicMock(side_effect=lambda delay, func: func())
 
         cancel_button = ttk.Button(MagicMock())  # Ensure cancel_button is not None
         cancel_button.grid = MagicMock()  # Mock grid method
@@ -226,9 +227,9 @@ class TestConversionManager(unittest.TestCase):
 
         # Create a mock GUI instance with a 'root' attribute
         mock_gui = MagicMock()
-        mock_gui.root = MagicMock()
+        mock_gui.root = Tk()  # Ensure root is a Tk instance
         # Mock the 'after' method to execute the callback immediately
-        mock_gui.root.after.side_effect = lambda delay, func: func()
+        mock_gui.root.after = MagicMock(side_effect=lambda delay, func: func())
 
         cancel_button = ttk.Button(MagicMock())  # Ensure cancel_button is not None
         cancel_button.grid = MagicMock()  # Mock grid method

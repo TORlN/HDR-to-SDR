@@ -55,9 +55,11 @@ class ConversionManager:
         self.process = self.start_ffmpeg_process(cmd)
 
         # Pass the actual GUI instance to monitor_progress
-        threading.Thread(target=self.monitor_progress, args=(
+        thread = threading.Thread(target=self.monitor_progress, args=(
             progress_var, properties['duration'], gui_instance, interactable_elements,
-            cancel_button, output_path, open_after_conversion)).start()
+            cancel_button, output_path, open_after_conversion))
+        thread.daemon = True  # Ensure thread does not prevent program exit
+        thread.start()
 
     def verify_paths(self, input_path, output_path):
         """Verify that the input and output paths are valid."""
@@ -133,7 +135,8 @@ class ConversionManager:
             if match:
                 elapsed_time = self.parse_time(match.group(1))
                 progress = (elapsed_time / duration) * 100
-                progress_var.set(progress)
+                # Schedule the progress_var.set to run in the main thread
+                gui_instance.root.after(0, lambda p=progress: progress_var.set(p))
                 # Schedule the update_idletasks to run in the main thread
                 gui_instance.root.after(0, gui_instance.root.update_idletasks)
 

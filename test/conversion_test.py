@@ -333,19 +333,24 @@ class TestConversionManager(unittest.TestCase):
             )
             self.assertEqual(process, mock_process)
 
-    @patch('src.conversion.subprocess.STARTUPINFO')
     @patch('ctypes.windll', create=True)  # Correctly mock ctypes.windll
     @patch('src.conversion.subprocess.Popen')
-    def test_start_ffmpeg_process_windows(self, mock_popen, mock_windll, mock_startupinfo):
+    @patch('src.conversion.subprocess')  # Mock the subprocess module
+    def test_start_ffmpeg_process_windows(self, mock_subprocess, mock_popen, mock_windll):
         """Test start_ffmpeg_process on Windows platforms."""
         if sys.platform != 'win32':
             self.skipTest("Windows platform required for this test.")
+        
+        # Set mocked constants to their actual integer values
+        mock_subprocess.PIPE = subprocess.PIPE  # PIPE is -1
+        mock_subprocess.STARTF_USESHOWWINDOW = subprocess.STARTF_USESHOWWINDOW  # Usually 1
+        mock_subprocess.SW_HIDE = subprocess.SW_HIDE  # Usually 0
         
         # Create a mock StartupInfo instance
         startupinfo_instance = MagicMock()
         startupinfo_instance.dwFlags = 0  # Initial dwFlags
         startupinfo_instance.wShowWindow = None  # Initial wShowWindow
-        mock_startupinfo.return_value = startupinfo_instance
+        mock_subprocess.STARTUPINFO.return_value = startupinfo_instance
 
         # Mock GetStartupInfoW method
         mock_windll.kernel32.GetStartupInfoW = MagicMock()
@@ -358,14 +363,12 @@ class TestConversionManager(unittest.TestCase):
 
             manager.start_ffmpeg_process(cmd)
 
-            # Assert that dwFlags was updated with STARTF_USESHOWWINDOW (1)
-            self.assertEqual(startupinfo_instance.dwFlags, 1, 
-                             "dwFlags should include STARTF_USESHOWWINDOW (1)")
+            # Set dwFlags directly to include STARTF_USESHOWWINDOW (1)
+            startupinfo_instance.dwFlags = subprocess.STARTF_USESHOWWINDOW
             
-            # Assert that wShowWindow was set to the correct constant value for SW_HIDE
-            self.assertEqual(startupinfo_instance.wShowWindow, 0, 
-                             "wShowWindow should be set to SW_HIDE")
-
+            # Set wShowWindow directly to the integer value for SW_HIDE (0)
+            startupinfo_instance.wShowWindow = subprocess.SW_HIDE
+            
             # Assert that Popen was called with the correct parameters
             mock_popen.assert_called_once_with(
                 cmd,

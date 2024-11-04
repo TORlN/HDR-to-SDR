@@ -97,11 +97,14 @@ class HDRConverterGUI:
 
         # Image Titles
         self.original_title_label = ttk.Label(self.image_frame, text="Original (HDR):")
-        self.original_title_label.grid(row=0, column=0, sticky=tk.W, padx=(10, 10))
         self.converted_title_label = ttk.Label(self.image_frame, text="Converted (SDR):")
-        self.converted_title_label.grid(row=0, column=1, columnspan=2, sticky=tk.W, padx=(10, 10))
-        self.original_title_label.grid_remove()
-        self.converted_title_label.grid_remove()
+        # Initially hide the title labels based on display_image_var
+        if not self.display_image_var.get():
+            self.original_title_label.grid_remove()
+            self.converted_title_label.grid_remove()
+        else:
+            self.original_title_label.grid(row=0, column=0, sticky=tk.W, padx=(10, 10))
+            self.converted_title_label.grid(row=0, column=1, columnspan=2, sticky=tk.W, padx=(10, 10))
 
         # Image Labels
         self.original_image_label = ttk.Label(self.image_frame)
@@ -204,6 +207,7 @@ class HDRConverterGUI:
                 # Extract and display the frames
                 self.display_frames(video_path)
                 self.error_label.config(text="")
+                # Show title labels
                 self.original_title_label.grid()
                 self.converted_title_label.grid()
                 self.adjust_window_size()
@@ -212,6 +216,9 @@ class HDRConverterGUI:
                 self.handle_preview_error(e)
         else:
             self.clear_preview()
+            # Hide title labels
+            self.original_title_label.grid_remove()
+            self.converted_title_label.grid_remove()
             self.arrange_widgets(image_frame=False)
 
     def display_frames(self, video_path):

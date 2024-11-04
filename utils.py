@@ -14,7 +14,9 @@ if LOGGING_ENABLED:
     logging.basicConfig(level=logging.DEBUG, filename='debug.log', filemode='w',
                         format='%(name)s - %(levelname)s - %(message)s')
 else:
-    logging.basicConfig(level=logging.WARNING)  # Change to WARNING to suppress DEBUG logs
+    logging.basicConfig(level=logging.WARNING)
+    # Prevent any file handlers from being added when logging is disabled
+    logging.getLogger().handlers = []
 
 FFMPEG_FILTER = 'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap=reinhard,eq=gamma={gamma},scale={width}:{height}'
 

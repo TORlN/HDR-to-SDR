@@ -21,7 +21,7 @@ class ConversionManager:
         # Removed drop_target_registered attribute
 
     def start_conversion(self, input_path, output_path, gamma, progress_var,
-                         interactable_elements, root, open_after_conversion,
+                         interactable_elements, gui_instance, open_after_conversion,
                          cancel_button):
         """
         Start the conversion process.
@@ -32,7 +32,7 @@ class ConversionManager:
             gamma (float): Gamma correction value.
             progress_var (tk.DoubleVar): Variable to update the progress bar.
             interactable_elements (list): UI elements to disable during conversion.
-            root (tk.Tk): The root Tkinter window.
+            gui_instance (HDRConverterGUI): The GUI instance.
             open_after_conversion (bool): Whether to open the output file after conversion.
             cancel_button (ttk.Button): The cancel button widget.
         """
@@ -48,17 +48,16 @@ class ConversionManager:
 
         self.disable_ui(interactable_elements)
         cancel_button.config(command=lambda: self.cancel_conversion(
-            root, interactable_elements, cancel_button))
+            gui_instance, interactable_elements, cancel_button))
         cancel_button.grid()  # Show cancel button
 
         cmd = self.construct_ffmpeg_command(input_path, output_path, gamma, properties)
         self.process = self.start_ffmpeg_process(cmd)
 
+        # Pass the actual GUI instance to monitor_progress
         threading.Thread(target=self.monitor_progress, args=(
-            progress_var, properties['duration'], root, interactable_elements,
+            progress_var, properties['duration'], gui_instance, interactable_elements,
             cancel_button, output_path, open_after_conversion)).start()
-
-        # Removed drop target unregister logic
 
     def verify_paths(self, input_path, output_path):
         """Verify that the input and output paths are valid."""
@@ -117,7 +116,7 @@ class ConversionManager:
         )
         return process
 
-    def monitor_progress(self, progress_var, duration, root, interactable_elements,
+    def monitor_progress(self, progress_var, duration, gui_instance, interactable_elements,
                          cancel_button, output_path, open_after_conversion):
         """
         Monitor the conversion progress and update the UI accordingly.
@@ -135,11 +134,12 @@ class ConversionManager:
                 elapsed_time = self.parse_time(match.group(1))
                 progress = (elapsed_time / duration) * 100
                 progress_var.set(progress)
-                root.update_idletasks()  # Update the progress bar
+                # Schedule the update_idletasks to run in the main thread
+                gui_instance.root.after(0, gui_instance.root.update_idletasks)
 
         if self.process is not None:
             self.process.wait()
-            self.handle_completion(root, interactable_elements, cancel_button,
+            self.handle_completion(gui_instance, interactable_elements, cancel_button,
                                    output_path, open_after_conversion, error_messages)
 
     def parse_time(self, time_str):
@@ -147,29 +147,35 @@ class ConversionManager:
         hours, minutes, seconds = map(float, time_str.split(':'))
         return hours * 3600 + minutes * 60 + seconds
 
-    def handle_completion(self, root, interactable_elements, cancel_button,
+    def handle_completion(self, gui_instance, interactable_elements, cancel_button,
                           output_path, open_after_conversion, error_messages):
         """
         Handle the completion of the conversion process, whether successful or not.
         """
-        if self.process and self.process.returncode == 0:
-            messagebox.showinfo(
-                "Success", f"Conversion complete! Output saved to: {output_path}")
-            if open_after_conversion:
-                webbrowser.open(output_path)
-        elif not self.cancelled:
-            error_message = ''.join(error_messages)
-            messagebox.showerror(
-                "Error", f"Conversion failed with code {self.process.returncode}\n{error_message}")
-        else:
-            messagebox.showwarning("Cancelled", "Conversion was cancelled.")
+        def _handle():
+            if self.process and self.process.returncode == 0:
+                messagebox.showinfo(
+                    "Success", f"Conversion complete! Output saved to: {output_path}")
+                if open_after_conversion:
+                    webbrowser.open(output_path)
+            elif not self.cancelled:
+                error_message = ''.join(error_messages)
+                messagebox.showerror(
+                    "Error", f"Conversion failed with code {self.process.returncode}\n{error_message}")
+            else:
+                messagebox.showwarning("Cancelled", "Conversion was cancelled.")
 
-        self.enable_ui(interactable_elements)
-        cancel_button.grid_remove()  # Hide the cancel button
+            self.enable_ui(interactable_elements)
+            cancel_button.grid_remove()  # Hide the cancel button
 
-        # Removed drop target register logic
+            # Re-register drop target
+            if hasattr(gui_instance, 'register_drop_target'):
+                gui_instance.register_drop_target()
 
-    def cancel_conversion(self, root, interactable_elements, cancel_button):
+        # Schedule the handle_completion to run in the main thread
+        gui_instance.root.after(0, _handle)
+
+    def cancel_conversion(self, gui_instance, interactable_elements, cancel_button):
         """
         Cancel the ongoing conversion process and reset the UI.
         """
@@ -177,11 +183,15 @@ class ConversionManager:
         if self.process:
             self.process.terminate()
             self.process = None
-            messagebox.showinfo("Cancelled", "Video conversion has been cancelled.")
+            # Schedule the messagebox and UI updates to run in the main thread
+            gui_instance.root.after(0, lambda: messagebox.showinfo(
+                "Cancelled", "Video conversion has been cancelled."))
             self.enable_ui(interactable_elements)
             cancel_button.grid_remove()
 
-            # Removed drop target register logic
+            # Re-register drop target
+            if hasattr(gui_instance, 'register_drop_target'):
+                gui_instance.register_drop_target()
 
 # Instantiate the ConversionManager
 conversion_manager = ConversionManager()

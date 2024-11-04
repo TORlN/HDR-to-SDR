@@ -39,10 +39,10 @@ class HDRConverterGUI:
         # Bind events
         self.root.drop_target_register(DND_FILES)
         self.root.dnd_bind('<<Drop>>', self.handle_file_drop)
+        self.drop_target_registered = True  # Set to True after registering
 
         # Removed self.process since it's managed by conversion_manager
         self.cancelled = False  # Flag to track cancellation
-        self.drop_target_registered = False  # Track drop target registration status
 
     def create_widgets(self):
         """Create and arrange the widgets in the main window."""
@@ -275,6 +275,8 @@ class HDRConverterGUI:
     def handle_file_drop(self, event):
         """Handle file drop events and update the input and output path variables."""
         try:
+            if not self.drop_target_registered:
+                return  # Ignore drop if not registered
             file_path = event.data.strip('{}')
             if file_path:
                 self.input_path_var.set(file_path)
@@ -303,16 +305,17 @@ class HDRConverterGUI:
                 if not answer:
                     return
 
-            # Disable UI elements and prepare for conversion
-            self.cancel_button.grid()  # Show cancel button
+            # Unregister drop target before starting conversion
             if self.drop_target_registered:
-                self.root.drop_target_unregister()
-                self.drop_target_registered = False
+                self.unregister_drop_target()
 
+            # Show cancel button and disable interactable elements
+            self.cancel_button.grid()
+            
             # Start the conversion using the conversion_manager instance
             conversion_manager.start_conversion(
                 input_path, output_path, gamma, self.progress_var,
-                self.interactable_elements, self.root, self.open_after_conversion_var.get(),
+                self.interactable_elements, self, self.open_after_conversion_var.get(),
                 self.cancel_button
             )
         except Exception as e:
@@ -322,12 +325,19 @@ class HDRConverterGUI:
         """Cancel the ongoing video conversion process."""
         # Use the conversion_manager to cancel the conversion
         conversion_manager.cancel_conversion(
-            self.root, self.interactable_elements, self.cancel_button
+            self, self.interactable_elements, self.cancel_button
         )
-        # Safely re-register drop target
+        # The drop target is re-registered within the ConversionManager's cancel_conversion method
+
+    def register_drop_target(self):
+        """Register the drag and drop target."""
         if not self.drop_target_registered:
-            try:
-                self.root.drop_target_register(DND_FILES)
-                self.drop_target_registered = True
-            except Exception as e:
-                logging.error(f"Error registering drop target: {e}")
+            self.root.drop_target_register(DND_FILES)
+            self.root.dnd_bind('<<Drop>>', self.handle_file_drop)
+            self.drop_target_registered = True
+
+    def unregister_drop_target(self):
+        """Unregister the drag and drop target."""
+        if self.drop_target_registered:
+            self.root.drop_target_unregister()
+            self.drop_target_registered = False

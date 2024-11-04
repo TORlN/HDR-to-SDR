@@ -7,12 +7,12 @@ from PIL import Image
 This script initializes and runs a Tkinter GUI application.
 Modules:
     tkinter: Standard Python interface to the Tk GUI toolkit.
-    gui: Custom module containing the function to create the main window.
+    gui: Custom module containing the class to create the main window.
 Functions:
     create_main_window(root): Sets up the main window of the application.
 Execution:
-    When run as the main module, this script creates the main Tkinter window,
-    sets up the main window using the create_main_window function, and starts
+    When run as the main module, this script creates the main TkinterDnD window,
+    sets up the main window using the HDRConverterGUI class, and starts
     the Tkinter main event loop.
 """
 

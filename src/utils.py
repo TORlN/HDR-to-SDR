@@ -110,4 +110,3 @@ def get_video_properties(input_file):
         logging.error(f"Failed to get video properties: {e}")
         messagebox.showerror("Error", f"Failed to get video properties: {e}")
         return None
-        return None

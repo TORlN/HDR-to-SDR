@@ -61,7 +61,7 @@ This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The 
 
 4. Compile the executable:
     ```sh
-    pyinstaller --onefile --noconsole --name "HDR_to_SDR_Converter" --icon=logo/icon.ico --add-data ".venv/Lib/site-packages/sv_ttk;sv_ttk" --add-data ".venv/Lib/site-packages/tkinterdnd2;tkinterdnd2" src/main.py
+    pyinstaller --onefile --noconsole --name "HDR_to_SDR_Converter" --icon=logo/icon.ico --paths=.venv/Lib/site-packages --add-data ".venv/Lib/site-packages/sv_ttk;sv_ttk" --add-data ".venv/Lib/site-packages/tkinterdnd2;tkinterdnd2" --add-binary "src/ffmpeg.exe;ffmpeg.exe" --add-binary ".venv/Lib/site-packages/PIL;PIL" --add-binary ".venv/Lib/site-packages/numpy;numpy" src/main.py
     ```
 5. The compiled executable will be located in the `dist` directory.
 

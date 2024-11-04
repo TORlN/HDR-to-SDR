@@ -5,6 +5,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.exe
 
 # Virtual environment
 .venv/
@@ -20,7 +21,6 @@ venv.bak/
 build/
 dist/
 *.spec
-.gitignore
 
 # Installer logs
 pip-log.txt
@@ -40,3 +40,4 @@ htmlcov/
 # Script files
 *.sh
 *.bat
+.gitignore

@@ -18,6 +18,14 @@ FFPROBE_EXECUTABLE = None
 # Initialize logging
 def setup_logging():
     """Configure logging with fallback locations for Wine compatibility"""
+    if not LOGGING_ENABLED:
+        # Set up minimal console logging for warnings and errors only
+        logging.basicConfig(
+            level=logging.WARNING,
+            format='%(levelname)s - %(message)s'
+        )
+        return False
+
     try:
         # Get the executable's directory or current directory
         if getattr(sys, 'frozen', False):

@@ -6,45 +6,45 @@ from PIL import Image  # Added import
 
 class TestGetVideoProperties(unittest.TestCase):
 
-    @patch('ffmpeg.probe')
-    def test_get_video_properties(self, mock_probe):
-        # Mock the return value of ffmpeg.probe
-        mock_probe.return_value = {
-            'streams': [
+    @patch('src.utils.subprocess.Popen')
+    def test_get_video_properties(self, mock_popen):
+        # Mock subprocess.Popen to return a predefined JSON output as bytes
+        mock_process = mock_popen.return_value
+        mock_process.communicate.return_value = (b'''
+        {
+            "streams": [
                 {
-                    'codec_type': 'video',
-                    'width': 1920,
-                    'height': 1080,
-                    'bit_rate': '4000000',
-                    'codec_name': 'h264',
-                    'avg_frame_rate': '30/1',
-                    'duration': '120.0'
+                    "codec_type": "video",
+                    "width": 1920,
+                    "height": 1080,
+                    "bit_rate": "5000000",
+                    "codec_name": "h264",
+                    "avg_frame_rate": "30/1",
+                    "duration": "600.0"
                 },
                 {
-                    'codec_type': 'audio',
-                    'codec_name': 'aac',
-                    'bit_rate': '128000'
+                    "codec_type": "audio",
+                    "codec_name": "aac",
+                    "bit_rate": "128000"
                 }
             ]
         }
+        ''', b'')
+        mock_process.returncode = 0
 
+        input_file = 'path/to/test_video.mkv'
         expected_properties = {
             "width": 1920,
             "height": 1080,
-            "bit_rate": 4000000,
-            "codec_name": 'h264',
+            "bit_rate": 5000000,
+            "codec_name": "h264",
             "frame_rate": 30.0,
-            "audio_codec": 'aac',
+            "audio_codec": "aac",
             "audio_bit_rate": 128000,
-            "duration": 120.0
+            "duration": 600.0
         }
 
-        for ext in ['mp4', 'mkv', 'mov']:
-            with self.subTest(ext=ext):
-                properties = get_video_properties(f'dummy_path.{ext}')
-                self.assertEqual(properties, expected_properties)
-
-        properties = get_video_properties('dummy_path')
+        properties = get_video_properties(input_file)
         self.assertEqual(properties, expected_properties)
 
 class TestRunFfmpegCommand(unittest.TestCase):

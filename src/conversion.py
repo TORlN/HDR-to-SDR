@@ -6,7 +6,7 @@ import multiprocessing
 import re
 import logging
 from tkinter import messagebox
-from utils import get_video_properties, FFMPEG_FILTER
+from utils import get_video_properties, FFMPEG_FILTER, FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE
 from tkinterdnd2 import DND_FILES
 import sys  # Added import
 
@@ -36,10 +36,14 @@ class ConversionManager:
             open_after_conversion (bool): Whether to open the output file after conversion.
             cancel_button (ttk.Button): The cancel button widget.
         """
-        self.cancelled = False  # Reset the cancelled flag at the start
-
         if not self.verify_paths(input_path, output_path):
             return
+
+        # Ensure paths are absolute
+        input_path = os.path.abspath(input_path)
+        output_path = os.path.abspath(output_path)
+
+        self.cancelled = False  # Reset the cancelled flag at the start
 
         properties = get_video_properties(input_path)
         if properties is None:
@@ -82,9 +86,10 @@ class ConversionManager:
     def construct_ffmpeg_command(self, input_path, output_path, gamma, properties):
         """Construct the ffmpeg command for video conversion."""
         num_cores = multiprocessing.cpu_count()
+        
         cmd = [
-            'ffmpeg', '-loglevel', 'info',  # Set log level to info to enable progress messages
-            '-i', input_path,
+            FFMPEG_EXECUTABLE, '-loglevel', 'info',
+            '-i', os.path.normpath(input_path),
             '-vf', FFMPEG_FILTER.format(
                 gamma=gamma, width=properties["width"], height=properties["height"]),
             '-c:v', properties['codec_name'],
@@ -95,20 +100,21 @@ class ConversionManager:
             '-preset', 'faster',
             '-acodec', properties['audio_codec'],
             '-b:a', str(properties['audio_bit_rate']),
-            output_path,
+            os.path.normpath(output_path),
             '-y'
         ]
-        logging.debug(f"Running command: {' '.join(cmd)}")
+
+        logging.debug(f"Constructed ffmpeg command: {' '.join(cmd)}")
         return cmd
 
     def start_ffmpeg_process(self, cmd):
         """Start the ffmpeg subprocess with the given command."""
         startupinfo = None
-        if sys.platform == 'win32':
+        if sys.platform == "win32":
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startupinfo.wShowWindow = subprocess.SW_HIDE
-
+        
         process = subprocess.Popen(
             cmd,
             stderr=subprocess.PIPE,
@@ -116,6 +122,7 @@ class ConversionManager:
             universal_newlines=True,
             startupinfo=startupinfo
         )
+        logging.debug(f"Started FFmpeg process with command: {' '.join(cmd)}")
         return process
 
     def monitor_progress(self, progress_var, duration, gui_instance, interactable_elements,
@@ -129,9 +136,10 @@ class ConversionManager:
         for line in self.process.stderr:
             if self.process is None:
                 return  # Exit if the process is None (cancelled)
-            logging.debug(line.strip())
-            error_messages.append(line)
-            match = progress_pattern.search(line)
+            decoded_line = line.strip()
+            logging.debug(decoded_line)
+            error_messages.append(decoded_line)
+            match = progress_pattern.search(decoded_line)
             if match:
                 elapsed_time = self.parse_time(match.group(1))
                 progress = (elapsed_time / duration) * 100
@@ -157,12 +165,14 @@ class ConversionManager:
         """
         def _handle():
             if self.process and self.process.returncode == 0:
+                logging.info("Conversion completed successfully.")
                 messagebox.showinfo(
                     "Success", f"Conversion complete! Output saved to: {output_path}")
                 if open_after_conversion:
                     webbrowser.open(output_path)
             elif not self.cancelled:
-                error_message = ''.join(error_messages)
+                error_message = '\n'.join(error_messages)
+                logging.error(f"Conversion failed with code {self.process.returncode}: {error_message}")
                 messagebox.showerror(
                     "Error", f"Conversion failed with code {self.process.returncode}\n{error_message}")
             # Removed the else block to prevent double message boxes on cancellation

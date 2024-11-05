@@ -13,6 +13,7 @@ from tkinter import Tk, DoubleVar  # Added DoubleVar import
 from tkinter import ttk
 from PIL import Image
 from src.utils import FFMPEG_FILTER
+from src.utils import FFMPEG_EXECUTABLE  # Import FFMPEG_EXECUTABLE
 
 class TestConversionManager(unittest.TestCase):
 
@@ -61,7 +62,7 @@ class TestConversionManager(unittest.TestCase):
 
         self.assertIsNotNone(manager.process)
         mock_popen.assert_called_once()
-        mock_get_props.assert_called_once_with('input.mp4')
+        mock_get_props.assert_called_once_with(os.path.abspath('input.mp4'))
 
     @patch('src.conversion.messagebox.showinfo')  # Mock the showinfo popup
     @patch('src.conversion.subprocess.Popen')
@@ -132,14 +133,15 @@ class TestConversionManager(unittest.TestCase):
 
         # Additional assertions can be added here as needed
 
+    @patch('src.conversion.get_video_properties')  # This mock should be innermost
     @patch('src.conversion.messagebox.showwarning')
-    def test_start_conversion_invalid_paths(self, mock_showwarning):
+    def test_start_conversion_invalid_paths(self, mock_showwarning, mock_get_props):
         """Test start_conversion with invalid input or output paths."""
         manager = ConversionManager()
         mock_gui = MagicMock()
-        mock_gui.root = Tk()  # Ensure root is a Tk instance
+        mock_gui.root = Tk()
         mock_gui.root.after = MagicMock()
-        progress_var = DoubleVar(master=mock_gui.root)  # Ensure DoubleVar is created with the root window
+        progress_var = DoubleVar(master=mock_gui.root)
         interactable_elements = []
         cancel_button = MagicMock()
 
@@ -154,6 +156,9 @@ class TestConversionManager(unittest.TestCase):
         mock_showwarning.assert_called_with(
             "Warning", "Please select both an input file and specify an output file."
         )
+        
+        # Verify get_video_properties was never called at the end
+        mock_get_props.assert_not_called()
 
     @patch('src.conversion.get_video_properties')
     @patch('src.conversion.messagebox.showwarning')  # Mock the showwarning popup
@@ -168,12 +173,14 @@ class TestConversionManager(unittest.TestCase):
         interactable_elements = []
         cancel_button = MagicMock()
 
-        manager.start_conversion('input.mp4', 'output.mkv', 2.2, progress_var, interactable_elements, mock_gui, False, cancel_button)
+        input_path = 'input.mp4'
+        manager.start_conversion(input_path, 'output.mkv', 2.2, progress_var, 
+                               interactable_elements, mock_gui, False, cancel_button)
         mock_showwarning.assert_called_once_with(
             "Warning", "Failed to retrieve video properties."
         )
         self.assertIsNone(manager.process)
-        mock_get_props.assert_called_once_with('input.mp4')
+        mock_get_props.assert_called_once_with(os.path.abspath(input_path))
 
     @patch('src.conversion.subprocess.Popen')
     def test_construct_ffmpeg_command(self, mock_popen):
@@ -197,18 +204,19 @@ class TestConversionManager(unittest.TestCase):
         )
         cmd = manager.construct_ffmpeg_command(input_path, output_path, gamma, properties)
         expected_cmd = [
-            'ffmpeg', '-loglevel', 'info',
-            '-i', 'input.mp4',
+            FFMPEG_EXECUTABLE,  # Use the actual FFMPEG_EXECUTABLE path
+            '-loglevel', 'info',
+            '-i', os.path.normpath(input_path),
             '-vf', expected_filter,
-            '-c:v', 'h264',
-            '-b:v', '4000000',
-            '-r', '30.0',
-            '-aspect', '1920/1080',
+            '-c:v', properties['codec_name'],
+            '-b:v', str(properties['bit_rate']),
+            '-r', str(properties['frame_rate']),
+            '-aspect', f'{properties["width"]}/{properties["height"]}',
             '-threads', str(multiprocessing.cpu_count()),
             '-preset', 'faster',
-            '-acodec', 'aac',
-            '-b:a', '128000',
-            'output.mkv',
+            '-acodec', properties['audio_codec'],
+            '-b:a', str(properties['audio_bit_rate']),
+            os.path.normpath(output_path),
             '-y'
         ]
         self.assertEqual(cmd, expected_cmd)

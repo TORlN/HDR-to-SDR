@@ -113,16 +113,18 @@ class TestHDRConverterGUI(TestCase):
         self.gui.original_image_label.config.assert_called_with(image=mock_photo)
         self.gui.converted_image_label.config.assert_called_with(image=mock_photo)
 
-    @patch('src.gui.conversion_manager.start_conversion')
-    @patch('src.gui.HDRConverterGUI.unregister_drop_target')
     @patch('src.gui.messagebox.askyesno')
-    def test_video_conversion(self, mock_confirm, mock_unregister, mock_convert):
+    @patch('src.gui.HDRConverterGUI.unregister_drop_target')
+    @patch('src.gui.conversion_manager.start_conversion')
+    @patch('src.gui.os.path.isfile')  # Add this patch
+    def test_video_conversion(self, mock_isfile, mock_start_conversion, mock_unregister, mock_confirm):
         """Test video conversion initialization."""
         self._setup_conversion_test(mock_confirm)
+        mock_isfile.return_value = True  # Make os.path.isfile return True
         
         self.gui.convert_video()
 
-        self._assert_conversion_started(mock_unregister, mock_convert)
+        self._assert_conversion_started(mock_unregister, mock_start_conversion)
 
     def test_ui_state_management(self):
         """Test UI element state management."""
@@ -168,6 +170,9 @@ class TestHDRConverterGUI(TestCase):
         self.gui.gamma_var.get.return_value = 2.2
         
         mock_confirm.return_value = True
+        
+        # Ensure drop_target_registered is True
+        self.gui.drop_target_registered = True
 
     def _assert_conversion_started(self, mock_unregister, mock_convert):
         """Helper method to verify conversion startup."""

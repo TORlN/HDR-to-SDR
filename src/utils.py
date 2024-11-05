@@ -7,42 +7,158 @@ import numpy as np
 import io
 import logging
 import sys  # Added import
+import json  # Added import
 
 # Logging configuration
 LOGGING_ENABLED = False # Changed to True to enable logging
 
-if LOGGING_ENABLED:
-    logging.basicConfig(level=logging.DEBUG, filename='debug.log', filemode='w',
-                        format='%(name)s - %(levelname)s - %(message)s')
-else:
-    logging.basicConfig(level=logging.WARNING)
-    # Prevent any file handlers from being added when logging is disabled
-    logging.getLogger().handlers = []
+def setup_logging():
+    """Configure logging with fallback locations for Wine compatibility"""
+    try:
+        # Get the executable's directory or current directory
+        if getattr(sys, 'frozen', False):
+            base_dir = os.path.dirname(os.path.abspath(sys.executable))
+        else:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        log_paths = [
+            os.path.join(base_dir, 'debug.log'),  # Try executable directory
+            os.path.join(os.getcwd(), 'debug.log'),  # Try current working directory
+            os.path.expanduser('~/debug.log'),  # Try user's home directory
+            'debug.log'  # Try current directory as last resort
+        ]
+        
+        for log_path in log_paths:
+            try:
+                logging.basicConfig(
+                    level=logging.DEBUG if LOGGING_ENABLED else logging.WARNING,
+                    filename=log_path,
+                    filemode='w',
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+                )
+                # Add console handler for immediate feedback
+                console = logging.StreamHandler()
+                console.setLevel(logging.DEBUG if LOGGING_ENABLED else logging.WARNING)
+                formatter = logging.Formatter('%(levelname)s - %(message)s')
+                console.setFormatter(formatter)
+                logging.getLogger('').addHandler(console)
+                
+                logging.info(f"Logging initialized. Log file: {log_path}")
+                logging.info(f"Platform: {sys.platform}")
+                logging.info(f"Executable path: {sys.executable if getattr(sys, 'frozen', False) else __file__}")
+                return True
+            except (IOError, PermissionError) as e:
+                print(f"Failed to set up logging at {log_path}: {e}")
+                continue
+        
+        # If all paths fail, set up console-only logging
+        logging.basicConfig(
+            level=logging.DEBUG if LOGGING_ENABLED else logging.WARNING,
+            format='%(levelname)s - %(message)s'
+        )
+        logging.warning("Failed to create log file. Logging to console only.")
+        return False
+    
+    except Exception as e:
+        print(f"Error setting up logging: {e}")
+        return False
+
+# Initialize logging
+setup_logging()
 
 FFMPEG_FILTER = 'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap=reinhard,eq=gamma={gamma},scale={width}:{height}'
 
-if getattr(sys, 'frozen', False):
-    # If the application is frozen by PyInstaller, use the bundled ffmpeg.exe in root
-    FFMPEG_EXECUTABLE = os.path.join(sys._MEIPASS, "ffmpeg.exe")
-    logging.debug(f"FFMPEG_EXECUTABLE set to: {FFMPEG_EXECUTABLE}")
+def get_executable_path(filename):
+    """Helper function to get the correct path for bundled executables"""
+    try:
+        if getattr(sys, 'frozen', False):
+            base_path = sys._MEIPASS
+        else:
+            base_path = os.path.dirname(os.path.abspath(__file__))
+        
+        # Handle platform-specific executable names
+        if sys.platform != 'win32' and filename.endswith('.exe'):
+            filename = filename[:-4]  # Remove .exe for non-Windows platforms
+        
+        # Check bundled executable first
+        executable = os.path.normpath(os.path.join(base_path, filename))
+        logging.debug(f"Looking for {filename} at: {executable}")
+        
+        if not os.path.exists(executable):
+            # Try system PATH as fallback
+            import shutil
+            system_exec = shutil.which(filename)
+            if system_exec:
+                executable = system_exec
+                logging.debug(f"Found {filename} in system PATH: {executable}")
+            else:
+                raise FileNotFoundError(f"{filename} not found in bundle or system PATH")
+        
+        return executable
+
+    except Exception as e:
+        logging.error(f"Error finding {filename}: {str(e)}")
+        raise
+
+# Define global variables for FFmpeg executables
+FFMPEG_EXECUTABLE = None
+FFPROBE_EXECUTABLE = None
+
+def verify_ffmpeg_files():
+    """Verify that ffmpeg files exist and are accessible"""
+    global FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE
+    try:
+        if getattr(sys, 'frozen', False):
+            base_path = sys._MEIPASS
+            logging.debug(f"Verifying FFmpeg files in bundled environment: {base_path}")
+        else:
+            base_path = os.path.dirname(os.path.abspath(__file__))
+            logging.debug(f"Verifying FFmpeg files in normal environment: {base_path}")
+        
+        files_to_check = ['ffmpeg.exe', 'ffprobe.exe', 'ffplay.exe']
+        found_files = {}
+        
+        for file in files_to_check:
+            try:
+                path = get_executable_path(file)
+                found_files[file] = path
+                logging.info(f"Found {file} at: {path}")
+            except FileNotFoundError as e:
+                logging.error(f"Could not find {file}: {str(e)}")
+                raise
+
+        FFMPEG_EXECUTABLE = found_files['ffmpeg.exe']
+        FFPROBE_EXECUTABLE = found_files['ffprobe.exe']
+
+        return found_files
+
+    except Exception as e:
+        logging.error(f"Error verifying FFmpeg files: {str(e)}")
+        raise
+
+# Update the FFmpeg configuration section
+try:
+    verify_ffmpeg_files()
     
-    # Verify ffmpeg.exe exists
-    if not os.path.exists(FFMPEG_EXECUTABLE):
-        logging.error(f"ffmpeg.exe not found at {FFMPEG_EXECUTABLE}")
-    else:
-        logging.debug("ffmpeg.exe successfully found in the bundled application.")
+    # Configure ffmpeg-python
+    ffmpeg._ffmpeg_binary = FFMPEG_EXECUTABLE
+    ffmpeg._ffprobe_binary = FFPROBE_EXECUTABLE
     
-    # Optional: List all files in the bundled directory for verification
-    logging.debug("Bundled application files:")
-    for root_dir, dirs, files in os.walk(sys._MEIPASS):
-        for file in files:
-            logging.debug(os.path.join(root_dir, file))
-else:
-    # During development, assume ffmpeg is in the system's PATH
-    FFMPEG_EXECUTABLE = 'ffmpeg'
-    logging.debug(f"FFMPEG_EXECUTABLE set to system PATH: {FFMPEG_EXECUTABLE}")
+    # Set environment variables
+    os.environ['FFMPEG_BINARY'] = FFMPEG_EXECUTABLE
+    os.environ['FFPROBE_BINARY'] = FFPROBE_EXECUTABLE
+
+except Exception as e:
+    logging.error(f"Error setting up ffmpeg: {str(e)}", exc_info=True)
+    messagebox.showerror("Error", f"Failed to initialize ffmpeg: {str(e)}")
+    raise
+
+# Add diagnostic logging to confirm paths
+logging.debug(f"Configured ffmpeg binary: {ffmpeg._ffmpeg_binary}")
+logging.debug(f"Configured ffprobe binary: {ffmpeg._ffprobe_binary}")
 
 def run_ffmpeg_command(cmd):
+    """Run an FFmpeg command with proper path handling"""
     if sys.platform == "win32":
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -50,23 +166,34 @@ def run_ffmpeg_command(cmd):
     else:
         startupinfo = None
     
-    # Replace the ffmpeg command with the bundled executable path
+    # Replace the ffmpeg command with the bundled/system executable path
     cmd[0] = FFMPEG_EXECUTABLE
+    
+    # Normalize all paths in command
+    cmd = [os.path.normpath(str(arg)) if os.path.sep in str(arg) else str(arg) for arg in cmd]
+    
     logging.debug(f"Running ffmpeg command: {' '.join(cmd)}")
     
     try:
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, startupinfo=startupinfo)
-    except FileNotFoundError:
-        logging.error("ffmpeg executable not found. Please ensure ffmpeg is bundled correctly with the application.")
-        raise RuntimeError("ffmpeg executable not found. Please reinstall the application.")
-    
-    out, err = process.communicate()
-    
-    if process.returncode != 0:
-        logging.error(f"ffmpeg error: {err.decode('utf-8')}")
-        raise RuntimeError(f"ffmpeg error: {err.decode('utf-8')}")
-    
-    return out
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            startupinfo=startupinfo
+        )
+        
+        out, err = process.communicate()
+        
+        if process.returncode != 0:
+            error_msg = err.decode('utf-8', errors='replace')
+            logging.error(f"FFmpeg error: {error_msg}")
+            raise RuntimeError(f"FFmpeg error: {error_msg}")
+        
+        return out
+        
+    except Exception as e:
+        logging.error(f"Error running FFmpeg command: {str(e)}")
+        raise RuntimeError(f"Error running FFmpeg command: {str(e)}")
 
 def extract_frame_with_conversion(video_path, gamma):
     """
@@ -103,40 +230,56 @@ def extract_frame(video_path):
     return Image.open(io.BytesIO(out))
 
 def get_video_properties(input_file):
-    """
-    Retrieve properties of a video file using ffmpeg.
-    Args:
-        input_file (str): Path to the input video file.
-    Returns:
-        dict: A dictionary containing the following video properties:
-            - width (int): Width of the video in pixels.
-            - height (int): Height of the video in pixels.
-            - bit_rate (int): Bit rate of the video in bits per second.
-            - codec_name (str): Name of the video codec.
-            - frame_rate (float): Frame rate of the video.
-            - audio_codec (str): Name of the audio codec (default is 'aac' if no audio stream is found).
-            - audio_bit_rate (int): Bit rate of the audio in bits per second (default is 128000 if no bit rate is found).
-            - duration (float): Duration of the video in seconds.
-    Raises:
-        Exception: If there is an error in retrieving video properties, an error message is shown and None is returned.
-    """
+    command = [
+        FFPROBE_EXECUTABLE,
+        '-v', 'quiet',
+        '-print_format', 'json',
+        '-show_streams',
+        os.path.normpath(input_file)
+    ]
+    
     try:
-        probe = ffmpeg.probe(input_file)
-        video_stream = next(stream for stream in probe['streams'] if stream['codec_type'] == 'video')
-        audio_stream = next((stream for stream in probe['streams'] if stream['codec_type'] == 'audio'), None)
+        result = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        output, _ = result.communicate()
         
-        properties = {
-            "width": int(video_stream['width']),
-            "height": int(video_stream['height']),
-            "bit_rate": int(video_stream.get('bit_rate', 5000000)),  # Default bit rate is 5 Mbps
-            "codec_name": video_stream['codec_name'],
-            "frame_rate": eval(video_stream['avg_frame_rate']),  # Use avg_frame_rate for accurate frame rate
-            "audio_codec": audio_stream['codec_name'] if audio_stream else 'aac',  # Default audio codec is AAC
-            "audio_bit_rate": int(audio_stream['bit_rate']) if audio_stream and 'bit_rate' in audio_stream else 128000,  # Default audio bit rate is 128 kbps
-            "duration": float(video_stream['duration'])
+        if result.returncode != 0:
+            return None
+            
+        # Handle both string and bytes output
+        if isinstance(output, bytes):
+            output = output.decode('utf-8')
+            
+        data = json.loads(output)
+        
+        video_stream = None
+        audio_stream = None
+        
+        for stream in data.get('streams', []):
+            if stream['codec_type'] == 'video' and not video_stream:
+                video_stream = stream
+            elif stream['codec_type'] == 'audio' and not audio_stream:
+                audio_stream = stream
+        
+        if not video_stream:
+            return None
+            
+        # Parse frame rate which might be in format "30/1"
+        frame_rate = video_stream.get('avg_frame_rate', '0/1')
+        if '/' in frame_rate:
+            num, den = map(int, frame_rate.split('/'))
+            frame_rate = num / den if den != 0 else 0
+            
+        return {
+            "width": int(video_stream.get('width', 0)),
+            "height": int(video_stream.get('height', 0)),
+            "bit_rate": int(video_stream.get('bit_rate', 0)),
+            "codec_name": video_stream.get('codec_name', ''),
+            "frame_rate": float(frame_rate),
+            "duration": float(video_stream.get('duration', 0)),
+            "audio_codec": audio_stream.get('codec_name', '') if audio_stream else '',
+            "audio_bit_rate": int(audio_stream.get('bit_rate', 0)) if audio_stream else 0
         }
-        return properties
-    except Exception as e:
-        logging.error(f"Failed to get video properties: {e}")
-        messagebox.showerror("Error", f"Failed to get video properties: {e}")
+        
+    except (subprocess.SubprocessError, json.JSONDecodeError, ValueError) as e:
+        print(f"Error getting video properties: {str(e)}")
         return None

@@ -306,12 +306,16 @@ class HDRConverterGUI:
     def convert_video(self):
         """Convert the video from HDR to SDR."""
         try:
-            input_path = self.input_path_var.get()
-            output_path = self.output_path_var.get()
+            input_path = os.path.normpath(self.input_path_var.get())
+            output_path = os.path.normpath(self.output_path_var.get())
             gamma = self.gamma_var.get()
 
             if not input_path or not output_path:
                 messagebox.showwarning("Warning", "Please select both an input file and specify an output file.")
+                return
+
+            if not os.path.isfile(input_path):
+                messagebox.showerror("Error", f"Input file not found: {input_path}")
                 return
 
             if os.path.exists(output_path):
@@ -326,6 +330,8 @@ class HDRConverterGUI:
             # Show cancel button and disable interactable elements
             self.cancel_button.grid()
             
+            logging.info(f"Starting conversion - Input: {input_path}, Output: {output_path}, Gamma: {gamma}")
+            
             # Start the conversion using the conversion_manager instance
             conversion_manager.start_conversion(
                 input_path, output_path, gamma, self.progress_var,
@@ -333,6 +339,7 @@ class HDRConverterGUI:
                 self.cancel_button
             )
         except Exception as e:
+            logging.error(f"Conversion error: {str(e)}", exc_info=True)
             messagebox.showerror("Conversion Error", f"An error occurred during conversion: {e}")
 
     def cancel_conversion(self):

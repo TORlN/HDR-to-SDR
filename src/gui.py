@@ -203,11 +203,22 @@ class HDRConverterGUI:
     def select_file(self):
         """Open a file dialog for the user to select a video file."""
         file_path = filedialog.askopenfilename(
-            filetypes=[("MP4 files", "*.mp4"), ("MKV files", "*.mkv"), ("MOV files", "*.mov")]
+            filetypes=[
+                ("All Video Files", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v"),
+                ("MP4 files", "*.mp4"),
+                ("MKV files", "*.mkv"),
+                ("MOV files", "*.mov"),
+                ("AVI files", "*.avi"),
+                ("WebM files", "*.webm"),
+                ("M4V files", "*.m4v"),
+                ("All files", "*.*")
+            ]
         )
         if file_path:
             self.input_path_var.set(file_path)
-            self.output_path_var.set(os.path.splitext(file_path)[0] + "_sdr.mp4")
+            # Keep the same extension for output file
+            base, ext = os.path.splitext(file_path)
+            self.output_path_var.set(f"{base}_sdr{ext}")
             self.button_frame.grid()
             self.image_frame.grid()
             self.action_frame.grid()
@@ -294,7 +305,9 @@ class HDRConverterGUI:
             file_path = event.data.strip('{}')
             if file_path:
                 self.input_path_var.set(file_path)
-                self.output_path_var.set(os.path.splitext(file_path)[0] + "_sdr.mp4")
+                # Keep the same extension for output file
+                base, ext = os.path.splitext(file_path)
+                self.output_path_var.set(f"{base}_sdr{ext}")
                 self.button_frame.grid()
                 self.image_frame.grid()
                 self.action_frame.grid()

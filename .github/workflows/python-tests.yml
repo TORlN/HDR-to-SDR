@@ -15,15 +15,19 @@ jobs:
     steps:
     - name: Check out code
       uses: actions/checkout@v3
+
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
+
     - name: Install dependencies
       run: |
-        sudo apt-get install -y xvfb  # Install Xvfb
+        sudo apt-get update
+        sudo apt-get install -y xvfb ffmpeg  # Install Xvfb and ffmpeg
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+
     - name: Run tests
       run: |
         xvfb-run -a python -m unittest discover -s test -p '*_test.py'

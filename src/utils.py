@@ -10,7 +10,7 @@ import sys
 import json
 
 # Constants and initialization
-LOGGING_ENABLED = True
+LOGGING_ENABLED = False
 FFMPEG_FILTER = 'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap=reinhard,eq=gamma={gamma},scale={width}:{height}'
 FFMPEG_EXECUTABLE = None
 FFPROBE_EXECUTABLE = None

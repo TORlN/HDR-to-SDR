@@ -10,7 +10,7 @@ import sys  # Added import
 import json  # Added import
 
 # Logging configuration
-LOGGING_ENABLED = False # Changed to True to enable logging
+LOGGING_ENABLED = True # Changed to True to enable logging
 
 def setup_logging():
     """Configure logging with fallback locations for Wine compatibility"""
@@ -197,32 +197,48 @@ def run_ffmpeg_command(cmd):
 
 def extract_frame_with_conversion(video_path, gamma):
     """
-    Extracts a frame from the video and applies gamma correction.
+    Extracts a frame from the video 1/3rd of the way through and applies gamma correction.
     Args:
         video_path (str): The path to the video file.
         gamma (float): The gamma correction value.
     Returns:
-        PIL.Image: The extracted frame as a PIL image.
+        PIL.Image: The extracted and gamma-corrected frame as a PIL image.
     """
+    properties = get_video_properties(video_path)
+    if not properties or properties['duration'] == 0:
+        raise ValueError("Invalid video properties or duration.")
+
+    target_time = properties['duration'] / 3  # Changed to 1/3rd of the duration
+
     cmd = [
-        'ffmpeg', '-i', video_path,
+        FFMPEG_EXECUTABLE, '-ss', str(target_time), '-i', video_path,
         '-vf', FFMPEG_FILTER.format(gamma=gamma, width='iw', height='ih'),
         '-vframes', '1', '-f', 'image2pipe', '-'
     ]
-    
+
     out = run_ffmpeg_command(cmd)
-    return Image.open(io.BytesIO(out))
+    try:
+        return Image.open(io.BytesIO(out))
+    except UnidentifiedImageError as e:
+        logging.error(f"Failed to extract and convert frame: {e}")
+        raise RuntimeError("Failed to extract and convert frame.")
 
 def extract_frame(video_path):
     """
-    Extracts a frame from the video without applying any modifications.
+    Extracts a frame from the video 1/3rd of the way through.
     Args:
         video_path (str): The path to the video file.
     Returns:
         PIL.Image: The extracted frame as a PIL image.
     """
+    properties = get_video_properties(video_path)
+    if not properties or properties['duration'] == 0:
+        raise ValueError("Invalid video properties or duration.")
+
+    target_time = properties['duration'] / 3  # Changed to 1/3rd of the duration
+    
     cmd = [
-        'ffmpeg', '-i', video_path,
+        FFMPEG_EXECUTABLE, '-ss', str(target_time), '-i', video_path,
         '-vframes', '1', '-f', 'image2pipe', '-'
     ]
     
@@ -235,9 +251,10 @@ def get_video_properties(input_file):
         '-v', 'quiet',
         '-print_format', 'json',
         '-show_streams',
+        '-show_format',
         os.path.normpath(input_file)
     ]
-    
+
     try:
         result = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         output, _ = result.communicate()
@@ -245,7 +262,6 @@ def get_video_properties(input_file):
         if result.returncode != 0:
             return None
             
-        # Handle both string and bytes output
         if isinstance(output, bytes):
             output = output.decode('utf-8')
             
@@ -253,21 +269,25 @@ def get_video_properties(input_file):
         
         video_stream = None
         audio_stream = None
+        subtitle_streams = []
         
         for stream in data.get('streams', []):
             if stream['codec_type'] == 'video' and not video_stream:
                 video_stream = stream
             elif stream['codec_type'] == 'audio' and not audio_stream:
                 audio_stream = stream
+            elif stream['codec_type'] == 'subtitle':
+                subtitle_streams.append(stream)
         
         if not video_stream:
             return None
             
-        # Parse frame rate which might be in format "30/1"
         frame_rate = video_stream.get('avg_frame_rate', '0/1')
         if '/' in frame_rate:
             num, den = map(int, frame_rate.split('/'))
             frame_rate = num / den if den != 0 else 0
+        
+        duration = float(data['format'].get('duration', 0))
             
         return {
             "width": int(video_stream.get('width', 0)),
@@ -275,9 +295,10 @@ def get_video_properties(input_file):
             "bit_rate": int(video_stream.get('bit_rate', 0)),
             "codec_name": video_stream.get('codec_name', ''),
             "frame_rate": float(frame_rate),
-            "duration": float(video_stream.get('duration', 0)),
+            "duration": duration,
             "audio_codec": audio_stream.get('codec_name', '') if audio_stream else '',
-            "audio_bit_rate": int(audio_stream.get('bit_rate', 0)) if audio_stream else 0
+            "audio_bit_rate": int(audio_stream.get('bit_rate', 0)) if audio_stream else 0,
+            "subtitle_streams": subtitle_streams
         }
         
     except (subprocess.SubprocessError, json.JSONDecodeError, ValueError) as e:

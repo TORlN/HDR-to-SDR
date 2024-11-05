@@ -70,6 +70,7 @@ This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The 
         --add-data ".venv\Lib\site-packages\PIL;PIL" ^
         --add-binary "src\ffmpeg.exe;." ^
         --add-binary "src\ffprobe.exe;." ^
+        --add-binary "src\ffplay.exe;." ^
         --collect-submodules numpy ^
         --log-level DEBUG ^
         src\main.py

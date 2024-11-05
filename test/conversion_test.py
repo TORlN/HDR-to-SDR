@@ -15,6 +15,16 @@ from PIL import Image
 from src.utils import FFMPEG_FILTER
 from src.utils import FFMPEG_EXECUTABLE  # Import FFMPEG_EXECUTABLE
 
+def run_ffmpeg_command(command):
+    """Run an FFmpeg command and return output. Raises RuntimeError if command fails."""
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    output, error = process.communicate()
+    
+    if process.returncode != 0:
+        raise RuntimeError(f"FFmpeg command failed with error: {error.decode()}")
+    
+    return output.decode()
+
 class TestConversionManager(unittest.TestCase):
 
     @patch('src.conversion.get_video_properties')
@@ -28,7 +38,8 @@ class TestConversionManager(unittest.TestCase):
             "frame_rate": 30.0,
             "audio_codec": 'aac',
             "audio_bit_rate": 128000,
-            "duration": 120.0
+            "duration": 120.0,
+            "subtitle_streams": []  # Ensure this key is present
         }
 
         mock_process = MagicMock()
@@ -102,7 +113,8 @@ class TestConversionManager(unittest.TestCase):
             "frame_rate": 30.0,
             "audio_codec": 'aac',
             "audio_bit_rate": 128000,
-            "duration": 120.0
+            "duration": 120.0,
+            "subtitle_streams": []  # Ensure this key is present
         }
 
         mock_process = MagicMock()
@@ -215,10 +227,57 @@ class TestConversionManager(unittest.TestCase):
             '-threads', str(multiprocessing.cpu_count()),
             '-preset', 'faster',
             '-acodec', properties['audio_codec'],
+            '-strict', '-2',  # Added to enable experimental codecs
             '-b:a', str(properties['audio_bit_rate']),
             os.path.normpath(output_path),
             '-y'
         ]
+        self.assertEqual(cmd, expected_cmd)
+
+    @patch('src.conversion.get_video_properties')
+    def test_construct_ffmpeg_command_with_subtitles(self, mock_get_props):
+        """Test that construct_ffmpeg_command includes subtitle streams when available."""
+        mock_get_props.return_value = {
+            "width": 1920,
+            "height": 1080,
+            "bit_rate": 4000000,
+            "codec_name": 'h264',
+            "frame_rate": 30.0,
+            "audio_codec": 'aac',
+            "audio_bit_rate": 128000,
+            "duration": 120.0,
+            "subtitle_streams": [
+                {"codec_type": "subtitle", "codec_name": "srt", "index": 2}
+            ]
+        }
+
+        manager = ConversionManager()
+        cmd = manager.construct_ffmpeg_command(
+            'input.mp4',
+            'output.mkv',
+            2.2,
+            mock_get_props.return_value
+        )
+
+        expected_cmd = [
+            FFMPEG_EXECUTABLE, '-loglevel', 'info',
+            '-i', os.path.normpath('input.mp4'),
+            '-vf', FFMPEG_FILTER.format(gamma=2.2, width=1920, height=1080),
+            '-c:v', 'h264',
+            '-b:v', '4000000',
+            '-r', '30.0',
+            '-aspect', '1920/1080',
+            '-threads', str(multiprocessing.cpu_count()),
+            '-preset', 'faster',
+            '-acodec', 'aac',
+            '-strict', '-2',  # Added to enable experimental codecs
+            '-b:a', '128000',
+            os.path.normpath('output.mkv'),
+            '-y',
+            '-scodec', 'copy',
+            '-map', '0:2'
+        ]
+
         self.assertEqual(cmd, expected_cmd)
 
     @patch('src.conversion.messagebox.showinfo')  # Mock the showinfo popup
@@ -385,6 +444,16 @@ class TestConversionManager(unittest.TestCase):
                 universal_newlines=True,
                 startupinfo=startupinfo_instance
             )
+
+    @patch('src.conversion.subprocess.Popen')
+    def test_run_ffmpeg_command_failure(self, mock_popen):
+        mock_process = MagicMock()
+        mock_process.communicate.return_value = (b'', b'error')
+        mock_process.returncode = 1
+        mock_popen.return_value = mock_process
+
+        with self.assertRaises(RuntimeError):
+            run_ffmpeg_command(['ffmpeg', '-i', 'input.mp4', 'output.mkv'])
 
 if __name__ == '__main__':
     unittest.main()

@@ -99,10 +99,15 @@ class ConversionManager:
             '-threads', str(num_cores),
             '-preset', 'faster',
             '-acodec', properties['audio_codec'],
+            '-strict', '-2',  # Added to enable experimental codecs
             '-b:a', str(properties['audio_bit_rate']),
             os.path.normpath(output_path),
             '-y'
         ]
+
+        # Safely access 'subtitle_streams' with a default empty list
+        for subtitle in properties.get('subtitle_streams', []):
+            cmd.extend(['-scodec', 'copy', '-map', f'0:{subtitle["index"]}'])
 
         logging.debug(f"Constructed ffmpeg command: {' '.join(cmd)}")
         return cmd
@@ -204,6 +209,42 @@ class ConversionManager:
             # Re-register drop target
             if hasattr(gui_instance, 'register_drop_target'):
                 gui_instance.register_drop_target()
+
+    def extract_frame(self, video_path, time=None):
+        """
+        Extract a frame from the video at the specified time.
+        If time is None, extract a frame at 1/3rd of the video duration.
+        """
+        properties = get_video_properties(video_path)
+        if not properties or properties['duration'] == 0:
+            raise ValueError("Invalid video properties or duration.")
+
+        if time is None:
+            time = properties['duration'] / 3
+
+        output_frame_path = os.path.join(os.path.dirname(video_path), 'frame_preview.jpg')
+
+        cmd = [
+            FFMPEG_EXECUTABLE,
+            '-ss', str(time),
+            '-i', os.path.normpath(video_path),
+            '-frames:v', '1',
+            '-q:v', '2',
+            os.path.normpath(output_frame_path),
+            '-y'
+        ]
+
+        subprocess.run(cmd, check=True)
+        return output_frame_path
+
+    def get_frame_preview(self, video_path):
+        """Get a frame preview 1/3rd into the video."""
+        properties = get_video_properties(video_path)
+        if not properties or properties['duration'] == 0:
+            raise ValueError("Invalid video properties or duration.")
+
+        frame = self.extract_frame(video_path)
+        return frame
 
 # Instantiate the ConversionManager
 conversion_manager = ConversionManager()

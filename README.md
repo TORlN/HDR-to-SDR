@@ -59,7 +59,9 @@ This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The 
     pip install -r requirements.txt
     ```
 
-4. Compile the executable:
+4. Place `ffmpeg.exe`, `ffprobe.exe`, and `ffplay.exe` in the src folder
+
+5. Compile the executable:
     ```sh
     pyinstaller --onefile --noconsole --name "HDR_to_SDR_Converter" --icon=logo/icon.ico ^
         --paths=.venv\Lib\site-packages ^
@@ -75,7 +77,7 @@ This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The 
         --log-level DEBUG ^
         src\main.py
     ```
-5. The compiled executable will be located in the `dist` directory.
+6. The compiled executable will be located in the `dist` directory.
 
 ## License
 

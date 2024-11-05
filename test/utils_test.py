@@ -85,7 +85,7 @@ class TestExtractFrame(unittest.TestCase):
         mock_process.returncode = 0
         mock_popen.return_value = mock_process
 
-        result = extract_frame(['ffmpeg', '-i', 'input.mp4', 'output_frame.png'])
+        result = extract_frame('input.mp4')  # Changed from list to string
         self.assertIsInstance(result, Image.Image)
 
     @patch('subprocess.Popen')
@@ -96,7 +96,7 @@ class TestExtractFrame(unittest.TestCase):
         mock_popen.return_value = mock_process
 
         with self.assertRaises(RuntimeError):
-            extract_frame(['ffmpeg', '-i', 'input.mp4', 'output_frame.png'])
+            extract_frame('input.mp4')  # Changed from list to string
 
 class TestExtractFrameWithConversion(unittest.TestCase):
 
@@ -114,10 +114,7 @@ class TestExtractFrameWithConversion(unittest.TestCase):
         mock_process.returncode = 0
         mock_popen.return_value = mock_process
 
-        result = extract_frame_with_conversion(
-            ['ffmpeg', '-i', 'input.mp4', 'output_frame_converted.png'],
-            1
-        )
+        result = extract_frame_with_conversion('input.mp4', 1)  # Changed from list to string and added gamma
         self.assertIsInstance(result, Image.Image)
 
     @patch('subprocess.Popen')
@@ -128,10 +125,7 @@ class TestExtractFrameWithConversion(unittest.TestCase):
         mock_popen.return_value = mock_process
 
         with self.assertRaises(RuntimeError):
-            extract_frame_with_conversion(
-                ['ffmpeg', '-i', 'input.mp4', 'output_frame_converted.png'],
-                1
-            )
+            extract_frame_with_conversion('input.mp4', 1)  # Changed from list to string and added gamma
 
 if __name__ == '__main__':
     unittest.main()

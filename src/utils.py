@@ -9,7 +9,7 @@ import logging
 import sys  # Added import
 
 # Logging configuration
-LOGGING_ENABLED = False  # Set to False to disable logging
+LOGGING_ENABLED = False # Changed to True to enable logging
 
 if LOGGING_ENABLED:
     logging.basicConfig(level=logging.DEBUG, filename='debug.log', filemode='w',
@@ -21,6 +21,27 @@ else:
 
 FFMPEG_FILTER = 'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap=reinhard,eq=gamma={gamma},scale={width}:{height}'
 
+if getattr(sys, 'frozen', False):
+    # If the application is frozen by PyInstaller, use the bundled ffmpeg.exe in root
+    FFMPEG_EXECUTABLE = os.path.join(sys._MEIPASS, "ffmpeg.exe")
+    logging.debug(f"FFMPEG_EXECUTABLE set to: {FFMPEG_EXECUTABLE}")
+    
+    # Verify ffmpeg.exe exists
+    if not os.path.exists(FFMPEG_EXECUTABLE):
+        logging.error(f"ffmpeg.exe not found at {FFMPEG_EXECUTABLE}")
+    else:
+        logging.debug("ffmpeg.exe successfully found in the bundled application.")
+    
+    # Optional: List all files in the bundled directory for verification
+    logging.debug("Bundled application files:")
+    for root_dir, dirs, files in os.walk(sys._MEIPASS):
+        for file in files:
+            logging.debug(os.path.join(root_dir, file))
+else:
+    # During development, assume ffmpeg is in the system's PATH
+    FFMPEG_EXECUTABLE = 'ffmpeg'
+    logging.debug(f"FFMPEG_EXECUTABLE set to system PATH: {FFMPEG_EXECUTABLE}")
+
 def run_ffmpeg_command(cmd):
     if sys.platform == "win32":
         startupinfo = subprocess.STARTUPINFO()
@@ -29,7 +50,16 @@ def run_ffmpeg_command(cmd):
     else:
         startupinfo = None
     
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, startupinfo=startupinfo)
+    # Replace the ffmpeg command with the bundled executable path
+    cmd[0] = FFMPEG_EXECUTABLE
+    logging.debug(f"Running ffmpeg command: {' '.join(cmd)}")
+    
+    try:
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, startupinfo=startupinfo)
+    except FileNotFoundError:
+        logging.error("ffmpeg executable not found. Please ensure ffmpeg is bundled correctly with the application.")
+        raise RuntimeError("ffmpeg executable not found. Please reinstall the application.")
+    
     out, err = process.communicate()
     
     if process.returncode != 0:

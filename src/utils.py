@@ -6,12 +6,16 @@ import os
 import numpy as np
 import io
 import logging
-import sys  # Added import
-import json  # Added import
+import sys
+import json
 
-# Logging configuration
-LOGGING_ENABLED = True # Changed to True to enable logging
+# Constants and initialization
+LOGGING_ENABLED = True
+FFMPEG_FILTER = 'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap=reinhard,eq=gamma={gamma},scale={width}:{height}'
+FFMPEG_EXECUTABLE = None
+FFPROBE_EXECUTABLE = None
 
+# Initialize logging
 def setup_logging():
     """Configure logging with fallback locations for Wine compatibility"""
     try:
@@ -63,11 +67,7 @@ def setup_logging():
         print(f"Error setting up logging: {e}")
         return False
 
-# Initialize logging
-setup_logging()
-
-FFMPEG_FILTER = 'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap=reinhard,eq=gamma={gamma},scale={width}:{height}'
-
+# Initialize FFmpeg paths
 def get_executable_path(filename):
     """Helper function to get the correct path for bundled executables"""
     try:
@@ -99,10 +99,6 @@ def get_executable_path(filename):
     except Exception as e:
         logging.error(f"Error finding {filename}: {str(e)}")
         raise
-
-# Define global variables for FFmpeg executables
-FFMPEG_EXECUTABLE = None
-FFPROBE_EXECUTABLE = None
 
 def verify_ffmpeg_files():
     """Verify that ffmpeg files exist and are accessible"""
@@ -136,27 +132,36 @@ def verify_ffmpeg_files():
         logging.error(f"Error verifying FFmpeg files: {str(e)}")
         raise
 
-# Update the FFmpeg configuration section
-try:
-    verify_ffmpeg_files()
-    
-    # Configure ffmpeg-python
-    ffmpeg._ffmpeg_binary = FFMPEG_EXECUTABLE
-    ffmpeg._ffprobe_binary = FFPROBE_EXECUTABLE
-    
-    # Set environment variables
-    os.environ['FFMPEG_BINARY'] = FFMPEG_EXECUTABLE
-    os.environ['FFPROBE_BINARY'] = FFPROBE_EXECUTABLE
+def initialize_ffmpeg():
+    """Initialize FFmpeg executables and configure the environment."""
+    global FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE
+    try:
+        found_files = verify_ffmpeg_files()
+        FFMPEG_EXECUTABLE = found_files['ffmpeg.exe']
+        FFPROBE_EXECUTABLE = found_files['ffprobe.exe']
 
-except Exception as e:
-    logging.error(f"Error setting up ffmpeg: {str(e)}", exc_info=True)
-    messagebox.showerror("Error", f"Failed to initialize ffmpeg: {str(e)}")
-    raise
+        # Configure ffmpeg-python
+        ffmpeg._ffmpeg_binary = FFMPEG_EXECUTABLE
+        ffmpeg._ffprobe_binary = FFPROBE_EXECUTABLE
+        
+        # Set environment variables
+        os.environ['FFMPEG_BINARY'] = FFMPEG_EXECUTABLE
+        os.environ['FFPROBE_BINARY'] = FFPROBE_EXECUTABLE
 
-# Add diagnostic logging to confirm paths
-logging.debug(f"Configured ffmpeg binary: {ffmpeg._ffmpeg_binary}")
-logging.debug(f"Configured ffprobe binary: {ffmpeg._ffprobe_binary}")
+        # Add diagnostic logging
+        logging.debug(f"Configured ffmpeg binary: {ffmpeg._ffmpeg_binary}")
+        logging.debug(f"Configured ffprobe binary: {ffmpeg._ffprobe_binary}")
 
+    except Exception as e:
+        logging.error(f"Error setting up ffmpeg: {str(e)}", exc_info=True)
+        messagebox.showerror("Error", f"Failed to initialize ffmpeg: {str(e)}")
+        raise
+
+# Call initialization functions
+setup_logging()
+initialize_ffmpeg()
+
+# Rest of your existing functions...
 def run_ffmpeg_command(cmd):
     """Run an FFmpeg command with proper path handling"""
     if sys.platform == "win32":

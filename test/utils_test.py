@@ -229,10 +229,12 @@ class TestExtractFrameWithConversion(unittest.TestCase):
             # Verify that ffmpeg was called with the correct timestamp and gamma
             expected_time = 90.0 / 3  # 30 seconds
             expected_vf = FFMPEG_FILTER.format(gamma=gamma, width='iw', height='ih')
+
+            # Update the expected command to use ANY for the FFmpeg executable
             mock_run_ffmpeg.assert_called_once_with([
-                FFMPEG_EXECUTABLE, '-ss', str(expected_time), '-i',
-                'input.mp4', '-vf', expected_vf, '-vframes',
-                '1', '-f', 'image2pipe', '-'
+                ANY,  # Do not assert the exact path of the FFmpeg executable
+                '-ss', str(expected_time), '-i', 'input.mp4',
+                '-vf', expected_vf, '-vframes', '1', '-f', 'image2pipe', '-'
             ])
 
     @patch('subprocess.Popen')

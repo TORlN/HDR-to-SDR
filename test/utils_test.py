@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, ANY
 from src.utils import get_video_properties, run_ffmpeg_command, extract_frame, extract_frame_with_conversion
 import subprocess  
 from PIL import Image  # Added import
@@ -138,38 +138,38 @@ class TestRunFfmpegCommand(unittest.TestCase):
 class TestExtractFrame(unittest.TestCase):
 
     @patch('src.utils.run_ffmpeg_command')
-    def test_extract_frame_success(self, mock_run_ffmpeg):
+    @patch('src.utils.get_video_properties')
+    def test_extract_frame_success(self, mock_get_props, mock_run_ffmpeg):
         # Mock the video properties to have a duration of 90 seconds
-        with patch('src.utils.get_video_properties') as mock_get_props:
-            mock_get_props.return_value = {
-                "width": 1920,
-                "height": 1080,
-                "bit_rate": 5000000,
-                "codec_name": "h264",
-                "frame_rate": 30.0,
-                "audio_codec": "aac",
-                "audio_bit_rate": 128000,
-                "duration": 90.0,
-                "subtitle_streams": []
-            }
+        mock_get_props.return_value = {
+            "width": 1920,
+            "height": 1080,
+            "bit_rate": 5000000,
+            "codec_name": "h264",
+            "frame_rate": 30.0,
+            "audio_codec": "aac",
+            "audio_bit_rate": 128000,
+            "duration": 90.0,
+            "subtitle_streams": []
+        }
 
-            # Provide valid PNG image bytes
-            mock_run_ffmpeg.return_value = (
-                b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01'
-                b'\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00'
-                b'\x00\x00\nIDATx\xdac\xf8\x0f\x00\x01\x01\x01\x00'
-                b'\x18\xdd\x8d\x1b\x00\x00\x00\x00IEND\xaeB`\x82'
-            )
+        # Provide valid PNG image bytes
+        mock_run_ffmpeg.return_value = (
+            b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01'
+            b'\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00'
+            b'\x00\x00\nIDATx\xdac\xf8\x0f\x00\x01\x01\x01\x00'
+            b'\x18\xdd\x8d\x1b\x00\x00\x00\x00IEND\xaeB`\x82'
+        )
 
-            frame = extract_frame('input.mp4')
-            self.assertIsInstance(frame, Image.Image)
+        frame = extract_frame('input.mp4')
+        self.assertIsInstance(frame, Image.Image)
 
-            # Verify that ffmpeg was called with the correct command and timestamp
-            expected_time = 90.0 / 3  # 30 seconds
-            mock_run_ffmpeg.assert_called_once_with([
-                FFMPEG_EXECUTABLE, '-ss', str(expected_time), '-i', 'input.mp4',
-                '-vframes', '1', '-f', 'image2pipe', '-'
-            ])
+        # Verify that ffmpeg was called with the correct command and timestamp
+        expected_time = 90.0 / 3  # 30 seconds
+        mock_run_ffmpeg.assert_called_once_with([
+            ANY, '-ss', str(expected_time), '-i', 'input.mp4',
+            '-vframes', '1', '-f', 'image2pipe', '-'
+        ])
 
     @patch('subprocess.Popen')
     def test_extract_frame_failure(self, mock_popen):

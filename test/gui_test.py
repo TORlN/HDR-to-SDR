@@ -71,10 +71,10 @@ class TestHDRConverterGUI(TestCase):
         # Verify UI updates
         self._assert_frame_updates()
 
-    @patch('src.gui.extract_frame')  # Updated patch path
-    @patch('src.gui.extract_frame_with_conversion')  # Updated patch path
-    @patch('PIL.ImageTk.PhotoImage')
-    def test_frame_preview_update(self, mock_photo_image, mock_convert, mock_extract):
+    @patch('src.gui.ImageTk.PhotoImage')
+    @patch('src.gui.extract_frame_with_conversion')
+    @patch('src.gui.extract_frame')
+    def test_frame_preview_update(self, mock_extract, mock_convert, mock_photo_image):
         """Test frame preview update functionality."""
         # Setup mock images
         mock_image = MagicMock(spec=Image.Image)
@@ -88,26 +88,32 @@ class TestHDRConverterGUI(TestCase):
         self.gui.display_image_var = MagicMock(get=MagicMock(return_value=True))
         self.gui.input_path_var = MagicMock(get=MagicMock(return_value='test_input.mp4'))
         self.gui.gamma_var = MagicMock(get=MagicMock(return_value=2.2))
-        
+
         # Setup GUI elements
         self.gui.original_image_label = MagicMock()
         self.gui.converted_image_label = MagicMock()
         self.gui.original_title_label = MagicMock()
         self.gui.converted_title_label = MagicMock()
-        
+
+        # Mock adjust_gamma method
+        self.gui.adjust_gamma = MagicMock(return_value=mock_image)
+
         # Call display_frames directly since that's where the functions are used
         self.gui.display_frames('test_input.mp4')
 
-        # Verify frame extraction and conversion
+        # Verify frame extraction and conversion with gamma=1.0
         mock_extract.assert_called_once_with('test_input.mp4')
-        mock_convert.assert_called_once_with('test_input.mp4', 2.2)
-        
+        mock_convert.assert_called_once_with('test_input.mp4', gamma=1.0)
+
+        # Verify adjust_gamma is called with correct gamma value
+        self.gui.adjust_gamma.assert_called_once_with(mock_image, 2.2)
+
         # Verify image resize calls
         mock_image.resize.assert_has_calls([
             call((960, 540), Image.Resampling.LANCZOS),
             call((960, 540), Image.Resampling.LANCZOS)
         ])
-        
+
         # Verify PhotoImage creation and label updates
         mock_photo_image.assert_has_calls([call(mock_image), call(mock_image)])
         self.gui.original_image_label.config.assert_called_with(image=mock_photo)

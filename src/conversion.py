@@ -224,6 +224,13 @@ class ConversionManager:
 
         output_frame_path = os.path.join(os.path.dirname(video_path), 'frame_preview.jpg')
 
+        if sys.platform == "win32":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+        else:
+            startupinfo = None
+
         cmd = [
             FFMPEG_EXECUTABLE,
             '-ss', str(time),
@@ -234,7 +241,7 @@ class ConversionManager:
             '-y'
         ]
 
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True, startupinfo=startupinfo)  # Add startupinfo here
         return output_frame_path
 
     def get_frame_preview(self, video_path):

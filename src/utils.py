@@ -259,6 +259,13 @@ def extract_frame(video_path):
     return Image.open(io.BytesIO(out))
 
 def get_video_properties(input_file):
+    if sys.platform == "win32":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+    else:
+        startupinfo = None
+
     command = [
         FFPROBE_EXECUTABLE,
         '-v', 'quiet',
@@ -269,7 +276,12 @@ def get_video_properties(input_file):
     ]
 
     try:
-        result = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        result = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            startupinfo=startupinfo  # Add startupinfo here
+        )
         output, _ = result.communicate()
         
         if result.returncode != 0:

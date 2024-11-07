@@ -5,7 +5,7 @@ from tkinter import ttk
 import sv_ttk
 from conversion import conversion_manager  # Import the conversion_manager instance
 from utils import extract_frame_with_conversion, extract_frame
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageOps  # Add this import
 from tkinterdnd2 import DND_FILES
 import logging
 
@@ -31,6 +31,8 @@ class HDRConverterGUI:
         self.progress_var = tk.DoubleVar(value=0)
         self.open_after_conversion_var = tk.BooleanVar()
         self.display_image_var = tk.BooleanVar(value=True)
+        self.original_image = None  # Cache for the original frame
+        self.converted_image_base = None  # Cache for the converted SDR frame
 
         # Create widgets and configure layout
         self.create_widgets()
@@ -224,15 +226,41 @@ class HDRConverterGUI:
             self.action_frame.grid()
             self.update_frame_preview()
 
+    def adjust_gamma(self, image, gamma):
+        """Adjust gamma of a PIL.Image."""
+        inv_gamma = 1.0 / gamma
+        lut = [pow(i / 255.0, inv_gamma) * 255 for i in range(256)]
+        # Extend LUT for all channels
+        lut = lut * len(image.getbands())
+        lut = [int(round(v)) for v in lut]  # Ensure values are integers
+        return image.point(lut)
+
+    def display_frames(self, video_path):
+        """Extract and display frames using cached images and adjusted gamma."""
+        if self.original_image is None:
+            # Extract the original HDR frame
+            self.original_image = extract_frame(video_path)
+            # Convert and cache the SDR frame with default gamma
+            self.converted_image_base = extract_frame_with_conversion(video_path, gamma=1.0)
+        original_image_resized = self.original_image.resize((960, 540), Image.Resampling.LANCZOS)
+        original_photo = ImageTk.PhotoImage(original_image_resized)
+        self.original_image_label.config(image=original_photo)
+        self.original_image_label.image = original_photo
+
+        # Apply gamma adjustment to the cached converted SDR image
+        gamma = self.gamma_var.get()
+        adjusted_converted_image = self.adjust_gamma(self.converted_image_base, gamma)
+        converted_image_resized = adjusted_converted_image.resize((960, 540), Image.Resampling.LANCZOS)
+        converted_photo = ImageTk.PhotoImage(converted_image_resized)
+        self.converted_image_label.config(image=converted_photo)
+        self.converted_image_label.image = converted_photo
+
     def update_frame_preview(self, event=None):
-        """Update the frame preview images based on the selected video and gamma value."""
+        """Update the frame preview without blocking the UI."""
         if self.display_image_var.get() and self.input_path_var.get():
             try:
                 video_path = self.input_path_var.get()
-                if not video_path:
-                    raise ValueError("No video path provided.")
-
-                # Extract and display the frames
+                # Update frames based on the current gamma value
                 self.display_frames(video_path)
                 self.error_label.config(text="")
                 # Show title labels
@@ -249,20 +277,13 @@ class HDRConverterGUI:
             self.converted_title_label.grid_remove()
             self.arrange_widgets(image_frame=False)
 
-    def display_frames(self, video_path):
-        """Extract and display the original and converted frames from the video."""
-        original_image = extract_frame(video_path)
-        original_image_resized = original_image.resize((960, 540), Image.Resampling.LANCZOS)
-        original_photo = ImageTk.PhotoImage(original_image_resized)
-
-        converted_image = extract_frame_with_conversion(video_path, self.gamma_var.get())
-        converted_image_resized = converted_image.resize((960, 540), Image.Resampling.LANCZOS)
-        converted_photo = ImageTk.PhotoImage(converted_image_resized)
-
-        self.original_image_label.config(image=original_photo)
-        self.original_image_label.image = original_photo
-        self.converted_image_label.config(image=converted_photo)
-        self.converted_image_label.image = converted_photo
+    def clear_preview(self):
+        """Clear the frame preview images and reset cached images."""
+        self.original_image_label.config(image='')
+        self.converted_image_label.config(image='')
+        self.original_image = None
+        self.converted_image_base = None
+        self.root.minsize(*DEFAULT_MIN_SIZE)
 
     def adjust_window_size(self):
         """Adjust the window size to fit the displayed images."""
@@ -290,12 +311,6 @@ class HDRConverterGUI:
         self.clear_preview()
         self.original_title_label.grid_remove()
         self.converted_title_label.grid_remove()
-
-    def clear_preview(self):
-        """Clear the frame preview images and reset the window size."""
-        self.original_image_label.config(image='')
-        self.converted_image_label.config(image='')
-        self.root.minsize(*DEFAULT_MIN_SIZE)
 
     def handle_file_drop(self, event):
         """Handle file drop events and update the input and output path variables."""

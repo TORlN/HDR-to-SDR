@@ -101,6 +101,7 @@ class ConversionManager:
             '-acodec', properties['audio_codec'],
             '-strict', '-2',  # Added to enable experimental codecs
             '-b:a', str(properties['audio_bit_rate']),
+            '-sn',  # Add this flag to disable subtitle processing
             os.path.normpath(output_path),
             '-y'
         ]

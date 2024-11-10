@@ -98,17 +98,14 @@ class ConversionManager:
             '-aspect', f'{properties["width"]}/{properties["height"]}',
             '-threads', str(num_cores),
             '-preset', 'faster',
-            '-acodec', properties['audio_codec'],
+            '-map', '0:v:0', '-map', '0:a:0?',
+            '-c:a', 'copy',
+            '-map', '0:s?', '-c:s', 'copy',
             '-strict', '-2',  # Added to enable experimental codecs
             '-b:a', str(properties['audio_bit_rate']),
-            '-sn',  # Add this flag to disable subtitle processing
             os.path.normpath(output_path),
             '-y'
         ]
-
-        # Safely access 'subtitle_streams' with a default empty list
-        for subtitle in properties.get('subtitle_streams', []):
-            cmd.extend(['-scodec', 'copy', '-map', f'0:{subtitle["index"]}'])
 
         logging.debug(f"Constructed ffmpeg command: {' '.join(cmd)}")
         return cmd

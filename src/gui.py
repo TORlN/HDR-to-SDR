@@ -242,7 +242,7 @@ class HDRConverterGUI:
             self.original_image = extract_frame(video_path)
             # Convert and cache the SDR frame with default gamma
             self.converted_image_base = extract_frame_with_conversion(video_path, gamma=1.0)
-        original_image_resized = self.original_image.resize((960, 540), Image.Resampling.LANCZOS)
+        original_image_resized = self.original_image.resize((960, 540), Image.LANCZOS)
         original_photo = ImageTk.PhotoImage(original_image_resized)
         self.original_image_label.config(image=original_photo)
         self.original_image_label.image = original_photo
@@ -250,7 +250,7 @@ class HDRConverterGUI:
         # Apply gamma adjustment to the cached converted SDR image
         gamma = self.gamma_var.get()
         adjusted_converted_image = self.adjust_gamma(self.converted_image_base, gamma)
-        converted_image_resized = adjusted_converted_image.resize((960, 540), Image.Resampling.LANCZOS)
+        converted_image_resized = adjusted_converted_image.resize((960, 540), Image.LANCZOS)
         converted_photo = ImageTk.PhotoImage(converted_image_resized)
         self.converted_image_label.config(image=converted_photo)
         self.converted_image_label.image = converted_photo

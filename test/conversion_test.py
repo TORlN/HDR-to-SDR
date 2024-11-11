@@ -224,9 +224,13 @@ class TestConversionManager(unittest.TestCase):
             '-b:v', str(properties['bit_rate']),
             '-r', str(properties['frame_rate']),
             '-aspect', f'{properties["width"]}/{properties["height"]}',
-            '-threads', str(multiprocessing.cpu_count()),
+            # '-threads', '16',  # Removed threads parameter
             '-preset', 'faster',
-            '-acodec', properties['audio_codec'],
+            '-map', '0:v:0',
+            '-map', '0:a:0?',
+            '-c:a', 'copy',  # Changed from '-c:a', 'aac' to '-c:a', 'copy'
+            '-map', '0:s?',
+            '-c:s', 'copy',
             '-strict', '-2',  # Added to enable experimental codecs
             '-b:a', str(properties['audio_bit_rate']),
             os.path.normpath(output_path),
@@ -267,15 +271,17 @@ class TestConversionManager(unittest.TestCase):
             '-b:v', '4000000',
             '-r', '30.0',
             '-aspect', '1920/1080',
-            '-threads', str(multiprocessing.cpu_count()),
+            # '-threads', str(multiprocessing.cpu_count()),  # Removed threads parameter
             '-preset', 'faster',
-            '-acodec', 'aac',
+            '-map', '0:v:0',
+            '-map', '0:a:0?',
+            '-c:a', 'copy',  # Changed from '-c:a', 'copy' remains the same
+            '-map', '0:s?',
+            '-c:s', 'copy',
             '-strict', '-2',  # Added to enable experimental codecs
             '-b:a', '128000',
             os.path.normpath('output.mkv'),
-            '-y',
-            '-scodec', 'copy',
-            '-map', '0:2'
+            '-y'
         ]
 
         self.assertEqual(cmd, expected_cmd)

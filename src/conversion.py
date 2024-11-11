@@ -85,7 +85,6 @@ class ConversionManager:
 
     def construct_ffmpeg_command(self, input_path, output_path, gamma, properties):
         """Construct the ffmpeg command for video conversion."""
-        num_cores = multiprocessing.cpu_count()
         
         cmd = [
             FFMPEG_EXECUTABLE, '-loglevel', 'info',
@@ -96,7 +95,6 @@ class ConversionManager:
             '-b:v', str(properties['bit_rate']),
             '-r', str(properties['frame_rate']),
             '-aspect', f'{properties["width"]}/{properties["height"]}',
-            '-threads', str(num_cores),
             '-preset', 'faster',
             '-map', '0:v:0', '-map', '0:a:0?',
             '-c:a', 'copy',

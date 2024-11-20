@@ -89,18 +89,19 @@ class ConversionManager:
         cmd = [
             FFMPEG_EXECUTABLE, '-loglevel', 'info',
             '-i', os.path.normpath(input_path),
-            '-vf', FFMPEG_FILTER.format(
-                gamma=gamma, width=properties["width"], height=properties["height"]),
+            # Apply the HDR to SDR filter to the main video stream
+            '-filter:v', FFMPEG_FILTER.format(
+                gamma=gamma, width=properties["width"], height=properties["height"]
+            ),
+            # Re-encode the main video stream using the same codec and settings
             '-c:v', properties['codec_name'],
             '-b:v', str(properties['bit_rate']),
             '-r', str(properties['frame_rate']),
-            '-aspect', f'{properties["width"]}/{properties["height"]}',
             '-preset', 'faster',
-            '-map', '0:v:0', '-map', '0:a:0?',
+            '-strict', '-2',
+            # Copy audio and subtitle streams without re-encoding
             '-c:a', 'copy',
-            '-map', '0:s?', '-c:s', 'copy',
-            '-strict', '-2',  # Added to enable experimental codecs
-            '-b:a', str(properties['audio_bit_rate']),
+            '-c:s', 'copy',
             os.path.normpath(output_path),
             '-y'
         ]

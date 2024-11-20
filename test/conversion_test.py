@@ -216,24 +216,20 @@ class TestConversionManager(unittest.TestCase):
         )
         cmd = manager.construct_ffmpeg_command(input_path, output_path, gamma, properties)
         expected_cmd = [
-            FFMPEG_EXECUTABLE,  # Use the actual FFMPEG_EXECUTABLE path
-            '-loglevel', 'info',
-            '-i', os.path.normpath(input_path),
-            '-vf', expected_filter,
+            FFMPEG_EXECUTABLE, '-loglevel', 'info',
+            '-i', input_path,
+            # Apply the HDR to SDR filter to the main video stream
+            '-filter:v', expected_filter,
+            # Re-encode the main video stream with the same settings
             '-c:v', properties['codec_name'],
             '-b:v', str(properties['bit_rate']),
             '-r', str(properties['frame_rate']),
-            '-aspect', f'{properties["width"]}/{properties["height"]}',
-            # '-threads', '16',  # Removed threads parameter
             '-preset', 'faster',
-            '-map', '0:v:0',
-            '-map', '0:a:0?',
-            '-c:a', 'copy',  # Changed from '-c:a', 'aac' to '-c:a', 'copy'
-            '-map', '0:s?',
+            '-strict', '-2',
+            # Copy audio and subtitle streams without re-encoding
+            '-c:a', 'copy',
             '-c:s', 'copy',
-            '-strict', '-2',  # Added to enable experimental codecs
-            '-b:a', str(properties['audio_bit_rate']),
-            os.path.normpath(output_path),
+            output_path,
             '-y'
         ]
         self.assertEqual(cmd, expected_cmd)
@@ -266,20 +262,19 @@ class TestConversionManager(unittest.TestCase):
         expected_cmd = [
             FFMPEG_EXECUTABLE, '-loglevel', 'info',
             '-i', os.path.normpath('input.mp4'),
-            '-vf', FFMPEG_FILTER.format(gamma=2.2, width=1920, height=1080),
+            # Apply the HDR to SDR filter to the main video stream
+            '-filter:v', FFMPEG_FILTER.format(
+                gamma=2.2, width=1920, height=1080
+            ),
+            # Re-encode the main video stream with the same settings
             '-c:v', 'h264',
             '-b:v', '4000000',
             '-r', '30.0',
-            '-aspect', '1920/1080',
-            # '-threads', str(multiprocessing.cpu_count()),  # Removed threads parameter
             '-preset', 'faster',
-            '-map', '0:v:0',
-            '-map', '0:a:0?',
-            '-c:a', 'copy',  # Changed from '-c:a', 'copy' remains the same
-            '-map', '0:s?',
+            '-strict', '-2',
+            # Copy audio and subtitle streams without re-encoding
+            '-c:a', 'copy',
             '-c:s', 'copy',
-            '-strict', '-2',  # Added to enable experimental codecs
-            '-b:a', '128000',
             os.path.normpath('output.mkv'),
             '-y'
         ]

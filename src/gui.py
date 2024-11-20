@@ -33,6 +33,7 @@ class HDRConverterGUI:
         self.display_image_var = tk.BooleanVar(value=True)
         self.original_image = None  # Cache for the original frame
         self.converted_image_base = None  # Cache for the converted SDR frame
+        self.gpu_accel_var = tk.BooleanVar(value=False)
 
         # Create widgets and configure layout
         self.create_widgets()
@@ -46,7 +47,6 @@ class HDRConverterGUI:
         # Bind the window close event
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        # Removed self.process since it's managed by conversion_manager
         self.cancelled = False  # Flag to track cancellation
 
     def on_close(self):
@@ -98,6 +98,15 @@ class HDRConverterGUI:
         self.gamma_entry.grid(row=2, column=2, sticky=tk.W, padx=(5, 0))
         self.gamma_entry.bind('<Return>', self.update_frame_preview)
 
+        # GPU Acceleration Checkbox
+        self.gpu_accel_checkbutton = ttk.Checkbutton(
+            self.control_frame,
+            text="Enable GPU Acceleration",
+            variable=self.gpu_accel_var,
+            command=self.check_gpu_acceleration
+        )
+        self.gpu_accel_checkbutton.grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
+
         # Display Image Checkbox
         self.display_image_checkbutton = ttk.Checkbutton(
             self.control_frame,
@@ -105,7 +114,7 @@ class HDRConverterGUI:
             variable=self.display_image_var,
             command=self.update_frame_preview
         )
-        self.display_image_checkbutton.grid(row=3, column=0, columnspan=3, pady=(0, 0), sticky=tk.W)
+        self.display_image_checkbutton.grid(row=4, column=0, columnspan=3, pady=(0, 0), sticky=tk.W)
 
         # Image Frame for Displaying Images
         self.image_frame = ttk.Frame(self.root, padding="10")
@@ -176,7 +185,7 @@ class HDRConverterGUI:
         self.interactable_elements = [
             self.browse_button, self.convert_button, self.gamma_slider,
             self.open_after_conversion_checkbutton, self.display_image_checkbutton,
-            self.input_entry, self.output_entry, self.gamma_entry
+            self.input_entry, self.output_entry, self.gamma_entry, self.gpu_accel_checkbutton
         ]
 
     def configure_grid(self):
@@ -337,6 +346,7 @@ class HDRConverterGUI:
             input_path = os.path.normpath(self.input_path_var.get())
             output_path = os.path.normpath(self.output_path_var.get())
             gamma = self.gamma_var.get()
+            use_gpu = self.gpu_accel_var.get()  # Get GPU acceleration state
 
             if not input_path or not output_path:
                 messagebox.showwarning("Warning", "Please select both an input file and specify an output file.")
@@ -362,7 +372,7 @@ class HDRConverterGUI:
             
             # Start the conversion using the conversion_manager instance
             conversion_manager.start_conversion(
-                input_path, output_path, gamma, self.progress_var,
+                input_path, output_path, gamma, use_gpu, self.progress_var,
                 self.interactable_elements, self, self.open_after_conversion_var.get(),
                 self.cancel_button
             )
@@ -395,3 +405,19 @@ class HDRConverterGUI:
         """Disable the specified UI elements."""
         for element in elements:
             element.config(state='disabled')
+
+    def check_gpu_acceleration(self):
+        """Check if GPU acceleration is available when the checkbox is toggled."""
+        if self.gpu_accel_var.get():
+            try:
+                logging.debug("Checking GPU acceleration availability.")
+                available = conversion_manager.is_gpu_available()
+                logging.debug(f"GPU available: {available}")
+                if not available:
+                    self.gpu_accel_var.set(False)
+                    messagebox.showwarning("GPU Acceleration",
+                                           "GPU acceleration is not available on this system. GPU acceleration is only supported for NVIDIA gpu's with access to h264_nvenc. Switching to CPU mode.")
+            except Exception as e:
+                self.gpu_accel_var.set(False)
+                logging.error(f"Error checking GPU acceleration: {e}")
+                messagebox.showerror("Error", f"An error occurred while checking GPU acceleration:\n{e}")

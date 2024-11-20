@@ -8,6 +8,7 @@ import io
 import logging
 import sys
 import json
+import shutil
 
 # Constants and initialization
 LOGGING_ENABLED = True
@@ -94,7 +95,6 @@ def get_executable_path(filename):
         
         if not os.path.exists(executable):
             # Try system PATH as fallback
-            import shutil
             system_exec = shutil.which(filename)
             if system_exec:
                 executable = system_exec

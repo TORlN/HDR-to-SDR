@@ -4,7 +4,7 @@ import threading
 import webbrowser
 import multiprocessing
 import re
-import logging
+import logging  # Added import for logging
 from tkinter import messagebox
 from utils import get_video_properties, FFMPEG_FILTER, FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE
 from tkinterdnd2 import DND_FILES

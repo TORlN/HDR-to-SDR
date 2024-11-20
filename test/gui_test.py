@@ -1,7 +1,8 @@
 import unittest
 from unittest import TestCase
 from unittest.mock import patch, MagicMock, call
-from tkinter import ttk
+import tkinter as tk
+from tkinter import ttk, DoubleVar, BooleanVar
 from src.gui import HDRConverterGUI
 from PIL import Image
 
@@ -10,27 +11,42 @@ class TestHDRConverterGUI(TestCase):
 
     def setUp(self):
         """Set up test fixtures before each test method."""
-        # Setup main patches
-        self.patches = {
-            'tk': patch('tkinterdnd2.Tk', autospec=True),
-            'string_var': patch('tkinter.StringVar'),
-            'double_var': patch('tkinter.DoubleVar'),
-            'bool_var': patch('tkinter.BooleanVar'),
+        # Create mock variables first with proper specs and methods
+        self.mock_progress_var = MagicMock(spec=DoubleVar)
+        self.mock_string_var = MagicMock(spec=tk.StringVar)
+        self.mock_string_var.set = MagicMock()
+        self.mock_string_var.get = MagicMock(return_value='')
+        self.mock_bool_var = MagicMock(spec=BooleanVar)
+
+        # Create specific patches for all tk.Variable uses in gui.py
+        tk_patches = {
+            'root': patch('tkinterdnd2.Tk', autospec=True),
+            'string_var': patch('tkinter.StringVar', return_value=self.mock_string_var),
+            'double_var': patch('tkinter.DoubleVar', return_value=self.mock_progress_var),
+            'bool_var': patch('tkinter.BooleanVar', return_value=self.mock_bool_var),
             'drop_register': patch('tkinterdnd2.Tk.drop_target_register'),
             'dnd_bind': patch('tkinterdnd2.Tk.dnd_bind')
         }
+
+        gui_patches = {
+            'string_var': patch('src.gui.tk.StringVar', return_value=self.mock_string_var),
+            'double_var': patch('src.gui.tk.DoubleVar', return_value=self.mock_progress_var),
+            'bool_var': patch('src.gui.tk.BooleanVar', return_value=self.mock_bool_var)
+        }
+
+        # Combine all patches
+        self.patches = {**tk_patches, **gui_patches}
         
         # Start all patches
         self.mocks = {name: patcher.start() for name, patcher in self.patches.items()}
         
-        # Setup mock root and variables
+        # Setup mock root
         self.mock_root = MagicMock()
-        self.mocks['tk'].return_value = self.mock_root
-        self.mock_string_var = MagicMock()
-        self.mocks['string_var'].return_value = self.mock_string_var
+        self.mocks['root'].return_value = self.mock_root
 
         # Initialize GUI
         self.gui = HDRConverterGUI(self.mock_root)
+        self.gui.progress_var = self.mock_progress_var  # Ensure progress_var is set correctly
         
         # Setup common GUI elements
         self._setup_gui_mocks()
@@ -122,14 +138,14 @@ class TestHDRConverterGUI(TestCase):
     @patch('src.gui.messagebox.askyesno')
     @patch('src.gui.HDRConverterGUI.unregister_drop_target')
     @patch('src.gui.conversion_manager.start_conversion')
-    @patch('src.gui.os.path.isfile')  # Add this patch
+    @patch('src.gui.os.path.isfile')
     def test_video_conversion(self, mock_isfile, mock_start_conversion, mock_unregister, mock_confirm):
-        """Test video conversion initialization."""
+        """Test the video conversion process."""
         self._setup_conversion_test(mock_confirm)
-        mock_isfile.return_value = True  # Make os.path.isfile return True
+        mock_isfile.return_value = True
         
         self.gui.convert_video()
-
+        
         self._assert_conversion_started(mock_unregister, mock_start_conversion)
 
     def test_ui_state_management(self):
@@ -163,40 +179,35 @@ class TestHDRConverterGUI(TestCase):
 
     def _setup_conversion_test(self, mock_confirm):
         """Helper method to setup conversion test."""
-        # Create mock variables with specific return values
         self.gui.input_path_var = MagicMock()
         self.gui.output_path_var = MagicMock()
         self.gui.open_after_conversion_var = MagicMock()
         self.gui.gamma_var = MagicMock()
-        
-        # Set return values for get() calls
+
         self.gui.input_path_var.get.return_value = 'test_input.mp4'
         self.gui.output_path_var.get.return_value = 'test_output.mkv'
         self.gui.open_after_conversion_var.get.return_value = True
         self.gui.gamma_var.get.return_value = 2.2
-        
+        self.gui.gpu_accel_var = MagicMock(get=MagicMock(return_value=False))
+
         mock_confirm.return_value = True
-        
-        # Ensure drop_target_registered is True
         self.gui.drop_target_registered = True
 
-    def _assert_conversion_started(self, mock_unregister, mock_convert):
+    def _assert_conversion_started(self, mock_unregister, mock_start_conversion):
         """Helper method to verify conversion startup."""
         mock_unregister.assert_called_once()
         
-        # Get the actual call arguments
-        actual_call = mock_convert.call_args
-        
-        # Assert each argument individually for better error messages
-        args = actual_call[0]  # positional arguments
-        self.assertEqual(args[0], 'test_input.mp4')
-        self.assertEqual(args[1], 'test_output.mkv')
-        self.assertEqual(args[2], 2.2)
-        self.assertIs(args[3], self.gui.progress_var)
-        self.assertEqual(args[4], self.gui.interactable_elements)
-        self.assertIs(args[5], self.gui)
-        self.assertTrue(args[6])  # open_after_conversion
-        self.assertIs(args[7], self.gui.cancel_button)
+        actual_call = mock_start_conversion.call_args
+        args = actual_call[0]
+        self.assertEqual(args[0], 'test_input.mp4')  # input path
+        self.assertEqual(args[1], 'test_output.mkv')  # output path
+        self.assertEqual(args[2], 2.2)  # gamma
+        self.assertIs(args[3], False)  # gpu acceleration
+        self.assertIs(args[4], self.gui.progress_var)  # progress var
+        self.assertEqual(args[5], self.gui.interactable_elements)  # interactable elements
+        self.assertIs(args[6], self.gui)  # gui instance
+        self.assertTrue(args[7])  # open after conversion
+        self.assertIs(args[8], self.gui.cancel_button)  # cancel button
         
         self.gui.cancel_button.grid.assert_called_once()
 

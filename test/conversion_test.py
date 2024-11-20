@@ -64,6 +64,7 @@ class TestConversionManager(unittest.TestCase):
             'input.mp4',
             'output.mkv',
             2.2,
+            False,  # Added use_gpu argument
             progress_var,
             interactable_elements,
             mock_gui,  # Pass the mocked GUI instance
@@ -136,6 +137,7 @@ class TestConversionManager(unittest.TestCase):
             'input.mp4',
             'output.mkv',
             2.2,
+            False,  # Added use_gpu argument
             progress_var,
             interactable_elements,
             mock_gui,  # Pass the mocked GUI instance
@@ -145,9 +147,9 @@ class TestConversionManager(unittest.TestCase):
 
         # Additional assertions can be added here as needed
 
-    @patch('src.conversion.get_video_properties')  # This mock should be innermost
     @patch('src.conversion.messagebox.showwarning')
-    def test_start_conversion_invalid_paths(self, mock_showwarning, mock_get_props):
+    @patch('src.conversion.get_video_properties')
+    def test_start_conversion_invalid_paths(self, mock_get_props, mock_showwarning):  # Swapped argument order
         """Test start_conversion with invalid input or output paths."""
         manager = ConversionManager()
         mock_gui = MagicMock()
@@ -157,13 +159,13 @@ class TestConversionManager(unittest.TestCase):
         interactable_elements = []
         cancel_button = MagicMock()
 
-        manager.start_conversion('', 'output.mkv', 2.2, progress_var, interactable_elements, mock_gui, False, cancel_button)
+        manager.start_conversion('', 'output.mkv', 2.2, False, progress_var, interactable_elements, mock_gui, False, cancel_button)
         mock_showwarning.assert_called_once_with(
             "Warning", "Please select both an input file and specify an output file."
         )
 
         mock_showwarning.reset_mock()
-        manager.start_conversion('input.mp4', '', 2.2, progress_var, interactable_elements, mock_gui, False, cancel_button)
+        manager.start_conversion('input.mp4', '', 2.2, False, progress_var, interactable_elements, mock_gui, False, cancel_button)
         self.assertEqual(mock_showwarning.call_count, 1)
         mock_showwarning.assert_called_with(
             "Warning", "Please select both an input file and specify an output file."
@@ -172,9 +174,10 @@ class TestConversionManager(unittest.TestCase):
         # Verify get_video_properties was never called at the end
         mock_get_props.assert_not_called()
 
-    @patch('src.conversion.get_video_properties')
+    @patch('src.utils.FFMPEG_EXECUTABLE', 'ffmpeg')  # Patch FFMPEG_EXECUTABLE to be a string
     @patch('src.conversion.messagebox.showwarning')  # Mock the showwarning popup
-    def test_start_conversion_no_properties(self, mock_showwarning, mock_get_props):
+    @patch('src.conversion.get_video_properties')
+    def test_start_conversion_no_properties(self, mock_get_props, mock_showwarning):
         """Test start_conversion when get_video_properties returns None."""
         mock_get_props.return_value = None
         manager = ConversionManager()
@@ -186,7 +189,7 @@ class TestConversionManager(unittest.TestCase):
         cancel_button = MagicMock()
 
         input_path = 'input.mp4'
-        manager.start_conversion(input_path, 'output.mkv', 2.2, progress_var, 
+        manager.start_conversion(input_path, 'output.mkv', 2.2, False, progress_var, 
                                interactable_elements, mock_gui, False, cancel_button)
         mock_showwarning.assert_called_once_with(
             "Warning", "Failed to retrieve video properties."
@@ -214,7 +217,7 @@ class TestConversionManager(unittest.TestCase):
         expected_filter = FFMPEG_FILTER.format(
             gamma=gamma, width=properties["width"], height=properties["height"]
         )
-        cmd = manager.construct_ffmpeg_command(input_path, output_path, gamma, properties)
+        cmd = manager.construct_ffmpeg_command(input_path, output_path, gamma, properties, False)  # use_gpu=False
         expected_cmd = [
             FFMPEG_EXECUTABLE, '-loglevel', 'info',
             '-i', input_path,
@@ -224,7 +227,8 @@ class TestConversionManager(unittest.TestCase):
             '-c:v', properties['codec_name'],
             '-b:v', str(properties['bit_rate']),
             '-r', str(properties['frame_rate']),
-            '-preset', 'faster',
+            '-preset', 'fast',  # Changed from 'faster' to 'fast'
+            '-pix_fmt', 'yuv420p',  # Added pix_fmt and yuv420p
             '-strict', '-2',
             # Copy audio and subtitle streams without re-encoding
             '-c:a', 'copy',
@@ -256,7 +260,8 @@ class TestConversionManager(unittest.TestCase):
             'input.mp4',
             'output.mkv',
             2.2,
-            mock_get_props.return_value
+            mock_get_props.return_value,
+            False  # Added use_gpu argument
         )
 
         expected_cmd = [
@@ -270,7 +275,8 @@ class TestConversionManager(unittest.TestCase):
             '-c:v', 'h264',
             '-b:v', '4000000',
             '-r', '30.0',
-            '-preset', 'faster',
+            '-preset', 'fast',  # Changed from 'faster' to 'fast'
+            '-pix_fmt', 'yuv420p',  # Added pix_fmt and yuv420p
             '-strict', '-2',
             # Copy audio and subtitle streams without re-encoding
             '-c:a', 'copy',
@@ -455,6 +461,192 @@ class TestConversionManager(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             run_ffmpeg_command(['ffmpeg', '-i', 'input.mp4', 'output.mkv'])
+
+    @patch('src.conversion.get_video_properties')
+    @patch('src.conversion.subprocess.run')
+    def test_extract_frame_success(self, mock_run, mock_get_props):
+        """Test successful frame extraction."""
+        mock_get_props.return_value = {
+            "width": 1920,
+            "height": 1080,
+            "bit_rate": 4000000,
+            "codec_name": 'h264',
+            "frame_rate": 30.0,
+            "audio_codec": 'aac',
+            "audio_bit_rate": 128000,
+            "duration": 120.0  # Ensure duration is positive
+        }
+        mock_run.return_value = MagicMock(returncode=0)
+        manager = ConversionManager()
+        frame_path = manager.extract_frame('input.mp4', time=30)
+        mock_run.assert_called_once()
+        self.assertEqual(frame_path, os.path.join(os.path.dirname('input.mp4'), 'frame_preview.jpg'))
+
+    @patch('src.conversion.subprocess.run', side_effect=subprocess.CalledProcessError(1, 'cmd'))
+    @patch('src.conversion.get_video_properties')  # Added patch for get_video_properties
+    def test_extract_frame_failure(self, mock_get_props, mock_run):
+        """Test frame extraction failure due to subprocess error."""
+        mock_get_props.return_value = {
+            "width": 1920,
+            "height": 1080,
+            "bit_rate": 4000000,
+            "codec_name": 'h264',
+            "frame_rate": 30.0,
+            "audio_codec": 'aac',
+            "audio_bit_rate": 128000,
+            "duration": 120.0  # Ensure duration is positive
+        }
+
+        manager = ConversionManager()
+        with self.assertRaises(subprocess.CalledProcessError):
+            manager.extract_frame('invalid_input.mp4', time=30)
+
+        mock_run.assert_called_once()
+        mock_get_props.assert_called_once_with('invalid_input.mp4')
+
+    @patch('src.conversion.ConversionManager.extract_frame', return_value='frame_preview.jpg')
+    @patch('src.conversion.get_video_properties', return_value={
+        "width": 1920,
+        "height": 1080,
+        "bit_rate": 4000000,
+        "codec_name": 'h264',
+        "frame_rate": 30.0,
+        "audio_codec": 'aac',
+        "audio_bit_rate": 128000,
+        "duration": 120.0
+    })
+    def test_get_frame_preview_success(self, mock_get_props, mock_extract_frame):
+        """Test successful retrieval of frame preview."""
+        manager = ConversionManager()
+        frame = manager.get_frame_preview('input.mp4')
+        mock_extract_frame.assert_called_once_with('input.mp4')  # Updated assertion
+        self.assertEqual(frame, 'frame_preview.jpg')
+    
+    @patch('src.conversion.get_video_properties', return_value=None)
+    def test_get_frame_preview_failure(self, mock_get_props):
+        """Test get_frame_preview when video properties are invalid."""
+        manager = ConversionManager()
+        with self.assertRaises(ValueError):
+            manager.get_frame_preview('input.mp4')
+    
+    @patch('src.conversion.subprocess.run')
+    @patch('src.conversion.subprocess.Popen')
+    @patch('src.conversion.FFMPEG_EXECUTABLE', os.path.abspath('src/ffmpeg.exe'))  # Corrected patch target with full path
+    def test_is_gpu_available_success(self, mock_popen, mock_run):
+        """Test is_gpu_available when NVIDIA GPU and h264_nvenc are available."""
+        mock_run.return_value = MagicMock(returncode=0)
+        mock_popen.return_value.communicate.return_value = ('h264_nvenc', '')
+        mock_popen.return_value.returncode = 0  # Added returncode
+
+        manager = ConversionManager()
+        self.assertTrue(manager.is_gpu_available())
+        mock_run.assert_called_once_with(['nvidia-smi'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        mock_popen.assert_called_once_with(
+            [os.path.abspath('src/ffmpeg.exe'), '-encoders'],  # Updated to match full path
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True
+        )
+    
+    @patch('src.conversion.subprocess.run', return_value=MagicMock(returncode=1))
+    def test_is_gpu_available_no_gpu(self, mock_run):
+        """Test is_gpu_available when NVIDIA GPU is not available."""
+        manager = ConversionManager()
+        self.assertFalse(manager.is_gpu_available())
+        mock_run.assert_called_once_with(['nvidia-smi'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    
+    @patch('src.conversion.subprocess.run', return_value=MagicMock(returncode=0))
+    @patch('src.conversion.subprocess.Popen')
+    def test_is_gpu_available_no_encoder(self, mock_popen, mock_run):
+        """Test is_gpu_available when h264_nvenc encoder is missing."""
+        mock_popen.return_value.communicate.return_value = ('', '')
+        manager = ConversionManager()
+        self.assertFalse(manager.is_gpu_available())
+        mock_run.assert_called_once_with(['nvidia-smi'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        mock_popen.assert_called_once_with(
+            [FFMPEG_EXECUTABLE, '-encoders'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True
+        )
+    
+    @patch('src.conversion.subprocess.Popen')
+    def test_construct_ffmpeg_command_with_gpu(self, mock_popen):
+        """Test construct_ffmpeg_command with GPU acceleration enabled."""
+        manager = ConversionManager()
+        properties = {
+            "width": 1920,
+            "height": 1080,
+            "bit_rate": 4000000,
+            "codec_name": 'h264',
+            "frame_rate": 30.0,
+            "audio_codec": 'aac',
+            "audio_bit_rate": 128000,
+            "duration": 120.0
+        }
+        gamma = 2.2
+        input_path = 'input.mp4'
+        output_path = 'output.mkv'
+        use_gpu = True
+        expected_filter = FFMPEG_FILTER.format(
+            gamma=gamma, width=properties["width"], height=properties["height"]
+        )
+        cmd = manager.construct_ffmpeg_command(input_path, output_path, gamma, properties, use_gpu)
+        expected_cmd = [
+            FFMPEG_EXECUTABLE, '-loglevel', 'info',
+            '-hwaccel', 'cuda',
+            '-i', os.path.normpath('input.mp4'),
+            '-c:v', 'h264_nvenc',
+            '-b:v', '4000000',
+            '-r', '30.0',
+            '-preset', 'fast',
+            '-pix_fmt', 'yuv420p',
+            '-strict', '-2',
+            '-c:a', 'copy',
+            '-c:s', 'copy',
+            os.path.normpath('output.mkv'),
+            '-y'
+        ]
+        self.assertEqual(cmd, expected_cmd)
+    
+    @patch('src.conversion.subprocess.Popen')
+    def test_construct_ffmpeg_command_without_gpu(self, mock_popen):
+        """Test construct_ffmpeg_command with GPU acceleration disabled."""
+        manager = ConversionManager()
+        properties = {
+            "width": 1920,
+            "height": 1080,
+            "bit_rate": 4000000,
+            "codec_name": 'h264',
+            "frame_rate": 30.0,
+            "audio_codec": 'aac',
+            "audio_bit_rate": 128000,
+            "duration": 120.0
+        }
+        gamma = 2.2
+        input_path = 'input.mp4'
+        output_path = 'output.mkv'
+        use_gpu = False
+        expected_filter = FFMPEG_FILTER.format(
+            gamma=gamma, width=properties["width"], height=properties["height"]
+        )
+        cmd = manager.construct_ffmpeg_command(input_path, output_path, gamma, properties, use_gpu)
+        expected_cmd = [
+            FFMPEG_EXECUTABLE, '-loglevel', 'info',
+            '-i', os.path.normpath('input.mp4'),
+            '-filter:v', expected_filter,
+            '-c:v', 'h264',
+            '-b:v', '4000000',
+            '-r', '30.0',
+            '-preset', 'fast',
+            '-pix_fmt', 'yuv420p',
+            '-strict', '-2',
+            '-c:a', 'copy',
+            '-c:s', 'copy',
+            os.path.normpath('output.mkv'),
+            '-y'
+        ]
+        self.assertEqual(cmd, expected_cmd)
 
 if __name__ == '__main__':
     unittest.main()

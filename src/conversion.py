@@ -314,8 +314,18 @@ class ConversionManager:
             bool: True if both checks pass, False otherwise.
         """
         try:
+            # Create startupinfo to hide terminal windows
+            startupinfo = None
+            if sys.platform == "win32":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+
             # Check for NVIDIA GPU using nvidia-smi
-            result = subprocess.run(['nvidia-smi'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            result = subprocess.run(['nvidia-smi'], 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE,
+                startupinfo=startupinfo)
             if result.returncode != 0:
                 logging.warning("nvidia-smi not found or no NVIDIA GPU detected.")
                 return False
@@ -327,7 +337,8 @@ class ConversionManager:
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                universal_newlines=True
+                universal_newlines=True,
+                startupinfo=startupinfo
             )
             stdout, _ = process.communicate()
             if process.returncode != 0:

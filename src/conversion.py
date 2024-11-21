@@ -74,7 +74,9 @@ class ConversionManager:
         cmd += ['-i', os.path.normpath(input_path)]
 
         if use_gpu:
-            cmd += ['-c:v', 'h264_nvenc']
+            cmd += [
+                '-c:v', 'h264_nvenc'
+            ]
         else:
             cmd += [
                 '-filter:v', FFMPEG_FILTER.format(
@@ -83,7 +85,9 @@ class ConversionManager:
                 '-c:v', properties['codec_name']
             ]
 
+        filter_str = f"zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap=reinhard,eq=gamma={gamma},scale={properties['width']}:{properties['height']}"
         cmd += [
+            '-vf', filter_str,
             '-b:v', str(properties['bit_rate']),
             '-r', str(properties['frame_rate']),
             '-preset', 'fast',

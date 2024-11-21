@@ -8,11 +8,13 @@ This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The 
 - **Adjust Gamma Value**: Use a slider to adjust the gamma value for the conversion process, allowing for fine-tuning of the output video.
 - **Monitor Conversion Progress**: A progress bar displays the current status of the conversion process.
 - **Open Output File**: Option to automatically open the output file after the conversion is complete.
+- **GPU Acceleration**: Utilize NVIDIA GPUs for faster conversion using CUDA if available.
 
 ## Requirements
 
 - Python 3.10 and above
 - FFmpeg
+- NVIDIA GPU (optional, for GPU acceleration)
 
 ## Installation
 

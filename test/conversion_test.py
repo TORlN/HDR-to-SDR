@@ -6,7 +6,7 @@ import ctypes  # Added import for SW_HIDE
 import threading  # Added import for threading
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, ANY  # Import ANY
 from src.conversion import ConversionManager
 from src.utils import get_video_properties
 from tkinter import Tk, DoubleVar  # Added DoubleVar import
@@ -540,20 +540,31 @@ class TestConversionManager(unittest.TestCase):
 
         manager = ConversionManager()
         self.assertTrue(manager.is_gpu_available())
-        mock_run.assert_called_once_with(['nvidia-smi'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        mock_run.assert_called_once_with(
+            ['nvidia-smi'], 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE,
+            startupinfo=ANY  # Allow any startupinfo
+        )
         mock_popen.assert_called_once_with(
             [os.path.abspath('src/ffmpeg.exe'), '-encoders'],  # Updated to match full path
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            universal_newlines=True
+            universal_newlines=True,
+            startupinfo=ANY  # Allow any startupinfo
         )
-    
+
     @patch('src.conversion.subprocess.run', return_value=MagicMock(returncode=1))
     def test_is_gpu_available_no_gpu(self, mock_run):
         """Test is_gpu_available when NVIDIA GPU is not available."""
         manager = ConversionManager()
         self.assertFalse(manager.is_gpu_available())
-        mock_run.assert_called_once_with(['nvidia-smi'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        mock_run.assert_called_once_with(
+            ['nvidia-smi'], 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE,
+            startupinfo=ANY  # Allow any startupinfo
+        )
     
     @patch('src.conversion.subprocess.run', return_value=MagicMock(returncode=0))
     @patch('src.conversion.subprocess.Popen')
@@ -562,14 +573,20 @@ class TestConversionManager(unittest.TestCase):
         mock_popen.return_value.communicate.return_value = ('', '')
         manager = ConversionManager()
         self.assertFalse(manager.is_gpu_available())
-        mock_run.assert_called_once_with(['nvidia-smi'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        mock_run.assert_called_once_with(
+            ['nvidia-smi'], 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE,
+            startupinfo=ANY  # Allow any startupinfo
+        )
         mock_popen.assert_called_once_with(
             [FFMPEG_EXECUTABLE, '-encoders'],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            universal_newlines=True
+            universal_newlines=True,
+            startupinfo=ANY  # Allow any startupinfo
         )
-    
+
     @patch('src.conversion.subprocess.Popen')
     def test_construct_ffmpeg_command_with_gpu(self, mock_popen):
         """Test construct_ffmpeg_command with GPU acceleration enabled."""

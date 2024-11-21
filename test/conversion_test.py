@@ -221,10 +221,9 @@ class TestConversionManager(unittest.TestCase):
         expected_cmd = [
             FFMPEG_EXECUTABLE, '-loglevel', 'info',
             '-i', input_path,
-            # Apply the HDR to SDR filter to the main video stream
             '-filter:v', expected_filter,
-            # Re-encode the main video stream with the same settings
             '-c:v', properties['codec_name'],
+            '-vf', expected_filter,  # Added '-vf' flag
             '-b:v', str(properties['bit_rate']),
             '-r', str(properties['frame_rate']),
             '-preset', 'fast',  # Changed from 'faster' to 'fast'
@@ -264,15 +263,17 @@ class TestConversionManager(unittest.TestCase):
             False  # Added use_gpu argument
         )
 
+        expected_filter = FFMPEG_FILTER.format(
+            gamma=2.2, width=1920, height=1080
+        )
         expected_cmd = [
             FFMPEG_EXECUTABLE, '-loglevel', 'info',
             '-i', os.path.normpath('input.mp4'),
             # Apply the HDR to SDR filter to the main video stream
-            '-filter:v', FFMPEG_FILTER.format(
-                gamma=2.2, width=1920, height=1080
-            ),
+            '-filter:v', expected_filter,
             # Re-encode the main video stream with the same settings
             '-c:v', 'h264',
+            '-vf', expected_filter,  # Added '-vf' flag
             '-b:v', '4000000',
             '-r', '30.0',
             '-preset', 'fast',  # Changed from 'faster' to 'fast'
@@ -614,6 +615,7 @@ class TestConversionManager(unittest.TestCase):
             '-hwaccel', 'cuda',
             '-i', os.path.normpath('input.mp4'),
             '-c:v', 'h264_nvenc',
+            '-vf', expected_filter,  # Added '-vf' flag
             '-b:v', '4000000',
             '-r', '30.0',
             '-preset', 'fast',
@@ -653,6 +655,7 @@ class TestConversionManager(unittest.TestCase):
             '-i', os.path.normpath('input.mp4'),
             '-filter:v', expected_filter,
             '-c:v', 'h264',
+            '-vf', expected_filter,  # Added '-vf' flag
             '-b:v', '4000000',
             '-r', '30.0',
             '-preset', 'fast',

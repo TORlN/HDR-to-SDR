@@ -235,8 +235,12 @@ class TestExtractFrameWithConversion(unittest.TestCase):
             # Verify that ffmpeg was called with the correct command and timestamp
             expected_time = 90.0 / 3  # 30 seconds
     
-            mock_run_ffmpeg.assert_called_once_with([
-                ANY, '-ss', str(expected_time), '-i', 'input.mp4',
+            mock_run_ffmpeg.assert_called_once()
+            actual_args = mock_run_ffmpeg.call_args[0][0]
+            
+            # Check all arguments except the first one (ffmpeg path)
+            self.assertEqual(actual_args[1:], [
+                '-ss', str(expected_time), '-i', 'input.mp4',
                 '-vf', expected_vf, '-vframes', '1', '-f', 'image2pipe', '-'
             ])
 

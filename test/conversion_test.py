@@ -577,8 +577,10 @@ class TestConversionManager(unittest.TestCase):
             startupinfo=ANY,
             creationflags=ANY
         )
+        
+        ffmpeg_path = os.path.abspath('src/ffmpeg.exe')
         mock_popen.assert_called_once_with(
-            [FFMPEG_EXECUTABLE, '-encoders'],
+            [ffmpeg_path, '-encoders'],
             stdout=-1,
             stderr=-1,
             universal_newlines=True,
@@ -595,15 +597,15 @@ class TestConversionManager(unittest.TestCase):
             ['nvidia-smi'], 
             stdout=subprocess.PIPE, 
             stderr=subprocess.PIPE,
-            startupinfo=ANY,  # Allow any startupinfo
+            startupinfo=ANY,  
             creationflags=ANY
         )
     
     @patch('src.conversion.subprocess.run', return_value=MagicMock(returncode=0))
     @patch('src.conversion.subprocess.Popen')
     def test_is_gpu_available_no_encoder(self, mock_popen, mock_run):
-        manager = ConversionManager()  # Instantiate ConversionManager
-        available = manager.is_gpu_available()  # Call the method on the instance
+        manager = ConversionManager()  
+        available = manager.is_gpu_available() 
 
         self.assertFalse(available)
         mock_run.assert_called_once_with(
@@ -611,14 +613,14 @@ class TestConversionManager(unittest.TestCase):
             stdout=-1,
             stderr=-1,
             startupinfo=ANY,
-            creationflags=ANY  # Ensure creationflags is included
+            creationflags=ANY  
         )
 
-    @patch('src.conversion.get_maxfall')  # Mock get_maxfall
+    @patch('src.conversion.get_maxfall')  
     @patch('src.conversion.subprocess.Popen')
     def test_construct_ffmpeg_command_with_gpu(self, mock_popen, mock_get_maxfall):
         """Test construct_ffmpeg_command with GPU acceleration enabled."""
-        mock_get_maxfall.return_value = 10  # Set a predefined maxfall value
+        mock_get_maxfall.return_value = 10  
         manager = ConversionManager()
         properties = {
             "width": 1920,
@@ -652,10 +654,10 @@ class TestConversionManager(unittest.TestCase):
             '-preset', 'p4',
             '-tune', 'hq',
             '-rc', 'vbr',
-            '-cq', '20',  # Adjusted cq value to match the code
+            '-cq', '20',  
             '-b:v', '4000000',
-            '-maxrate', '4000000',  # properties['bit_rate'] * 1
-            '-bufsize', '8000000',  # properties['bit_rate'] * 2
+            '-maxrate', '4000000',  
+            '-bufsize', '8000000',  
             '-r', '30.0',
             '-pix_fmt', 'yuv420p',
             '-strict', '-2',
@@ -672,13 +674,13 @@ class TestConversionManager(unittest.TestCase):
     @patch('src.conversion.subprocess.Popen')
     def test_construct_ffmpeg_command_without_gpu(self, mock_popen, mock_get_maxfall):
         """Test construct_ffmpeg_command with GPU acceleration disabled."""
-        mock_get_maxfall.return_value = 10  # Set a predefined maxfall value
+        mock_get_maxfall.return_value = 10  
         manager = ConversionManager()
         properties = {
             "width": 1920,
             "height": 1080,
             "bit_rate": 4000000,
-            "codec_name": 'libx264',  # Updated codec_name
+            "codec_name": 'libx264',  
             "frame_rate": 30.0,
             "audio_codec": 'aac',
             "audio_bit_rate": 128000,
@@ -688,7 +690,7 @@ class TestConversionManager(unittest.TestCase):
         input_path = 'input.mp4'
         output_path = 'output.mkv'
         use_gpu = False
-        selected_filter_index = 0  # Use the first filter option
+        selected_filter_index = 0  
         expected_filter = FFMPEG_FILTER[selected_filter_index].format(
             gamma=gamma, width=properties["width"], height=properties["height"]
         )
@@ -696,22 +698,22 @@ class TestConversionManager(unittest.TestCase):
         expected_cmd = [
             FFMPEG_EXECUTABLE, '-loglevel', 'info',
             '-i', os.path.normpath('input.mp4'),
-            '-map', '0:v:0',            # Added mapping for video stream
-            '-map', '0:a?',             # Added mapping for audio streams
-            '-map', '0:s?',             # Added mapping for subtitle streams
+            '-map', '0:v:0',            
+            '-map', '0:a?',            
+            '-map', '0:s?',            
             '-filter:v', expected_filter,
-            '-c:v', 'libx264',  # Updated codec
-            '-preset', 'veryfast',  # Updated preset
-            '-tune', 'film',        # Added tune option
-            '-crf', '23',           # Added CRF
+            '-c:v', 'libx264',  
+            '-preset', 'veryfast', 
+            '-tune', 'film',        
+            '-crf', '23',           
             '-b:v', '4000000',
             '-r', '30.0',
             '-pix_fmt', 'yuv420p',
             '-strict', '-2',
             '-c:a', 'copy',
             '-c:s', 'copy',
-            '-map_metadata', '0',       # Added metadata mapping
-            '-movflags', '+faststart',  # Ensure movflags are included
+            '-map_metadata', '0',       
+            '-movflags', '+faststart',  
             os.path.normpath('output.mkv'),
             '-y'
         ]

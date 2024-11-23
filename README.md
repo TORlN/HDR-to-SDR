@@ -78,7 +78,7 @@ This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The 
         --add-binary "src\ffplay.exe;." ^
         --collect-submodules numpy ^
         --log-level DEBUG ^
-        src\main.py
+        src\main.pyw
     ```
 6. The compiled executable will be located in the `dist` directory.
 

@@ -142,15 +142,14 @@ class ConversionManager:
         return cmd
 
     def start_ffmpeg_process(self, cmd):
+        """Start the FFmpeg process without showing a console window."""
         startupinfo = None
+        creationflags = 0
         if sys.platform == "win32":
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startupinfo.wShowWindow = subprocess.SW_HIDE
             creationflags = subprocess.CREATE_NO_WINDOW
-        else:
-            startupinfo = None
-            creationflags = 0
 
         process = subprocess.Popen(
             cmd,

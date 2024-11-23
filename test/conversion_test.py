@@ -232,14 +232,12 @@ class TestConversionManager(unittest.TestCase):
         cmd = manager.construct_ffmpeg_command(input_path, output_path, gamma, properties, False, selected_filter_index)  # Added selected_filter_index argument
         expected_cmd = [
             FFMPEG_EXECUTABLE, '-loglevel', 'info',
-            '-threads', '16',  # Added threads
             '-i', input_path,
             '-map', '0:v:0',  # Added stream mapping
             '-map', '0:a?',    # Added stream mapping
             '-map', '0:s?',    # Added stream mapping
             '-filter:v', expected_filter,  # Changed from '-filter_complex' to '-filter:v'
             '-c:v', 'libx264',  # Changed from properties['codec_name'] which was 'h264'
-            # '-vf', expected_filter,  # Removed '-vf' flag
             '-preset', 'veryfast',  # Changed from 'fast' to 'veryfast'
             '-tune', 'film',        # Added '-tune' option
             '-crf', '23',           # Added '-crf' option
@@ -291,7 +289,6 @@ class TestConversionManager(unittest.TestCase):
         )
         expected_cmd = [
             FFMPEG_EXECUTABLE, '-loglevel', 'info',
-            '-threads', '16',
             '-i', os.path.normpath('input.mp4'),
             '-map', '0:v:0',  # Map video stream
             '-map', '0:a?',   # Map audio streams if they exist
@@ -636,7 +633,6 @@ class TestConversionManager(unittest.TestCase):
         cmd = manager.construct_ffmpeg_command(input_path, output_path, gamma, properties, use_gpu, selected_filter_index)
         expected_cmd = [
             FFMPEG_EXECUTABLE, '-loglevel', 'info',
-            # Removed '-threads', '4'
             '-hwaccel', 'cuda',
             '-hwaccel_device', '0',
             '-i', os.path.normpath('input.mp4'),
@@ -691,7 +687,6 @@ class TestConversionManager(unittest.TestCase):
         cmd = manager.construct_ffmpeg_command(input_path, output_path, gamma, properties, use_gpu, selected_filter_index)
         expected_cmd = [
             FFMPEG_EXECUTABLE, '-loglevel', 'info',
-            '-threads', '16',  # Ensure threads are included
             '-i', os.path.normpath('input.mp4'),
             '-map', '0:v:0',            # Added mapping for video stream
             '-map', '0:a?',             # Added mapping for audio streams

@@ -11,8 +11,12 @@ import json
 import shutil
 
 # Constants and initialization
-LOGGING_ENABLED = False
-FFMPEG_FILTER = 'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap=reinhard,eq=gamma={gamma},scale={width}:{height}'
+LOGGING_ENABLED = True
+TONEMAP = ["reinhard", "mobius"]
+FFMPEG_FILTER = [
+    'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap=reinhard,eq=gamma={gamma},scale={width}:{height}',
+    'zscale=t=linear:npl={npl}, tonemap=tonemap=hable, zscale=t=bt709:m=bt709:r=tv:p=bt709, eq=gamma={gamma}, scale={width}:{height}'
+]
 FFMPEG_EXECUTABLE = None
 FFPROBE_EXECUTABLE = None
 
@@ -208,12 +212,42 @@ def run_ffmpeg_command(cmd):
         logging.error(f"Error running FFmpeg command: {str(e)}")
         raise RuntimeError(f"Error running FFmpeg command: {str(e)}")
 
-def extract_frame_with_conversion(video_path, gamma):
+def get_maxfall(video_path):
+    """
+    Extract MAXFALL from video metadata using ffprobe.
+    Args:
+        video_path (str): Path to the video file.
+    Returns:
+        float: The MAXFALL value.
+    """
+    cmd = [
+        FFPROBE_EXECUTABLE,
+        '-v', 'quiet',
+        '-select_streams', 'v:0',
+        '-show_frames',
+        '-read_intervals', '%+1',
+        '-print_format', 'json',
+        video_path
+    ]
+    out = subprocess.check_output(cmd)
+    data = json.loads(out.decode('utf-8'))
+    frames = data.get('frames', [])
+    for frame in frames:
+        side_data_list = frame.get('side_data_list', [])
+        for side_data in side_data_list:
+            if side_data.get('side_data_type') == 'Mastering display metadata':
+                max_fall = side_data.get('max_fall', None)
+                if (max_fall):
+                    return float(max_fall)
+    return 100  # Default value if MAXFALL is not found
+
+def extract_frame_with_conversion(video_path, gamma, filter_index):
     """
     Extracts a frame from the video 1/3rd of the way through and applies gamma correction.
     Args:
         video_path (str): The path to the video file.
         gamma (float): The gamma correction value.
+        filter_index (int): The index of the filter to use.
     Returns:
         PIL.Image: The extracted and gamma-corrected frame as a PIL image.
     """
@@ -223,9 +257,18 @@ def extract_frame_with_conversion(video_path, gamma):
 
     target_time = properties['duration'] / 3  # Changed to 1/3rd of the duration
 
+    if filter_index == 1:  # Adjusted index for 'Filter with MAXFALL'
+        maxfall = get_maxfall(video_path)
+        filter_str = FFMPEG_FILTER[filter_index].format(
+            gamma=gamma, width='iw', height='ih', npl=maxfall
+        )
+    else:
+        filter_str = FFMPEG_FILTER[filter_index].format(
+            gamma=gamma, width='iw', height='ih'
+        )
     cmd = [
         FFMPEG_EXECUTABLE, '-ss', str(target_time), '-i', video_path,
-        '-vf', FFMPEG_FILTER.format(gamma=gamma, width='iw', height='ih'),
+        '-vf', filter_str,
         '-vframes', '1', '-f', 'image2pipe', '-'
     ]
 

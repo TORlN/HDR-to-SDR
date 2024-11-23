@@ -59,12 +59,15 @@ class TestConversionManager(unittest.TestCase):
         interactable_elements = []
         cancel_button = MagicMock()
 
+        selected_filter_index = 0  # Add a selected_filter_index value
+
         manager = ConversionManager()
         manager.start_conversion(
             'input.mp4',
             'output.mkv',
             2.2,
             False,  # Added use_gpu argument
+            selected_filter_index,  # Added selected_filter_index argument
             progress_var,
             interactable_elements,
             mock_gui,  # Pass the mocked GUI instance
@@ -132,15 +135,18 @@ class TestConversionManager(unittest.TestCase):
         interactable_elements = []
         cancel_button = MagicMock()
 
+        selected_filter_index = 0  # Add a selected_filter_index value
+
         manager = ConversionManager()
         manager.start_conversion(
             'input.mp4',
             'output.mkv',
             2.2,
-            False,  # Added use_gpu argument
+            False,  # use_gpu
+            selected_filter_index,  # Added selected_filter_index argument
             progress_var,
             interactable_elements,
-            mock_gui,  # Pass the mocked GUI instance
+            mock_gui,  # gui_instance
             False,
             cancel_button
         )
@@ -159,13 +165,15 @@ class TestConversionManager(unittest.TestCase):
         interactable_elements = []
         cancel_button = MagicMock()
 
-        manager.start_conversion('', 'output.mkv', 2.2, False, progress_var, interactable_elements, mock_gui, False, cancel_button)
+        selected_filter_index = 0  # Add a selected_filter_index value
+
+        manager.start_conversion('', 'output.mkv', 2.2, False, selected_filter_index, progress_var, interactable_elements, mock_gui, False, cancel_button)
         mock_showwarning.assert_called_once_with(
             "Warning", "Please select both an input file and specify an output file."
         )
 
         mock_showwarning.reset_mock()
-        manager.start_conversion('input.mp4', '', 2.2, False, progress_var, interactable_elements, mock_gui, False, cancel_button)
+        manager.start_conversion('input.mp4', '', 2.2, False, selected_filter_index, progress_var, interactable_elements, mock_gui, False, cancel_button)
         self.assertEqual(mock_showwarning.call_count, 1)
         mock_showwarning.assert_called_with(
             "Warning", "Please select both an input file and specify an output file."
@@ -189,7 +197,9 @@ class TestConversionManager(unittest.TestCase):
         cancel_button = MagicMock()
 
         input_path = 'input.mp4'
-        manager.start_conversion(input_path, 'output.mkv', 2.2, False, progress_var, 
+        selected_filter_index = 0  # Add a selected_filter_index value
+
+        manager.start_conversion(input_path, 'output.mkv', 2.2, False, selected_filter_index, progress_var, 
                                interactable_elements, mock_gui, False, cancel_button)
         mock_showwarning.assert_called_once_with(
             "Warning", "Failed to retrieve video properties."
@@ -205,7 +215,7 @@ class TestConversionManager(unittest.TestCase):
             "width": 1920,
             "height": 1080,
             "bit_rate": 4000000,
-            "codec_name": 'h264',
+            "codec_name": 'libx264',  # Changed from 'h264' to 'libx264'
             "frame_rate": 30.0,
             "audio_codec": 'aac',
             "audio_bit_rate": 128000,
@@ -214,32 +224,41 @@ class TestConversionManager(unittest.TestCase):
         gamma = 2.2
         input_path = 'input.mp4'
         output_path = 'output.mkv'
-        expected_filter = FFMPEG_FILTER.format(
+        selected_filter_index = 0  # Add selected_filter_index
+        
+        expected_filter = FFMPEG_FILTER[selected_filter_index].format(
             gamma=gamma, width=properties["width"], height=properties["height"]
         )
-        cmd = manager.construct_ffmpeg_command(input_path, output_path, gamma, properties, False)  # use_gpu=False
+        cmd = manager.construct_ffmpeg_command(input_path, output_path, gamma, properties, False, selected_filter_index)  # Added selected_filter_index argument
         expected_cmd = [
             FFMPEG_EXECUTABLE, '-loglevel', 'info',
+            '-threads', '16',  # Added threads
             '-i', input_path,
-            '-filter:v', expected_filter,
-            '-c:v', properties['codec_name'],
-            '-vf', expected_filter,  # Added '-vf' flag
+            '-filter:v', expected_filter,  # Changed from '-filter_complex' to '-filter:v'
+            '-c:v', 'libx264',  # Changed from properties['codec_name'] which was 'h264'
+            # '-vf', expected_filter,  # Removed '-vf' flag
+            '-preset', 'veryfast',  # Changed from 'fast' to 'veryfast'
+            '-tune', 'film',        # Added '-tune' option
+            '-crf', '23',           # Added '-crf' option
             '-b:v', str(properties['bit_rate']),
             '-r', str(properties['frame_rate']),
-            '-preset', 'fast',  # Changed from 'faster' to 'fast'
             '-pix_fmt', 'yuv420p',  # Added pix_fmt and yuv420p
             '-strict', '-2',
-            # Copy audio and subtitle streams without re-encoding
             '-c:a', 'copy',
-            '-c:s', 'copy',
+            '-c:s', 'copy',         # Added '-c:s'
+            '-movflags', '+faststart',  # Added movflags for streaming
             output_path,
             '-y'
         ]
         self.assertEqual(cmd, expected_cmd)
 
+    @patch('src.conversion.get_maxfall')  # Mock get_maxfall
     @patch('src.conversion.get_video_properties')
-    def test_construct_ffmpeg_command_with_subtitles(self, mock_get_props):
+    def test_construct_ffmpeg_command_with_subtitles(self, mock_get_props, mock_get_maxfall):
         """Test that construct_ffmpeg_command includes subtitle streams when available."""
+        # ...existing code...
+        mock_get_maxfall.return_value = 10  # Set a predefined maxfall value
+        
         mock_get_props.return_value = {
             "width": 1920,
             "height": 1080,
@@ -260,28 +279,32 @@ class TestConversionManager(unittest.TestCase):
             'output.mkv',
             2.2,
             mock_get_props.return_value,
-            False  # Added use_gpu argument
+            False,  # use_gpu
+            1       # selected_filter_index
         )
 
-        expected_filter = FFMPEG_FILTER.format(
-            gamma=2.2, width=1920, height=1080
+        expected_filter = FFMPEG_FILTER[1].format(  # Indexed FFMPEG_FILTER
+            gamma=2.2, width=1920, height=1080, npl=10  # Added 'npl' parameter
         )
         expected_cmd = [
             FFMPEG_EXECUTABLE, '-loglevel', 'info',
+            '-threads', '16',  # Added '-threads' and '16'
             '-i', os.path.normpath('input.mp4'),
             # Apply the HDR to SDR filter to the main video stream
-            '-filter:v', expected_filter,
+            '-filter_complex', expected_filter,  # Replaced '-filter:v' with '-filter_complex'
             # Re-encode the main video stream with the same settings
-            '-c:v', 'h264',
-            '-vf', expected_filter,  # Added '-vf' flag
+            '-c:v', 'libx264',  # Changed from 'h264' to 'libx264'
+            '-preset', 'veryfast',  # Changed from 'fast' to 'veryfast'
+            '-tune', 'film',        # Added '-tune' option
+            '-crf', '23',           # Added '-crf' option
             '-b:v', '4000000',
             '-r', '30.0',
-            '-preset', 'fast',  # Changed from 'faster' to 'fast'
-            '-pix_fmt', 'yuv420p',  # Added pix_fmt and yuv420p
+            '-pix_fmt', 'yuv420p',
             '-strict', '-2',
             # Copy audio and subtitle streams without re-encoding
             '-c:a', 'copy',
             '-c:s', 'copy',
+            '-movflags', '+faststart',  # Added movflags for streaming
             os.path.normpath('output.mkv'),
             '-y'
         ]
@@ -436,21 +459,15 @@ class TestConversionManager(unittest.TestCase):
             mock_process = MagicMock()
             mock_popen.return_value = mock_process
 
-            manager.start_ffmpeg_process(cmd)
-
-            # Set dwFlags directly to include STARTF_USESHOWWINDOW (1)
-            startupinfo_instance.dwFlags = subprocess.STARTF_USESHOWWINDOW
-            
-            # Set wShowWindow directly to the integer value for SW_HIDE (0)
-            startupinfo_instance.wShowWindow = subprocess.SW_HIDE
-            
-            # Assert that Popen was called with the correct parameters
+            process = manager.start_ffmpeg_process(cmd)
             mock_popen.assert_called_once_with(
                 cmd,
                 stderr=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 universal_newlines=True,
-                startupinfo=startupinfo_instance
+                startupinfo=startupinfo_instance,
+                encoding='utf-8',          # Added encoding
+                errors='replace'            # Added errors
             )
 
     @patch('src.conversion.subprocess.Popen')
@@ -588,9 +605,11 @@ class TestConversionManager(unittest.TestCase):
             startupinfo=ANY  # Allow any startupinfo
         )
 
+    @patch('src.conversion.get_maxfall')  # Mock get_maxfall
     @patch('src.conversion.subprocess.Popen')
-    def test_construct_ffmpeg_command_with_gpu(self, mock_popen):
+    def test_construct_ffmpeg_command_with_gpu(self, mock_popen, mock_get_maxfall):
         """Test construct_ffmpeg_command with GPU acceleration enabled."""
+        mock_get_maxfall.return_value = 10  # Set a predefined maxfall value
         manager = ConversionManager()
         properties = {
             "width": 1920,
@@ -606,37 +625,48 @@ class TestConversionManager(unittest.TestCase):
         input_path = 'input.mp4'
         output_path = 'output.mkv'
         use_gpu = True
-        expected_filter = FFMPEG_FILTER.format(
-            gamma=gamma, width=properties["width"], height=properties["height"]
+        selected_filter_index = 1  # Use the second filter option
+        expected_filter = FFMPEG_FILTER[selected_filter_index].format(
+            gamma=gamma, width=properties["width"], height=properties["height"], npl=mock_get_maxfall.return_value
         )
-        cmd = manager.construct_ffmpeg_command(input_path, output_path, gamma, properties, use_gpu)
+        cmd = manager.construct_ffmpeg_command(input_path, output_path, gamma, properties, use_gpu, selected_filter_index)
         expected_cmd = [
             FFMPEG_EXECUTABLE, '-loglevel', 'info',
+            '-threads', '16',
             '-hwaccel', 'cuda',
+            '-hwaccel_device', '0',
             '-i', os.path.normpath('input.mp4'),
+            '-filter_complex', expected_filter,
             '-c:v', 'h264_nvenc',
-            '-vf', expected_filter,  # Added '-vf' flag
+            '-preset', 'p4',
+            '-tune', 'hq',
+            '-rc', 'vbr',
+            '-cq', '19',
             '-b:v', '4000000',
+            '-maxrate', '6000000',
+            '-bufsize', '8000000',
             '-r', '30.0',
-            '-preset', 'fast',
             '-pix_fmt', 'yuv420p',
             '-strict', '-2',
             '-c:a', 'copy',
             '-c:s', 'copy',
+            '-movflags', '+faststart',
             os.path.normpath('output.mkv'),
             '-y'
         ]
         self.assertEqual(cmd, expected_cmd)
-    
+
+    @patch('src.conversion.get_maxfall')  # Mock get_maxfall
     @patch('src.conversion.subprocess.Popen')
-    def test_construct_ffmpeg_command_without_gpu(self, mock_popen):
+    def test_construct_ffmpeg_command_without_gpu(self, mock_popen, mock_get_maxfall):
         """Test construct_ffmpeg_command with GPU acceleration disabled."""
+        mock_get_maxfall.return_value = 10  # Set a predefined maxfall value
         manager = ConversionManager()
         properties = {
             "width": 1920,
             "height": 1080,
             "bit_rate": 4000000,
-            "codec_name": 'h264',
+            "codec_name": 'libx264',  # Updated codec_name
             "frame_rate": 30.0,
             "audio_codec": 'aac',
             "audio_bit_rate": 128000,
@@ -646,23 +676,27 @@ class TestConversionManager(unittest.TestCase):
         input_path = 'input.mp4'
         output_path = 'output.mkv'
         use_gpu = False
-        expected_filter = FFMPEG_FILTER.format(
+        selected_filter_index = 0  # Use the first filter option
+        expected_filter = FFMPEG_FILTER[selected_filter_index].format(
             gamma=gamma, width=properties["width"], height=properties["height"]
         )
-        cmd = manager.construct_ffmpeg_command(input_path, output_path, gamma, properties, use_gpu)
+        cmd = manager.construct_ffmpeg_command(input_path, output_path, gamma, properties, use_gpu, selected_filter_index)
         expected_cmd = [
             FFMPEG_EXECUTABLE, '-loglevel', 'info',
+            '-threads', '16',  # Ensure threads are included
             '-i', os.path.normpath('input.mp4'),
             '-filter:v', expected_filter,
-            '-c:v', 'h264',
-            '-vf', expected_filter,  # Added '-vf' flag
+            '-c:v', 'libx264',  # Updated codec
+            '-preset', 'veryfast',  # Updated preset
+            '-tune', 'film',        # Added tune option
+            '-crf', '23',           # Added CRF
             '-b:v', '4000000',
             '-r', '30.0',
-            '-preset', 'fast',
             '-pix_fmt', 'yuv420p',
             '-strict', '-2',
             '-c:a', 'copy',
             '-c:s', 'copy',
+            '-movflags', '+faststart',  # Ensure movflags are included
             os.path.normpath('output.mkv'),
             '-y'
         ]

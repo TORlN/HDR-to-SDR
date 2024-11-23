@@ -6,7 +6,7 @@ import multiprocessing
 import re
 import logging
 from tkinter import messagebox
-from utils import get_video_properties, FFMPEG_FILTER, FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE
+from utils import get_video_properties, FFMPEG_FILTER, FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE, get_maxfall
 from tkinterdnd2 import DND_FILES
 import sys
 import platform
@@ -15,10 +15,12 @@ class ConversionManager:
     def __init__(self):
         self.process = None
         self.cancelled = False
+        self.cpu_count = multiprocessing.cpu_count()
+        self.filter_options = ['Static', 'Dynamic']  # Add filter options to ConversionManager
 
-    def start_conversion(self, input_path, output_path, gamma, use_gpu, progress_var,
-                         interactable_elements, gui_instance, open_after_conversion,
-                         cancel_button):
+    def start_conversion(self, input_path, output_path, gamma, use_gpu, selected_filter_index,
+                         progress_var, interactable_elements, gui_instance,
+                         open_after_conversion, cancel_button):
         if not self.verify_paths(input_path, output_path):
             return
 
@@ -36,7 +38,9 @@ class ConversionManager:
             gui_instance, interactable_elements, cancel_button))
         cancel_button.grid()
 
-        cmd = self.construct_ffmpeg_command(input_path, output_path, gamma, properties, use_gpu)
+        cmd = self.construct_ffmpeg_command(
+            input_path, output_path, gamma, properties, use_gpu, selected_filter_index
+        )
         self.process = self.start_ffmpeg_process(cmd)
 
         thread = threading.Thread(target=self.monitor_progress, args=(
@@ -60,41 +64,69 @@ class ConversionManager:
         for element in elements:
             element.config(state="normal")
 
-    def construct_ffmpeg_command(self, input_path, output_path, gamma, properties, use_gpu):
+    def construct_ffmpeg_command(self, input_path, output_path, gamma, properties, use_gpu, selected_filter_index):
         cmd = [FFMPEG_EXECUTABLE, '-loglevel', 'info']
         current_platform = platform.system().lower()
 
+        # Add thread optimization
+        cmd += ['-threads', str(self.cpu_count)]
+
+        # GPU acceleration setup
         if use_gpu:
             if current_platform in ["windows", "linux"]:
-                cmd += ['-hwaccel', 'cuda']
+                cmd += [
+                    '-hwaccel', 'cuda',
+                    '-hwaccel_device', '0'
+                ]
             else:
                 messagebox.showwarning("Warning", "GPU acceleration is not supported on this platform.")
                 use_gpu = False
 
+        # Input file
         cmd += ['-i', os.path.normpath(input_path)]
 
+        # Use appropriate filter option
+        if selected_filter_index == 1:
+            maxfall = get_maxfall(input_path)
+            filter_str = FFMPEG_FILTER[selected_filter_index].format(
+                gamma=gamma, width=properties["width"], height=properties["height"], npl=maxfall
+            )
+            cmd += ['-filter_complex', filter_str]
+        else:
+            filter_str = FFMPEG_FILTER[selected_filter_index].format(
+                gamma=gamma, width=properties["width"], height=properties["height"]
+            )
+            cmd += ['-filter:v', filter_str]
+
+        # Encoding settings
         if use_gpu:
             cmd += [
-                '-c:v', 'h264_nvenc'
+                '-c:v', 'h264_nvenc',
+                '-preset', 'p4',
+                '-tune', 'hq',
+                '-rc', 'vbr',
+                '-cq', '19',
+                '-b:v', str(properties['bit_rate']),
+                '-maxrate', str(int(properties['bit_rate'] * 1.5)),
+                '-bufsize', str(int(properties['bit_rate'] * 2))
             ]
         else:
             cmd += [
-                '-filter:v', FFMPEG_FILTER.format(
-                    gamma=gamma, width=properties["width"], height=properties["height"]
-                ),
-                '-c:v', properties['codec_name']
+                '-c:v', 'libx264',
+                '-preset', 'veryfast',  # Faster CPU preset
+                '-tune', 'film',
+                '-crf', '23',
+                '-b:v', str(properties['bit_rate'])
             ]
 
-        filter_str = f"zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap=reinhard,eq=gamma={gamma},scale={properties['width']}:{properties['height']}"
+        # Common settings
         cmd += [
-            '-vf', filter_str,
-            '-b:v', str(properties['bit_rate']),
             '-r', str(properties['frame_rate']),
-            '-preset', 'fast',
             '-pix_fmt', 'yuv420p',
             '-strict', '-2',
             '-c:a', 'copy',
             '-c:s', 'copy',
+            '-movflags', '+faststart',  # Optimize for streaming playback
             os.path.normpath(output_path),
             '-y'
         ]
@@ -114,7 +146,9 @@ class ConversionManager:
             stderr=subprocess.PIPE,
             stdout=subprocess.PIPE,
             universal_newlines=True,
-            startupinfo=startupinfo
+            startupinfo=startupinfo,
+            encoding='utf-8',
+            errors='replace'
         )
         logging.debug(f"Started FFmpeg process with command: {' '.join(cmd)}")
         return process
@@ -145,13 +179,16 @@ class ConversionManager:
             self.process.wait()
             if self.process.returncode != 0 and gpu_error_detected and not self.cancelled:
                 logging.warning("GPU acceleration failed. Retrying with CPU encoding.")
+                # Untick GPU checkbox
+                gui_instance.gpu_accel_var.set(False)
                 messagebox.showwarning("GPU Acceleration Failed",
-                                       "GPU acceleration failed. Switching to CPU encoding.")
-                gui_instance.start_conversion(
+                                     "GPU acceleration failed. Switching to CPU encoding.")
+                self.start_conversion(
                     input_path=gui_instance.input_path_var.get(),
                     output_path=gui_instance.output_path_var.get(),
                     gamma=gamma,
-                    use_gpu=False,
+                    use_gpu=False,  # Force CPU encoding
+                    selected_filter_index=self.filter_options.index(gui_instance.filter_var.get()),
                     progress_var=progress_var,
                     interactable_elements=interactable_elements,
                     gui_instance=gui_instance,
@@ -160,7 +197,7 @@ class ConversionManager:
                 )
             else:
                 self.handle_completion(gui_instance, interactable_elements, cancel_button,
-                                       output_path, open_after_conversion, error_messages)
+                                    output_path, open_after_conversion, error_messages)
 
     def parse_time(self, time_str):
         hours, minutes, seconds = map(float, time_str.split(':'))

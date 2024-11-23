@@ -21,7 +21,8 @@ class TestHDRConverterGUI(TestCase):
         # Create specific patches for all tk.Variable uses in gui.py
         tk_patches = {
             'root': patch('tkinterdnd2.Tk', autospec=True),
-            'string_var': patch('tkinter.StringVar', return_value=self.mock_string_var),
+            # Remove the following line to avoid conflicting patches
+            # 'string_var': patch('tkinter.StringVar', return_value=self.mock_string_var),
             'double_var': patch('tkinter.DoubleVar', return_value=self.mock_progress_var),
             'bool_var': patch('tkinter.BooleanVar', return_value=self.mock_bool_var),
             'drop_register': patch('tkinterdnd2.Tk.drop_target_register'),
@@ -114,12 +115,15 @@ class TestHDRConverterGUI(TestCase):
         # Mock adjust_gamma method
         self.gui.adjust_gamma = MagicMock(return_value=mock_image)
 
+        # Set the filter_var to return a valid filter option
+        self.mock_string_var.get.return_value = 'Static'
+
         # Call display_frames directly since that's where the functions are used
         self.gui.display_frames('test_input.mp4')
 
-        # Verify frame extraction and conversion with gamma=1.0
+        # Verify frame extraction and conversion with gamma=1.0 and filter_index=0
         mock_extract.assert_called_once_with('test_input.mp4')
-        mock_convert.assert_called_once_with('test_input.mp4', gamma=1.0)
+        mock_convert.assert_called_once_with('test_input.mp4', gamma=1.0, filter_index=0)
 
         # Verify adjust_gamma is called with correct gamma value
         self.gui.adjust_gamma.assert_called_once_with(mock_image, 2.2)
@@ -192,6 +196,7 @@ class TestHDRConverterGUI(TestCase):
 
         mock_confirm.return_value = True
         self.gui.drop_target_registered = True
+        self.gui.filter_var.get = MagicMock(return_value='Static')
 
     def _assert_conversion_started(self, mock_unregister, mock_start_conversion):
         """Helper method to verify conversion startup."""
@@ -203,13 +208,57 @@ class TestHDRConverterGUI(TestCase):
         self.assertEqual(args[1], 'test_output.mkv')  # output path
         self.assertEqual(args[2], 2.2)  # gamma
         self.assertIs(args[3], False)  # gpu acceleration
-        self.assertIs(args[4], self.gui.progress_var)  # progress var
-        self.assertEqual(args[5], self.gui.interactable_elements)  # interactable elements
-        self.assertIs(args[6], self.gui)  # gui instance
-        self.assertTrue(args[7])  # open after conversion
-        self.assertIs(args[8], self.gui.cancel_button)  # cancel button
+        self.assertEqual(args[4], 0)  # selected_filter_index
+        self.assertIs(args[5], self.gui.progress_var)  # progress var
+        self.assertEqual(args[6], self.gui.interactable_elements)  # interactable elements
+        self.assertIs(args[7], self.gui)  # gui instance
+        self.assertTrue(args[8])  # open after conversion
+        self.assertIs(args[9], self.gui.cancel_button)  # cancel button
         
         self.gui.cancel_button.grid.assert_called_once()
+
+    @patch('src.gui.ImageTk.PhotoImage')
+    @patch('src.gui.extract_frame_with_conversion')
+    @patch('src.gui.extract_frame')
+    def test_tooltip_display(self, mock_extract, mock_convert, mock_photo_image):
+        """Test tooltip display on hover over info button."""
+        with patch.object(self.gui, 'show_tooltip') as mock_show_tooltip, \
+             patch.object(self.gui, 'hide_tooltip') as mock_hide_tooltip:
+            # Simulate mouse enter event
+            event = MagicMock()
+            self.gui.show_tooltip(event, "Static: Basic HDR to SDR conversion with fixed parameters\nDynamic: Adaptive conversion that analyzes video brightness")
+            mock_show_tooltip.assert_called()
+            
+            # Simulate mouse leave event
+            self.gui.hide_tooltip()
+            mock_hide_tooltip.assert_called()
+
+    def test_filter_dropdown(self):
+        """Test filter dropdown menu functionality."""
+        # Setup mock combobox and bind method
+        self.gui.filter_combobox = MagicMock(spec=ttk.Combobox)
+        self.gui.filter_var = self.mock_string_var
+        
+        # Create and call create_widgets to set up the combobox bindings
+        with patch.object(self.gui, 'update_frame_preview') as mock_update:
+            # Manually trigger the combobox binding setup
+            self.gui.filter_combobox.bind('<<ComboboxSelected>>', self.gui.update_frame_preview)
+            
+            # Verify filter options
+            self.assertEqual(self.gui.filter_options, ['Static', 'Dynamic'])
+            
+            # Simulate filter selection change
+            self.mock_string_var.get.return_value = 'Dynamic'
+            
+            # Simulate the combobox selection event
+            self.gui.filter_combobox.bind.assert_called_with('<<ComboboxSelected>>', self.gui.update_frame_preview)
+            
+            # Trigger the event handler directly
+            self.gui.update_frame_preview()
+            mock_update.assert_called_once()
+            
+            # Verify filter value is used
+            self.assertEqual(self.gui.filter_var.get(), 'Dynamic')
 
 if __name__ == '__main__':
     unittest.main()

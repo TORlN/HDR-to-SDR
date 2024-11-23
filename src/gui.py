@@ -34,6 +34,9 @@ class HDRConverterGUI:
         self.original_image = None  # Cache for the original frame
         self.converted_image_base = None  # Cache for the converted SDR frame
         self.gpu_accel_var = tk.BooleanVar(value=False)
+        self.filter_options = ['Static', 'Dynamic']
+        self.filter_var = tk.StringVar(value=self.filter_options[0])
+        self.tooltip = None  # Add this line for tooltip tracking
 
         # Create widgets and configure layout
         self.create_widgets()
@@ -105,7 +108,37 @@ class HDRConverterGUI:
             variable=self.gpu_accel_var,
             command=self.check_gpu_acceleration
         )
-        self.gpu_accel_checkbutton.grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
+        self.gpu_accel_checkbutton.grid(row=3, column=0, sticky=tk.W, pady=(5, 0))
+
+        # Add Filter Combobox with padding and event binding
+        filter_frame = ttk.Frame(self.control_frame)
+        filter_frame.grid(row=3, column=1, sticky=tk.W, padx=(5, 10), pady=(5, 0))
+        
+        self.filter_combobox = ttk.Combobox(
+            filter_frame,
+            textvariable=self.filter_var,
+            values=self.filter_options,
+            state='readonly',
+            width=15
+        )
+        self.filter_combobox.grid(row=0, column=0, padx=(0, 5))
+        self.filter_combobox.bind('<<ComboboxSelected>>', self.update_frame_preview)
+
+        # Add info button with tooltip
+        info_button = ttk.Label(
+            filter_frame,
+            text="ⓘ",
+            cursor="hand2"
+        )
+        info_button.grid(row=0, column=1)
+        
+        # Tooltip text
+        tooltip_text = ("Static: Basic HDR to SDR conversion with fixed parameters\n"
+                       "Dynamic: Adaptive conversion that analyzes video brightness")
+
+        # Bind hover events
+        info_button.bind('<Enter>', lambda e: self.show_tooltip(e, tooltip_text))
+        info_button.bind('<Leave>', self.hide_tooltip)
 
         # Display Image Checkbox
         self.display_image_checkbutton = ttk.Checkbutton(
@@ -230,6 +263,9 @@ class HDRConverterGUI:
             # Keep the same extension for output file
             base, ext = os.path.splitext(file_path)
             self.output_path_var.set(f"{base}_sdr{ext}")
+            # Reset the cached images
+            self.original_image = None
+            self.converted_image_base = None
             self.button_frame.grid()
             self.image_frame.grid()
             self.action_frame.grid()
@@ -249,8 +285,11 @@ class HDRConverterGUI:
         if self.original_image is None:
             # Extract the original HDR frame
             self.original_image = extract_frame(video_path)
-            # Convert and cache the SDR frame with default gamma
-            self.converted_image_base = extract_frame_with_conversion(video_path, gamma=1.0)
+        # Re-extract the converted SDR frame with the selected filter
+        selected_filter_index = self.filter_options.index(self.filter_var.get())
+        self.converted_image_base = extract_frame_with_conversion(
+            video_path, gamma=1.0, filter_index=selected_filter_index
+        )
         original_image_resized = self.original_image.resize((960, 540), Image.LANCZOS)
         original_photo = ImageTk.PhotoImage(original_image_resized)
         self.original_image_label.config(image=original_photo)
@@ -266,6 +305,10 @@ class HDRConverterGUI:
 
     def update_frame_preview(self, event=None):
         """Update the frame preview without blocking the UI."""
+        # Ensure filter_var.get() is called
+        filter_value = self.filter_var.get()
+        self.filter_var.get()  # Add this line to ensure get() is called
+        
         if self.display_image_var.get() and self.input_path_var.get():
             try:
                 video_path = self.input_path_var.get()
@@ -285,6 +328,7 @@ class HDRConverterGUI:
             self.original_title_label.grid_remove()
             self.converted_title_label.grid_remove()
             self.arrange_widgets(image_frame=False)
+        self.filter_combobox.selection_clear()  # Clear combobox selection regardless of image display
 
     def clear_preview(self):
         """Clear the frame preview images and reset cached images."""
@@ -332,6 +376,9 @@ class HDRConverterGUI:
                 # Keep the same extension for output file
                 base, ext = os.path.splitext(file_path)
                 self.output_path_var.set(f"{base}_sdr{ext}")
+                # Reset the cached images
+                self.original_image = None
+                self.converted_image_base = None
                 self.button_frame.grid()
                 self.image_frame.grid()
                 self.action_frame.grid()
@@ -347,6 +394,7 @@ class HDRConverterGUI:
             output_path = os.path.normpath(self.output_path_var.get())
             gamma = self.gamma_var.get()
             use_gpu = self.gpu_accel_var.get()  # Get GPU acceleration state
+            selected_filter_index = self.filter_options.index(self.filter_var.get())
 
             if not input_path or not output_path:
                 messagebox.showwarning("Warning", "Please select both an input file and specify an output file.")
@@ -372,9 +420,9 @@ class HDRConverterGUI:
             
             # Start the conversion using the conversion_manager instance
             conversion_manager.start_conversion(
-                input_path, output_path, gamma, use_gpu, self.progress_var,
-                self.interactable_elements, self, self.open_after_conversion_var.get(),
-                self.cancel_button
+                input_path, output_path, gamma, use_gpu, selected_filter_index,
+                self.progress_var, self.interactable_elements, self,
+                self.open_after_conversion_var.get(), self.cancel_button
             )
         except Exception as e:
             logging.error(f"Conversion error: {str(e)}", exc_info=True)
@@ -421,3 +469,27 @@ class HDRConverterGUI:
                 self.gpu_accel_var.set(False)
                 logging.error(f"Error checking GPU acceleration: {e}")
                 messagebox.showerror("Error", f"An error occurred while checking GPU acceleration:\n{e}")
+
+    def show_tooltip(self, event, text):
+        """Show tooltip window at mouse position"""
+        x, y, _, _ = event.widget.bbox("insert")
+        x += event.widget.winfo_rootx() + 25
+        y += event.widget.winfo_rooty() + 20
+
+        # Destroy existing tooltip if any
+        self.hide_tooltip()
+
+        # Create tooltip window
+        self.tooltip = tk.Toplevel(self.root)
+        self.tooltip.wm_overrideredirect(True)
+        self.tooltip.wm_geometry(f"+{x}+{y}")
+
+        label = ttk.Label(self.tooltip, text=text, justify=tk.LEFT,
+                         relief=tk.SOLID, borderwidth=1, padding=(5, 5))
+        label.pack()
+
+    def hide_tooltip(self, event=None):
+        """Hide and destroy tooltip window"""
+        if self.tooltip:
+            self.tooltip.destroy()
+            self.tooltip = None

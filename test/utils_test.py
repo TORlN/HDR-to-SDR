@@ -198,8 +198,9 @@ class TestExtractFrame(unittest.TestCase):
 
 class TestExtractFrameWithConversion(unittest.TestCase):
 
+    @patch('src.utils.get_maxfall')  # Added patch for get_maxfall
     @patch('src.utils.run_ffmpeg_command')
-    def test_extract_frame_with_conversion_success(self, mock_run_ffmpeg):
+    def test_extract_frame_with_conversion_success(self, mock_run_ffmpeg, mock_get_maxfall):
         # Mock the video properties to have a duration of 90 seconds
         with patch('src.utils.get_video_properties') as mock_get_props:
             mock_get_props.return_value = {
@@ -222,23 +223,26 @@ class TestExtractFrameWithConversion(unittest.TestCase):
                 b'\x18\xdd\x8d\x1b\x00\x00\x00\x00IEND\xaeB`\x82'
             )
 
+            mock_get_maxfall.return_value = 100.0  # Mocked get_maxfall return value
             gamma = 2.2
-            frame = extract_frame_with_conversion('input.mp4', gamma)
+            frame = extract_frame_with_conversion('input.mp4', gamma, filter_index=1)  # Added filter_index
+            
+            # Update the expected_vf to match filter_index=1
+            expected_vf = 'zscale=t=linear:npl=100.0, tonemap=tonemap=hable, zscale=t=bt709:m=bt709:r=tv:p=bt709, eq=gamma=2.2, scale=iw:ih'  # Updated vf
+            
             self.assertIsInstance(frame, Image.Image)
-
-            # Verify that ffmpeg was called with the correct timestamp and gamma
+    
+            # Verify that ffmpeg was called with the correct command and timestamp
             expected_time = 90.0 / 3  # 30 seconds
-            expected_vf = FFMPEG_FILTER.format(gamma=gamma, width='iw', height='ih')
-
-            # Update the expected command to use ANY for the FFmpeg executable
+    
             mock_run_ffmpeg.assert_called_once_with([
-                ANY,  # Do not assert the exact path of the FFmpeg executable
-                '-ss', str(expected_time), '-i', 'input.mp4',
+                ANY, '-ss', str(expected_time), '-i', 'input.mp4',
                 '-vf', expected_vf, '-vframes', '1', '-f', 'image2pipe', '-'
             ])
 
-    @patch('subprocess.Popen')
-    def test_extract_frame_with_conversion_failure(self, mock_popen):
+    @patch('src.utils.run_ffmpeg_command')
+    @patch('src.utils.get_maxfall')  # Added patch for get_maxfall
+    def test_extract_frame_with_conversion_failure(self, mock_run_ffmpeg, mock_get_maxfall):
         # Mock video properties first
         with patch('src.utils.get_video_properties') as mock_get_props:
             mock_get_props.return_value = {
@@ -253,14 +257,15 @@ class TestExtractFrameWithConversion(unittest.TestCase):
                 "subtitle_streams": []
             }
 
-            # Setup the ffmpeg command failure
-            mock_process = MagicMock()
-            mock_process.communicate.return_value = (b'', b'conversion_error')
-            mock_process.returncode = 1
-            mock_popen.return_value = mock_process
+            # Mock get_maxfall to return a predefined value
+            mock_get_maxfall.return_value = 100.0  # Mocked get_maxfall return value
+
+            # Setup run_ffmpeg_command to raise RuntimeError to simulate failure
+            mock_run_ffmpeg.side_effect = RuntimeError("FFmpeg conversion failed")
 
             with self.assertRaises(RuntimeError):
-                extract_frame_with_conversion('input.mp4', 1)
+                extract_frame_with_conversion('input.mp4', gamma=2.2, filter_index=1)  # Added gamma and filter_index
 
 if __name__ == '__main__':
+    unittest.main()
     unittest.main()

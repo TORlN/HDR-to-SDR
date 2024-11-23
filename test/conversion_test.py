@@ -428,7 +428,9 @@ class TestConversionManager(unittest.TestCase):
                 stderr=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 universal_newlines=True,
-                startupinfo=None
+                startupinfo=None,
+                encoding='utf-8',  # Added encoding
+                errors='replace'    # Added errors
             )
             self.assertEqual(process, mock_process)
 

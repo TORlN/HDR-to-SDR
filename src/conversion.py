@@ -65,11 +65,12 @@ class ConversionManager:
             element.config(state="normal")
 
     def construct_ffmpeg_command(self, input_path, output_path, gamma, properties, use_gpu, selected_filter_index):
-        cmd = [FFMPEG_EXECUTABLE, '-loglevel', 'info']
+        cmd = [
+            FFMPEG_EXECUTABLE,
+            '-loglevel', 'info',
+            # Removed the '-threads' parameter
+        ]
         current_platform = platform.system().lower()
-
-        # Add thread optimization
-        cmd += ['-threads', str(self.cpu_count)]
 
         # GPU acceleration setup
         if use_gpu:

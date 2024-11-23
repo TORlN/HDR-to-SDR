@@ -636,7 +636,7 @@ class TestConversionManager(unittest.TestCase):
         cmd = manager.construct_ffmpeg_command(input_path, output_path, gamma, properties, use_gpu, selected_filter_index)
         expected_cmd = [
             FFMPEG_EXECUTABLE, '-loglevel', 'info',
-            '-threads', '16',
+            # Removed '-threads', '4'
             '-hwaccel', 'cuda',
             '-hwaccel_device', '0',
             '-i', os.path.normpath('input.mp4'),

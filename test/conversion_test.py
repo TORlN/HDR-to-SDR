@@ -554,7 +554,7 @@ class TestConversionManager(unittest.TestCase):
     
     @patch('src.conversion.subprocess.run')
     @patch('src.conversion.subprocess.Popen')
-    @patch('src.conversion.FFMPEG_EXECUTABLE', os.path.abspath('src/ffmpeg.exe'))  # Corrected patch target with full path
+    @patch('src.utils.FFMPEG_EXECUTABLE', os.path.abspath('src/ffmpeg.exe'))  # Corrected patch target with full path
     def test_is_gpu_available_success(self, mock_popen, mock_run):
         """Test if GPU is available and h264_nvenc encoder exists."""
         # Mock subprocess.run to simulate successful 'nvidia-smi' execution

@@ -147,6 +147,10 @@ class ConversionManager:
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startupinfo.wShowWindow = subprocess.SW_HIDE
+            creationflags = subprocess.CREATE_NO_WINDOW
+        else:
+            startupinfo = None
+            creationflags = 0
 
         process = subprocess.Popen(
             cmd,
@@ -154,6 +158,7 @@ class ConversionManager:
             stdout=subprocess.PIPE,
             universal_newlines=True,
             startupinfo=startupinfo,
+            creationflags=creationflags,
             encoding='utf-8',
             errors='replace'
         )
@@ -261,6 +266,10 @@ class ConversionManager:
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startupinfo.wShowWindow = subprocess.SW_HIDE
+            creationflags = subprocess.CREATE_NO_WINDOW
+        else:
+            startupinfo = None
+            creationflags = 0
 
         cmd = [
             FFMPEG_EXECUTABLE,
@@ -272,7 +281,7 @@ class ConversionManager:
             '-y'
         ]
 
-        subprocess.run(cmd, check=True, startupinfo=startupinfo)
+        subprocess.run(cmd, check=True, startupinfo=startupinfo, creationflags=creationflags)
         return output_frame_path
 
     def get_frame_preview(self, video_path):
@@ -290,23 +299,38 @@ class ConversionManager:
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = subprocess.SW_HIDE
+                creationflags = subprocess.CREATE_NO_WINDOW
+            else:
+                startupinfo = None
+                creationflags = 0
 
             result = subprocess.run(['nvidia-smi'], 
                 stdout=subprocess.PIPE, 
                 stderr=subprocess.PIPE,
-                startupinfo=startupinfo)
+                startupinfo=startupinfo,
+                creationflags=creationflags)
             if result.returncode != 0:
                 logging.warning("nvidia-smi not found or no NVIDIA GPU detected.")
                 return False
             logging.debug("NVIDIA GPU detected.")
 
             cmd = [FFMPEG_EXECUTABLE, '-encoders']
+            if sys.platform == "win32":
+                cmd_startupinfo = subprocess.STARTUPINFO()
+                cmd_startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                cmd_startupinfo.wShowWindow = subprocess.SW_HIDE
+                cmd_creationflags = subprocess.CREATE_NO_WINDOW
+            else:
+                cmd_startupinfo = None
+                cmd_creationflags = 0
+
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
-                startupinfo=startupinfo
+                startupinfo=cmd_startupinfo,
+                creationflags=cmd_creationflags
             )
             stdout, _ = process.communicate()
             if process.returncode != 0:

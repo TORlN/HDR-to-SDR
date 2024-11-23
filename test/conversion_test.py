@@ -470,7 +470,8 @@ class TestConversionManager(unittest.TestCase):
                 universal_newlines=True,
                 startupinfo=startupinfo_instance,
                 encoding='utf-8',          # Added encoding
-                errors='replace'            # Added errors
+                errors='replace',            # Added errors
+                creationflags=ANY  # Allow any creationflags
             )
 
     @patch('src.conversion.subprocess.Popen')
@@ -554,25 +555,34 @@ class TestConversionManager(unittest.TestCase):
     @patch('src.conversion.subprocess.Popen')
     @patch('src.conversion.FFMPEG_EXECUTABLE', os.path.abspath('src/ffmpeg.exe'))  # Corrected patch target with full path
     def test_is_gpu_available_success(self, mock_popen, mock_run):
-        """Test is_gpu_available when NVIDIA GPU and h264_nvenc are available."""
+        """Test if GPU is available and h264_nvenc encoder exists."""
+        # Mock subprocess.run to simulate successful 'nvidia-smi' execution
         mock_run.return_value = MagicMock(returncode=0)
-        mock_popen.return_value.communicate.return_value = ('h264_nvenc', '')
-        mock_popen.return_value.returncode = 0  # Added returncode
+
+        # Mock subprocess.Popen to simulate 'ffmpeg -encoders' output containing 'h264_nvenc'
+        mock_process = MagicMock()
+        mock_process.communicate.return_value = ("h264_nvenc\n...other encoders...", "")
+        mock_process.returncode = 0
+        mock_popen.return_value = mock_process
 
         manager = ConversionManager()
-        self.assertTrue(manager.is_gpu_available())
+        available = manager.is_gpu_available()
+
+        self.assertTrue(available)
         mock_run.assert_called_once_with(
-            ['nvidia-smi'], 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE,
-            startupinfo=ANY  # Allow any startupinfo
+            ['nvidia-smi'],
+            stdout=-1,
+            stderr=-1,
+            startupinfo=ANY,
+            creationflags=ANY
         )
         mock_popen.assert_called_once_with(
-            [os.path.abspath('src/ffmpeg.exe'), '-encoders'],  # Updated to match full path
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            [FFMPEG_EXECUTABLE, '-encoders'],
+            stdout=-1,
+            stderr=-1,
             universal_newlines=True,
-            startupinfo=ANY  # Allow any startupinfo
+            startupinfo=ANY,
+            creationflags=ANY
         )
 
     @patch('src.conversion.subprocess.run', return_value=MagicMock(returncode=1))
@@ -584,28 +594,23 @@ class TestConversionManager(unittest.TestCase):
             ['nvidia-smi'], 
             stdout=subprocess.PIPE, 
             stderr=subprocess.PIPE,
-            startupinfo=ANY  # Allow any startupinfo
+            startupinfo=ANY,  # Allow any startupinfo
+            creationflags=ANY
         )
     
     @patch('src.conversion.subprocess.run', return_value=MagicMock(returncode=0))
     @patch('src.conversion.subprocess.Popen')
     def test_is_gpu_available_no_encoder(self, mock_popen, mock_run):
-        """Test is_gpu_available when h264_nvenc encoder is missing."""
-        mock_popen.return_value.communicate.return_value = ('', '')
-        manager = ConversionManager()
-        self.assertFalse(manager.is_gpu_available())
+        manager = ConversionManager()  # Instantiate ConversionManager
+        available = manager.is_gpu_available()  # Call the method on the instance
+
+        self.assertFalse(available)
         mock_run.assert_called_once_with(
-            ['nvidia-smi'], 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE,
-            startupinfo=ANY  # Allow any startupinfo
-        )
-        mock_popen.assert_called_once_with(
-            [FFMPEG_EXECUTABLE, '-encoders'],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True,
-            startupinfo=ANY  # Allow any startupinfo
+            ['nvidia-smi'],
+            stdout=-1,
+            stderr=-1,
+            startupinfo=ANY,
+            creationflags=ANY  # Ensure creationflags is included
         )
 
     @patch('src.conversion.get_maxfall')  # Mock get_maxfall

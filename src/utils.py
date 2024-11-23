@@ -180,8 +180,10 @@ def run_ffmpeg_command(cmd):
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startupinfo.wShowWindow = subprocess.SW_HIDE
+        creationflags = subprocess.CREATE_NO_WINDOW
     else:
         startupinfo = None
+        creationflags = 0
     
     # Replace the ffmpeg command with the bundled/system executable path
     cmd[0] = FFMPEG_EXECUTABLE
@@ -196,7 +198,8 @@ def run_ffmpeg_command(cmd):
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            startupinfo=startupinfo
+            startupinfo=startupinfo,
+            creationflags=creationflags
         )
         
         out, err = process.communicate()
@@ -306,8 +309,10 @@ def get_video_properties(input_file):
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startupinfo.wShowWindow = subprocess.SW_HIDE
+        creationflags = subprocess.CREATE_NO_WINDOW
     else:
         startupinfo = None
+        creationflags = 0
 
     command = [
         FFPROBE_EXECUTABLE,
@@ -323,7 +328,8 @@ def get_video_properties(input_file):
             command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            startupinfo=startupinfo  # Add startupinfo here
+            startupinfo=startupinfo,  # Add startupinfo here
+            creationflags=creationflags
         )
         output, _ = result.communicate()
         
@@ -340,11 +346,11 @@ def get_video_properties(input_file):
         subtitle_streams = []
         
         for stream in data.get('streams', []):
-            if stream['codec_type'] == 'video' and not video_stream:
+            if (stream['codec_type'] == 'video' and not video_stream):
                 video_stream = stream
-            elif stream['codec_type'] == 'audio' and not audio_stream:
+            elif (stream['codec_type'] == 'audio' and not audio_stream):
                 audio_stream = stream
-            elif stream['codec_type'] == 'subtitle':
+            elif (stream['codec_type'] == 'subtitle'):
                 subtitle_streams.append(stream)
         
         if not video_stream:

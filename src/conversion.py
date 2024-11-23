@@ -9,7 +9,7 @@ from tkinter import messagebox
 from utils import get_video_properties, FFMPEG_FILTER, FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE, get_maxfall
 from tkinterdnd2 import DND_FILES
 import sys
-import platform
+import platform  # Add this import at the top
 
 class ConversionManager:
     def __init__(self):

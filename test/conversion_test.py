@@ -430,7 +430,8 @@ class TestConversionManager(unittest.TestCase):
                 universal_newlines=True,
                 startupinfo=None,
                 encoding='utf-8',  # Added encoding
-                errors='replace'    # Added errors
+                errors='replace',    # Added errors
+                creationflags=ANY  # Allow any creationflags
             )
             self.assertEqual(process, mock_process)
 

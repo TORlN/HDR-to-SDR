@@ -85,6 +85,11 @@ class ConversionManager:
         # Input file
         cmd += ['-i', os.path.normpath(input_path)]
 
+        # Map all audio streams
+        cmd += ['-map', '0:v:0']  # Map first video stream
+        cmd += ['-map', '0:a?']   # Map all audio streams if they exist
+        cmd += ['-map', '0:s?']   # Map all subtitle streams if they exist
+
         # Use appropriate filter option
         if selected_filter_index == 1:
             maxfall = get_maxfall(input_path)
@@ -105,9 +110,9 @@ class ConversionManager:
                 '-preset', 'p4',
                 '-tune', 'hq',
                 '-rc', 'vbr',
-                '-cq', '19',
+                '-cq', '20',
                 '-b:v', str(properties['bit_rate']),
-                '-maxrate', str(int(properties['bit_rate'] * 1.5)),
+                '-maxrate', str(int(properties['bit_rate'] * 1)),
                 '-bufsize', str(int(properties['bit_rate'] * 2))
             ]
         else:
@@ -124,8 +129,9 @@ class ConversionManager:
             '-r', str(properties['frame_rate']),
             '-pix_fmt', 'yuv420p',
             '-strict', '-2',
-            '-c:a', 'copy',
-            '-c:s', 'copy',
+            '-c:a', 'copy',      # Copy all audio streams as-is
+            '-c:s', 'copy',      # Copy all subtitle streams as-is
+            '-map_metadata', '0', # Copy all metadata
             '-movflags', '+faststart',  # Optimize for streaming playback
             os.path.normpath(output_path),
             '-y'

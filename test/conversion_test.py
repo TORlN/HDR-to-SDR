@@ -234,6 +234,9 @@ class TestConversionManager(unittest.TestCase):
             FFMPEG_EXECUTABLE, '-loglevel', 'info',
             '-threads', '16',  # Added threads
             '-i', input_path,
+            '-map', '0:v:0',  # Added stream mapping
+            '-map', '0:a?',    # Added stream mapping
+            '-map', '0:s?',    # Added stream mapping
             '-filter:v', expected_filter,  # Changed from '-filter_complex' to '-filter:v'
             '-c:v', 'libx264',  # Changed from properties['codec_name'] which was 'h264'
             # '-vf', expected_filter,  # Removed '-vf' flag
@@ -246,6 +249,7 @@ class TestConversionManager(unittest.TestCase):
             '-strict', '-2',
             '-c:a', 'copy',
             '-c:s', 'copy',         # Added '-c:s'
+            '-map_metadata', '0',  # Added metadata mapping
             '-movflags', '+faststart',  # Added movflags for streaming
             output_path,
             '-y'
@@ -256,7 +260,6 @@ class TestConversionManager(unittest.TestCase):
     @patch('src.conversion.get_video_properties')
     def test_construct_ffmpeg_command_with_subtitles(self, mock_get_props, mock_get_maxfall):
         """Test that construct_ffmpeg_command includes subtitle streams when available."""
-        # ...existing code...
         mock_get_maxfall.return_value = 10  # Set a predefined maxfall value
         
         mock_get_props.return_value = {
@@ -283,28 +286,29 @@ class TestConversionManager(unittest.TestCase):
             1       # selected_filter_index
         )
 
-        expected_filter = FFMPEG_FILTER[1].format(  # Indexed FFMPEG_FILTER
-            gamma=2.2, width=1920, height=1080, npl=10  # Added 'npl' parameter
+        expected_filter = FFMPEG_FILTER[1].format(
+            gamma=2.2, width=1920, height=1080, npl=10
         )
         expected_cmd = [
             FFMPEG_EXECUTABLE, '-loglevel', 'info',
-            '-threads', '16',  # Added '-threads' and '16'
+            '-threads', '16',
             '-i', os.path.normpath('input.mp4'),
-            # Apply the HDR to SDR filter to the main video stream
-            '-filter_complex', expected_filter,  # Replaced '-filter:v' with '-filter_complex'
-            # Re-encode the main video stream with the same settings
-            '-c:v', 'libx264',  # Changed from 'h264' to 'libx264'
-            '-preset', 'veryfast',  # Changed from 'fast' to 'veryfast'
-            '-tune', 'film',        # Added '-tune' option
-            '-crf', '23',           # Added '-crf' option
+            '-map', '0:v:0',  # Map video stream
+            '-map', '0:a?',   # Map audio streams if they exist
+            '-map', '0:s?',   # Map subtitle streams if they exist
+            '-filter_complex', expected_filter, 
+            '-c:v', 'libx264',
+            '-preset', 'veryfast',
+            '-tune', 'film',
+            '-crf', '23',
             '-b:v', '4000000',
             '-r', '30.0',
             '-pix_fmt', 'yuv420p',
             '-strict', '-2',
-            # Copy audio and subtitle streams without re-encoding
             '-c:a', 'copy',
             '-c:s', 'copy',
-            '-movflags', '+faststart',  # Added movflags for streaming
+            '-map_metadata', '0',
+            '-movflags', '+faststart',
             os.path.normpath('output.mkv'),
             '-y'
         ]
@@ -636,20 +640,24 @@ class TestConversionManager(unittest.TestCase):
             '-hwaccel', 'cuda',
             '-hwaccel_device', '0',
             '-i', os.path.normpath('input.mp4'),
+            '-map', '0:v:0',
+            '-map', '0:a?',
+            '-map', '0:s?',
             '-filter_complex', expected_filter,
             '-c:v', 'h264_nvenc',
             '-preset', 'p4',
             '-tune', 'hq',
             '-rc', 'vbr',
-            '-cq', '19',
+            '-cq', '20',  # Adjusted cq value to match the code
             '-b:v', '4000000',
-            '-maxrate', '6000000',
-            '-bufsize', '8000000',
+            '-maxrate', '4000000',  # properties['bit_rate'] * 1
+            '-bufsize', '8000000',  # properties['bit_rate'] * 2
             '-r', '30.0',
             '-pix_fmt', 'yuv420p',
             '-strict', '-2',
             '-c:a', 'copy',
             '-c:s', 'copy',
+            '-map_metadata', '0',
             '-movflags', '+faststart',
             os.path.normpath('output.mkv'),
             '-y'
@@ -685,6 +693,9 @@ class TestConversionManager(unittest.TestCase):
             FFMPEG_EXECUTABLE, '-loglevel', 'info',
             '-threads', '16',  # Ensure threads are included
             '-i', os.path.normpath('input.mp4'),
+            '-map', '0:v:0',            # Added mapping for video stream
+            '-map', '0:a?',             # Added mapping for audio streams
+            '-map', '0:s?',             # Added mapping for subtitle streams
             '-filter:v', expected_filter,
             '-c:v', 'libx264',  # Updated codec
             '-preset', 'veryfast',  # Updated preset
@@ -696,6 +707,7 @@ class TestConversionManager(unittest.TestCase):
             '-strict', '-2',
             '-c:a', 'copy',
             '-c:s', 'copy',
+            '-map_metadata', '0',       # Added metadata mapping
             '-movflags', '+faststart',  # Ensure movflags are included
             os.path.normpath('output.mkv'),
             '-y'

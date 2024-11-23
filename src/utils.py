@@ -232,7 +232,23 @@ def get_maxfall(video_path):
         '-print_format', 'json',
         video_path
     ]
-    out = subprocess.check_output(cmd)
+    
+    if sys.platform == "win32":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        creationflags = subprocess.CREATE_NO_WINDOW
+    else:
+        startupinfo = None
+        creationflags = 0
+
+    out = subprocess.check_output(
+        cmd,
+        stdin=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        startupinfo=startupinfo,
+        creationflags=creationflags
+    )
     data = json.loads(out.decode('utf-8'))
     frames = data.get('frames', [])
     for frame in frames:

@@ -11,7 +11,7 @@ import json
 import shutil
 
 # Constants and initialization
-LOGGING_ENABLED = False
+LOGGING_ENABLED = True
 TONEMAP = ["Reinhard", "Mobius", "Hable"]
 FFMPEG_FILTER = [
     'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap={tonemapper},eq=gamma={gamma},scale={width}:{height}',
@@ -241,7 +241,7 @@ def get_maxfall(video_path):
                     return float(max_fall)
     return 100  # Default value if MAXFALL is not found
 
-def extract_frame_with_conversion(video_path, gamma, filter_index, tonemapper='reinhard'):
+def extract_frame_with_conversion(video_path, gamma, filter_index, tonemapper='reinhard', time_position=None):
     """
     Extracts a frame from the video and applies tonemapping conversion.
     Args:
@@ -249,6 +249,7 @@ def extract_frame_with_conversion(video_path, gamma, filter_index, tonemapper='r
         gamma (float): The gamma correction value.
         filter_index (int): The index of the filter to use.
         tonemapper (str): The tonemapping algorithm to use.
+        time_position (float, optional): The time position to extract the frame from.
     Returns:
         PIL.Image: The extracted and converted frame as a PIL image.
     """
@@ -256,7 +257,13 @@ def extract_frame_with_conversion(video_path, gamma, filter_index, tonemapper='r
     if not properties or properties['duration'] == 0:
         raise ValueError("Invalid video properties or duration.")
 
-    target_time = properties['duration'] / 3
+    # Calculate target time
+    if time_position is None:
+        target_time = properties['duration'] / 6  # Default to 1/6th of the duration
+    else:
+        target_time = time_position
+
+    tonemapper = tonemapper.lower()  # Ensure tonemapper is lowercase
 
     if filter_index == 1:
         maxfall = get_maxfall(video_path)
@@ -280,27 +287,36 @@ def extract_frame_with_conversion(video_path, gamma, filter_index, tonemapper='r
         logging.error(f"Failed to extract and convert frame: {e}")
         raise RuntimeError("Failed to extract and convert frame.")
 
-def extract_frame(video_path):
+def extract_frame(video_path, time_position=None):
     """
-    Extracts a frame from the video 1/3rd of the way through.
+    Extracts a frame from the video.
     Args:
         video_path (str): The path to the video file.
+        time_position (float, optional): The time position to extract the frame from.
     Returns:
         PIL.Image: The extracted frame as a PIL image.
     """
     properties = get_video_properties(video_path)
     if not properties or properties['duration'] == 0:
         raise ValueError("Invalid video properties or duration.")
-
-    target_time = properties['duration'] / 3  # Changed to 1/3rd of the duration
     
+    # Calculate target time
+    if time_position is None:
+        target_time = properties['duration'] / 6  # Default to 1/6th of the duration
+    else:
+        target_time = time_position
+
     cmd = [
         FFMPEG_EXECUTABLE, '-ss', str(target_time), '-i', video_path,
         '-vframes', '1', '-f', 'image2pipe', '-'
     ]
-    
+
     out = run_ffmpeg_command(cmd)
-    return Image.open(io.BytesIO(out))
+    try:
+        return Image.open(io.BytesIO(out))
+    except UnidentifiedImageError as e:
+        logging.error(f"Failed to extract frame: {e}")
+        raise RuntimeError("Failed to extract frame.")
 
 def get_video_properties(input_file):
     if sys.platform == "win32":
@@ -326,7 +342,7 @@ def get_video_properties(input_file):
             command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            startupinfo=startupinfo,  # Add startupinfo here
+            startupinfo=startupinfo,
             creationflags=creationflags
         )
         output, _ = result.communicate()

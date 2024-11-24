@@ -4,7 +4,7 @@ from tkinter import filedialog, messagebox
 from tkinter import ttk
 import sv_ttk
 from conversion import conversion_manager  # Import the conversion_manager instance
-from utils import extract_frame_with_conversion, extract_frame, TONEMAP  # Add TONEMAP to imports
+from utils import extract_frame_with_conversion, extract_frame, TONEMAP, get_video_properties  # Add get_video_properties
 from PIL import Image, ImageTk, ImageOps  # Add this import
 from tkinterdnd2 import DND_FILES
 import logging
@@ -38,6 +38,9 @@ class HDRConverterGUI:
         self.filter_var = tk.StringVar(value=self.filter_options[1])  # Set default to 'Dynamic'
         self.tonemap_var = tk.StringVar(value='Mobius')  # Set default to 'Mobius'
         self.tooltip = None  # Add this line for tooltip tracking
+        self.current_frame_index = 1  # Default to 1 (1/6 of the video)
+        self.total_frames = 5
+        self.last_time_position = None
 
         # Create widgets and configure layout
         self.create_widgets()
@@ -212,7 +215,14 @@ class HDRConverterGUI:
         self.original_image_label = ttk.Label(self.image_frame)
         self.original_image_label.grid(row=1, column=0, columnspan=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(10, 10))
         self.converted_image_label = ttk.Label(self.image_frame)
-        self.converted_image_label.grid(row=1, column=1, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(10, 10))
+        self.converted_image_label.grid(row=1, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(10, 0))
+
+        # Add Frame Index Buttons
+        button_frame = ttk.Frame(self.image_frame)
+        button_frame.grid(row=1, column=2, sticky=(tk.N), padx=(5, 10))
+        for i in range(1, 6):
+            btn = ttk.Button(button_frame, text=str(i), command=lambda idx=i: self.on_frame_button_click(idx))
+            btn.grid(row=i-1, column=0, pady=5)
 
         # Error Label
         self.error_label = ttk.Label(self.control_frame, text='', foreground='red')
@@ -330,9 +340,10 @@ class HDRConverterGUI:
             self.original_image = extract_frame(video_path)
         # Re-extract the converted SDR frame with the selected filter
         selected_filter_index = self.filter_options.index(self.filter_var.get())
+        tonemapper = self.tonemap_var.get().lower()  # Convert tonemapper to lowercase
         self.converted_image_base = extract_frame_with_conversion(
             video_path, gamma=1.0, filter_index=selected_filter_index,
-            tonemapper=self.tonemap_var.get().lower()  # Pass current tonemapper
+            tonemapper=tonemapper  # Pass current tonemapper
         )
         original_image_resized = self.original_image.resize((960, 540), Image.LANCZOS)
         original_photo = ImageTk.PhotoImage(original_image_resized)
@@ -466,6 +477,7 @@ class HDRConverterGUI:
             gamma = self.gamma_var.get()
             use_gpu = self.gpu_accel_var.get()  # Get GPU acceleration state
             selected_filter_index = self.filter_options.index(self.filter_var.get())
+            tonemapper = self.tonemap_var.get().lower()  # Convert tonemapper to lowercase
 
             if not input_path or not output_path:
                 messagebox.showwarning("Warning", "Please select both an input file and specify an output file.")
@@ -493,7 +505,8 @@ class HDRConverterGUI:
             conversion_manager.start_conversion(
                 input_path, output_path, gamma, use_gpu, selected_filter_index,
                 self.progress_var, self.interactable_elements, self,
-                self.open_after_conversion_var.get(), self.cancel_button
+                self.open_after_conversion_var.get(), self.cancel_button,
+                tonemapper=tonemapper  # Pass tonemapper to the conversion
             )
         except Exception as e:
             logging.error(f"Conversion error: {str(e)}", exc_info=True)
@@ -561,3 +574,66 @@ class HDRConverterGUI:
         if self.tooltip:
             self.tooltip.destroy()
             self.tooltip = None
+
+    def on_frame_button_click(self, index):
+        """Handle frame button clicks to update the displayed frames."""
+        self.current_frame_index = index
+        self.original_image = None  # Reset cached images
+        self.converted_image_base = None
+        self.update_frame_preview()
+
+    def display_frames(self, video_path):
+        """Extract and display frames using the current frame index."""
+        properties = get_video_properties(video_path)
+        duration = properties['duration']
+        time_position = (self.current_frame_index / (self.total_frames + 1)) * duration
+
+        if self.original_image is None or self.last_time_position != time_position:
+            # Extract original frame at specified time position
+            self.original_image = extract_frame(video_path, time_position=time_position)
+            self.last_time_position = time_position
+
+        # Re-extract the converted SDR frame with the selected filter
+        selected_filter_index = self.filter_options.index(self.filter_var.get())
+        tonemapper = self.tonemap_var.get().lower()  # Convert tonemapper to lowercase
+        self.converted_image_base = extract_frame_with_conversion(
+            video_path, gamma=1.0, filter_index=selected_filter_index,
+            tonemapper=tonemapper, time_position=time_position
+        )
+
+        # Resize and display original image
+        original_image_resized = self.original_image.resize((960, 540), Image.LANCZOS)
+        original_photo = ImageTk.PhotoImage(original_image_resized)
+        self.original_image_label.config(image=original_photo)
+        self.original_image_label.image = original_photo
+
+        # Apply gamma adjustment to the cached converted SDR image
+        gamma = self.gamma_var.get()
+        adjusted_converted_image = self.adjust_gamma(self.converted_image_base, gamma)
+        converted_image_resized = adjusted_converted_image.resize((960, 540), Image.LANCZOS)
+        converted_photo = ImageTk.PhotoImage(converted_image_resized)
+        self.converted_image_label.config(image=converted_photo)
+        self.converted_image_label.image = converted_photo
+
+    def update_frame_preview(self, event=None):
+        """Update the frame preview without blocking the UI."""
+        filter_value = self.filter_var.get()
+        
+        if self.display_image_var.get() and self.input_path_var.get():
+            try:
+                video_path = self.input_path_var.get()
+                self.display_frames(video_path)
+                self.error_label.config(text="")
+                self.original_title_label.grid()
+                self.converted_title_label.grid()
+                self.adjust_window_size()
+                self.arrange_widgets(image_frame=True)
+            except Exception as e:
+                self.handle_preview_error(e)
+        else:
+            self.clear_preview()
+            self.original_title_label.grid_remove()
+            self.converted_title_label.grid_remove()
+            self.arrange_widgets(image_frame=False)
+        self.filter_combobox.selection_clear()
+        self.tonemap_combobox.selection_clear()

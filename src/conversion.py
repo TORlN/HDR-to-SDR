@@ -20,13 +20,14 @@ class ConversionManager:
 
     def start_conversion(self, input_path, output_path, gamma, use_gpu, selected_filter_index,
                          progress_var, interactable_elements, gui_instance,
-                         open_after_conversion, cancel_button):
+                         open_after_conversion, cancel_button, tonemapper='reinhard'):
         if not self.verify_paths(input_path, output_path):
             return
 
         input_path = os.path.abspath(input_path)
         output_path = os.path.abspath(output_path)
         self.cancelled = False
+        self.use_gpu = use_gpu  # Store the use_gpu state
 
         properties = get_video_properties(input_path)
         if properties is None:
@@ -40,7 +41,7 @@ class ConversionManager:
 
         cmd = self.construct_ffmpeg_command(
             input_path, output_path, gamma, properties, use_gpu, selected_filter_index,
-            gui_instance.tonemap_var.get()  # Add tonemapper parameter
+            tonemapper=tonemapper
         )
         self.process = self.start_ffmpeg_process(cmd)
 
@@ -94,6 +95,7 @@ class ConversionManager:
         cmd += ['-map', '0:s?']   # Map all subtitle streams if they exist
 
         # Use appropriate filter option
+        tonemapper = tonemapper.lower()  # Ensure tonemapper is lowercase
         if selected_filter_index == 1:
             maxfall = get_maxfall(input_path)
             filter_str = FFMPEG_FILTER[selected_filter_index].format(
@@ -192,7 +194,7 @@ class ConversionManager:
 
         if self.process is not None:
             self.process.wait()
-            if self.process.returncode != 0 and gpu_error_detected and not self.cancelled:
+            if self.process.returncode != 0 and self.use_gpu and gpu_error_detected and not self.cancelled:
                 logging.warning("GPU acceleration failed. Retrying with CPU encoding.")
                 # Untick GPU checkbox
                 gui_instance.gpu_accel_var.set(False)

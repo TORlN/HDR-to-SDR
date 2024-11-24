@@ -217,12 +217,19 @@ class HDRConverterGUI:
         self.converted_image_label = ttk.Label(self.image_frame)
         self.converted_image_label.grid(row=1, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(10, 0))
 
-        # Add Frame Index Buttons
-        button_frame = ttk.Frame(self.image_frame)
-        button_frame.grid(row=1, column=2, sticky=(tk.N), padx=(5, 10))
+        self.button_container = ttk.Frame(self.image_frame)  # New container frame
+        self.button_container.grid(row=1, column=2, sticky=(tk.N), padx=(5, 10))
+        self.button_container.grid_remove()  # Initially hide the button container
+        
+        self.frame_buttons = []  # List to store frame buttons
+        style = ttk.Style()
+        style.configure('Selected.TButton', relief='sunken')  # Style for selected button
+
         for i in range(1, 6):
-            btn = ttk.Button(button_frame, text=str(i), command=lambda idx=i: self.on_frame_button_click(idx))
+            btn = ttk.Button(self.button_container, text=str(i), 
+                           command=lambda idx=i: self.on_frame_button_click(idx))
             btn.grid(row=i-1, column=0, pady=5)
+            self.frame_buttons.append(btn)
 
         # Error Label
         self.error_label = ttk.Label(self.control_frame, text='', foreground='red')
@@ -323,6 +330,7 @@ class HDRConverterGUI:
             self.image_frame.grid()
             self.action_frame.grid()
             self.update_frame_preview()
+            self.highlight_frame_button(1)  # Highlight button 1 when image is loaded
 
     def adjust_gamma(self, image, gamma):
         """Adjust gamma of a PIL.Image."""
@@ -358,10 +366,11 @@ class HDRConverterGUI:
         self.converted_image_label.config(image=converted_photo)
         self.converted_image_label.image = converted_photo
 
+        self.adjust_window_size()  # Ensure window size is adjusted after displaying images
+
     def update_frame_preview(self, event=None):
         """Update the frame preview without blocking the UI."""
         filter_value = self.filter_var.get()
-        self.filter_var.get()
         
         if self.display_image_var.get() and self.input_path_var.get():
             try:
@@ -370,6 +379,7 @@ class HDRConverterGUI:
                 self.error_label.config(text="")
                 self.original_title_label.grid()
                 self.converted_title_label.grid()
+                self.button_container.grid()  # Show frame buttons
                 self.adjust_window_size()
                 self.arrange_widgets(image_frame=True)
             except Exception as e:
@@ -378,6 +388,7 @@ class HDRConverterGUI:
             self.clear_preview()
             self.original_title_label.grid_remove()
             self.converted_title_label.grid_remove()
+            self.button_container.grid_remove()  # Hide frame buttons
             self.arrange_widgets(image_frame=False)
         self.filter_combobox.selection_clear()
         self.tonemap_combobox.selection_clear()
@@ -465,6 +476,7 @@ class HDRConverterGUI:
                 self.image_frame.grid()
                 self.action_frame.grid()
                 self.update_frame_preview()
+                self.highlight_frame_button(1)  # Highlight button 1 when image is loaded
         except Exception as e:
             logging.error(f"Error handling file drop: {e}")
             messagebox.showerror("Error", f"Error handling file drop: {e}")
@@ -580,7 +592,16 @@ class HDRConverterGUI:
         self.current_frame_index = index
         self.original_image = None  # Reset cached images
         self.converted_image_base = None
+        self.highlight_frame_button(index)  # Update button highlight
         self.update_frame_preview()
+
+    def highlight_frame_button(self, index):
+        """Highlight the selected frame button and reset others."""
+        for i, btn in enumerate(self.frame_buttons, start=1):
+            if i == index:
+                btn.configure(style='Selected.TButton')  # Apply selected style
+            else:
+                btn.configure(style='TButton')  # Reset to default style
 
     def display_frames(self, video_path):
         """Extract and display frames using the current frame index."""
@@ -615,6 +636,8 @@ class HDRConverterGUI:
         self.converted_image_label.config(image=converted_photo)
         self.converted_image_label.image = converted_photo
 
+        self.adjust_window_size()  # Ensure window size is adjusted after displaying images
+
     def update_frame_preview(self, event=None):
         """Update the frame preview without blocking the UI."""
         filter_value = self.filter_var.get()
@@ -626,6 +649,7 @@ class HDRConverterGUI:
                 self.error_label.config(text="")
                 self.original_title_label.grid()
                 self.converted_title_label.grid()
+                self.button_container.grid()  # Show frame buttons
                 self.adjust_window_size()
                 self.arrange_widgets(image_frame=True)
             except Exception as e:
@@ -634,6 +658,7 @@ class HDRConverterGUI:
             self.clear_preview()
             self.original_title_label.grid_remove()
             self.converted_title_label.grid_remove()
+            self.button_container.grid_remove()  # Hide frame buttons
             self.arrange_widgets(image_frame=False)
         self.filter_combobox.selection_clear()
         self.tonemap_combobox.selection_clear()

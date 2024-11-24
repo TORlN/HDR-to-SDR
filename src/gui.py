@@ -305,17 +305,14 @@ class HDRConverterGUI:
 
     def update_frame_preview(self, event=None):
         """Update the frame preview without blocking the UI."""
-        # Ensure filter_var.get() is called
         filter_value = self.filter_var.get()
-        self.filter_var.get()  # Add this line to ensure get() is called
+        self.filter_var.get()
         
         if self.display_image_var.get() and self.input_path_var.get():
             try:
                 video_path = self.input_path_var.get()
-                # Update frames based on the current gamma value
                 self.display_frames(video_path)
                 self.error_label.config(text="")
-                # Show title labels
                 self.original_title_label.grid()
                 self.converted_title_label.grid()
                 self.adjust_window_size()
@@ -324,11 +321,10 @@ class HDRConverterGUI:
                 self.handle_preview_error(e)
         else:
             self.clear_preview()
-            # Hide title labels
             self.original_title_label.grid_remove()
             self.converted_title_label.grid_remove()
             self.arrange_widgets(image_frame=False)
-        self.filter_combobox.selection_clear()  # Clear combobox selection regardless of image display
+        self.filter_combobox.selection_clear()
 
     def clear_preview(self):
         """Clear the frame preview images and reset cached images."""
@@ -342,9 +338,39 @@ class HDRConverterGUI:
         """Adjust the window size to fit the displayed images."""
         self.root.geometry("")  # Reset window size to fit images
         self.root.update_idletasks()
+        
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
         new_width = self.root.winfo_width()
         new_height = self.root.winfo_height()
+
+        if new_width > screen_width or new_height > screen_height:
+            # Reduce image size to fit within screen bounds
+            max_width = screen_width - 100  # Leave some margin
+            max_height = screen_height - 100  # Leave some margin
+            self.resize_images(max_width, max_height)
+            self.root.geometry("")  # Reset window size again after resizing images
+            self.root.update_idletasks()
+            new_width = self.root.winfo_width()
+            new_height = self.root.winfo_height()
+
         self.root.minsize(new_width, new_height)
+
+    def resize_images(self, max_width, max_height):
+        """Resize images to fit within the specified maximum width and height."""
+        if self.original_image:
+            original_image_resized = self.original_image.resize((max_width // 2, max_height // 2), Image.LANCZOS)
+            original_photo = ImageTk.PhotoImage(original_image_resized)
+            self.original_image_label.config(image=original_photo)
+            self.original_image_label.image = original_photo
+
+        if self.converted_image_base:
+            gamma = self.gamma_var.get()
+            adjusted_converted_image = self.adjust_gamma(self.converted_image_base, gamma)
+            converted_image_resized = adjusted_converted_image.resize((max_width // 2, max_height // 2), Image.LANCZOS)
+            converted_photo = ImageTk.PhotoImage(converted_image_resized)
+            self.converted_image_label.config(image=converted_photo)
+            self.converted_image_label.image = converted_photo
 
     def arrange_widgets(self, image_frame):
         """Arrange the widgets in the appropriate frames."""
@@ -476,16 +502,13 @@ class HDRConverterGUI:
         x += event.widget.winfo_rootx() + 25
         y += event.widget.winfo_rooty() + 20
 
-        # Destroy existing tooltip if any
         self.hide_tooltip()
 
-        # Create tooltip window
         self.tooltip = tk.Toplevel(self.root)
         self.tooltip.wm_overrideredirect(True)
         self.tooltip.wm_geometry(f"+{x}+{y}")
 
-        label = ttk.Label(self.tooltip, text=text, justify=tk.LEFT,
-                         relief=tk.SOLID, borderwidth=1, padding=(5, 5))
+        label = ttk.Label(self.tooltip, text=text, justify=tk.LEFT, relief=tk.SOLID, borderwidth=1, padding=(5, 5))
         label.pack()
 
     def hide_tooltip(self, event=None):

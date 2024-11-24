@@ -24,25 +24,16 @@ FFPROBE_EXECUTABLE = None
 def setup_logging():
     """Configure logging with fallback locations for Wine compatibility"""
     if not LOGGING_ENABLED:
-        # Set up minimal console logging for warnings and errors only
-        logging.basicConfig(
-            level=logging.WARNING,
-            format='%(levelname)s - %(message)s'
-        )
+        logging.basicConfig(level=logging.WARNING, format='%(levelname)s - %(message)s')
         return False
 
     try:
-        # Get the executable's directory or current directory
-        if getattr(sys, 'frozen', False):
-            base_dir = os.path.dirname(os.path.abspath(sys.executable))
-        else:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-        
+        base_dir = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, 'frozen', False) else __file__))
         log_paths = [
-            os.path.join(base_dir, 'debug.log'),  # Try executable directory
-            os.path.join(os.getcwd(), 'debug.log'),  # Try current working directory
-            os.path.expanduser('~/debug.log'),  # Try user's home directory
-            'debug.log'  # Try current directory as last resort
+            os.path.join(base_dir, 'debug.log'),
+            os.path.join(os.getcwd(), 'debug.log'),
+            os.path.expanduser('~/debug.log'),
+            'debug.log'
         ]
         
         for log_path in log_paths:
@@ -53,7 +44,6 @@ def setup_logging():
                     filemode='w',
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
                 )
-                # Add console handler for immediate feedback
                 console = logging.StreamHandler()
                 console.setLevel(logging.DEBUG if LOGGING_ENABLED else logging.WARNING)
                 formatter = logging.Formatter('%(levelname)s - %(message)s')
@@ -68,11 +58,7 @@ def setup_logging():
                 print(f"Failed to set up logging at {log_path}: {e}")
                 continue
         
-        # If all paths fail, set up console-only logging
-        logging.basicConfig(
-            level=logging.DEBUG if LOGGING_ENABLED else logging.WARNING,
-            format='%(levelname)s - %(message)s'
-        )
+        logging.basicConfig(level=logging.DEBUG if LOGGING_ENABLED else logging.WARNING, format='%(levelname)s - %(message)s')
         logging.warning("Failed to create log file. Logging to console only.")
         return False
     
@@ -84,21 +70,14 @@ def setup_logging():
 def get_executable_path(filename):
     """Helper function to get the correct path for bundled executables"""
     try:
-        if getattr(sys, 'frozen', False):
-            base_path = sys._MEIPASS
-        else:
-            base_path = os.path.dirname(os.path.abspath(__file__))
-        
-        # Handle platform-specific executable names
+        base_path = sys._MEIPASS if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
         if sys.platform != 'win32' and filename.endswith('.exe'):
-            filename = filename[:-4]  # Remove .exe for non-Windows platforms
+            filename = filename[:-4]
         
-        # Check bundled executable first
         executable = os.path.normpath(os.path.join(base_path, filename))
         logging.debug(f"Looking for {filename} at: {executable}")
         
         if not os.path.exists(executable):
-            # Try system PATH as fallback
             system_exec = shutil.which(filename)
             if system_exec:
                 executable = system_exec
@@ -207,6 +186,8 @@ def run_ffmpeg_command(cmd):
         if process.returncode != 0:
             error_msg = err.decode('utf-8', errors='replace')
             logging.error(f"FFmpeg error: {error_msg}")
+            if "no path between colorspaces" in error_msg:
+                raise RuntimeError("There was an error importing this video. Colorspace mismatch.")
             raise RuntimeError(f"FFmpeg error: {error_msg}")
         
         return out

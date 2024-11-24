@@ -584,8 +584,13 @@ class TestConversionManager(unittest.TestCase):
     @patch('src.conversion.subprocess.Popen')
     def test_construct_ffmpeg_command_with_gpu(self, mock_popen, mock_get_maxfall):
         """Test construct_ffmpeg_command with GPU acceleration enabled."""
-        mock_get_maxfall.return_value = 10  
         manager = ConversionManager()
+        
+        # Check if GPU is available
+        if not manager.is_gpu_available():
+            self.skipTest("GPU not available, skipping test.")
+        
+        mock_get_maxfall.return_value = 10  
         properties = {
             "width": 1920,
             "height": 1080,

@@ -314,22 +314,13 @@ class ConversionManager:
             logging.debug("NVIDIA GPU detected.")
 
             cmd = [FFMPEG_EXECUTABLE, '-encoders']
-            if sys.platform == "win32":
-                cmd_startupinfo = subprocess.STARTUPINFO()
-                cmd_startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                cmd_startupinfo.wShowWindow = subprocess.SW_HIDE
-                cmd_creationflags = subprocess.CREATE_NO_WINDOW
-            else:
-                cmd_startupinfo = None
-                cmd_creationflags = 0
-
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
-                startupinfo=cmd_startupinfo,
-                creationflags=cmd_creationflags
+                startupinfo=startupinfo,
+                creationflags=creationflags
             )
             stdout, _ = process.communicate()
             if process.returncode != 0:

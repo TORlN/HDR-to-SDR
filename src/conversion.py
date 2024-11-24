@@ -71,7 +71,6 @@ class ConversionManager:
         cmd = [
             FFMPEG_EXECUTABLE,
             '-loglevel', 'info',
-            # Removed the '-threads' parameter
         ]
         current_platform = platform.system().lower()
 
@@ -89,26 +88,33 @@ class ConversionManager:
         # Input file
         cmd += ['-i', os.path.normpath(input_path)]
 
-        # Map all audio streams
-        cmd += ['-map', '0:v:0']  # Map first video stream
-        cmd += ['-map', '0:a?']   # Map all audio streams if they exist
-        cmd += ['-map', '0:s?']   # Map all subtitle streams if they exist
-
-        # Use appropriate filter option
-        tonemapper = tonemapper.lower()  # Ensure tonemapper is lowercase
+        # The filter must be applied before mapping streams
+        tonemapper = tonemapper.lower()
         if selected_filter_index == 1:
             maxfall = get_maxfall(input_path)
             filter_str = FFMPEG_FILTER[selected_filter_index].format(
                 gamma=gamma, width=properties["width"], height=properties["height"],
                 npl=maxfall, tonemapper=tonemapper
             )
-            cmd += ['-filter_complex', filter_str]
+            cmd += [
+                '-filter_complex', f'[0:v:0]{filter_str}[vout]',
+                '-map', '[vout]'  # Map the filtered video output
+            ]
         else:
             filter_str = FFMPEG_FILTER[selected_filter_index].format(
                 gamma=gamma, width=properties["width"], height=properties["height"],
                 tonemapper=tonemapper
             )
-            cmd += ['-filter:v', filter_str]
+            cmd += [
+                '-filter_complex', f'[0:v:0]{filter_str}[vout]',
+                '-map', '[vout]'  # Map the filtered video output
+            ]
+
+        # Map remaining streams
+        cmd += [
+            '-map', '0:a?',   # Map all audio streams if they exist
+            '-map', '0:s?'    # Map all subtitle streams if they exist
+        ]
 
         # Encoding settings
         if use_gpu:

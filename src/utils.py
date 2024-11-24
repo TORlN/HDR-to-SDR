@@ -259,7 +259,7 @@ def extract_frame_with_conversion(video_path, gamma, filter_index, tonemapper='r
 
     # Calculate target time
     if time_position is None:
-        target_time = properties['duration'] / 6  # Default to 1/6th of the duration
+        target_time = properties['duration'] / 3  # Changed from /6 to /3
     else:
         target_time = time_position
 
@@ -302,7 +302,7 @@ def extract_frame(video_path, time_position=None):
     
     # Calculate target time
     if time_position is None:
-        target_time = properties['duration'] / 6  # Default to 1/6th of the duration
+        target_time = properties['duration'] / 3  # Changed from /6 to /3
     else:
         target_time = time_position
 

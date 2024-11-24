@@ -91,8 +91,12 @@ class TestHDRConverterGUI(TestCase):
     @patch('src.gui.ImageTk.PhotoImage')
     @patch('src.gui.extract_frame_with_conversion')
     @patch('src.gui.extract_frame')
-    def test_frame_preview_update(self, mock_extract, mock_convert, mock_photo_image):
+    @patch('src.gui.get_video_properties')
+    def test_frame_preview_update(self, mock_get_properties, mock_extract, mock_convert, mock_photo_image):
         """Test frame preview update functionality."""
+        # Setup mock video properties
+        mock_get_properties.return_value = {'duration': 100.0}
+        
         # Setup mock images
         mock_image = MagicMock(spec=Image.Image)
         mock_image.resize = MagicMock(return_value=mock_image)
@@ -105,6 +109,7 @@ class TestHDRConverterGUI(TestCase):
         self.gui.display_image_var = MagicMock(get=MagicMock(return_value=True))
         self.gui.input_path_var = MagicMock(get=MagicMock(return_value='test_input.mp4'))
         self.gui.gamma_var = MagicMock(get=MagicMock(return_value=2.2))
+        self.gui.tonemap_var = MagicMock(get=MagicMock(return_value='Mobius'))  # Add tonemapper mock
 
         # Setup GUI elements
         self.gui.original_image_label = MagicMock()
@@ -121,9 +126,26 @@ class TestHDRConverterGUI(TestCase):
         # Call display_frames directly since that's where the functions are used
         self.gui.display_frames('test_input.mp4')
 
-        # Verify frame extraction and conversion with gamma=1.0 and filter_index=0
-        mock_extract.assert_called_once_with('test_input.mp4')
-        mock_convert.assert_called_once_with('test_input.mp4', gamma=1.0, filter_index=0)
+        # Get the actual calls made to mock_extract and mock_convert
+        extract_call = mock_extract.call_args
+        convert_call = mock_convert.call_args
+
+        # Verify the calls were made
+        self.assertEqual(mock_extract.call_count, 1)
+        self.assertEqual(mock_convert.call_count, 1)
+
+        # Verify the positional arguments
+        self.assertEqual(extract_call[0][0], 'test_input.mp4')
+        self.assertEqual(convert_call[0][0], 'test_input.mp4')
+
+        # Verify the time_position with approximate equality
+        self.assertAlmostEqual(extract_call[1]['time_position'], 16.666666666666668, places=10)
+        self.assertAlmostEqual(convert_call[1]['time_position'], 16.666666666666668, places=10)
+
+        # Verify other convert_call arguments
+        self.assertEqual(convert_call[1]['gamma'], 1.0)
+        self.assertEqual(convert_call[1]['filter_index'], 0)
+        self.assertEqual(convert_call[1]['tonemapper'], 'mobius')
 
         # Verify adjust_gamma is called with correct gamma value
         self.gui.adjust_gamma.assert_called_once_with(mock_image, 2.2)

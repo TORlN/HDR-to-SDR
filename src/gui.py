@@ -4,7 +4,7 @@ from tkinter import filedialog, messagebox
 from tkinter import ttk
 import sv_ttk
 from conversion import conversion_manager  # Import the conversion_manager instance
-from utils import extract_frame_with_conversion, extract_frame
+from utils import extract_frame_with_conversion, extract_frame, TONEMAP  # Add TONEMAP to imports
 from PIL import Image, ImageTk, ImageOps  # Add this import
 from tkinterdnd2 import DND_FILES
 import logging
@@ -35,7 +35,8 @@ class HDRConverterGUI:
         self.converted_image_base = None  # Cache for the converted SDR frame
         self.gpu_accel_var = tk.BooleanVar(value=False)
         self.filter_options = ['Static', 'Dynamic']
-        self.filter_var = tk.StringVar(value=self.filter_options[0])
+        self.filter_var = tk.StringVar(value=self.filter_options[1])  # Set default to 'Dynamic'
+        self.tonemap_var = tk.StringVar(value='Mobius')  # Set default to 'Mobius'
         self.tooltip = None  # Add this line for tooltip tracking
 
         # Create widgets and configure layout
@@ -140,14 +141,56 @@ class HDRConverterGUI:
         info_button.bind('<Enter>', lambda e: self.show_tooltip(e, tooltip_text))
         info_button.bind('<Leave>', self.hide_tooltip)
 
-        # Display Image Checkbox
+        # Move tonemapper to a new frame next to display image checkbox
+        display_frame = ttk.Frame(self.control_frame)
+        display_frame.grid(row=4, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
+
+        # Display Image Checkbox in the new frame
         self.display_image_checkbutton = ttk.Checkbutton(
-            self.control_frame,
+            display_frame,
             text="Display Frame Preview",
             variable=self.display_image_var,
             command=self.update_frame_preview
         )
-        self.display_image_checkbutton.grid(row=4, column=0, columnspan=3, pady=(0, 0), sticky=tk.W)
+        self.display_image_checkbutton.grid(row=0, column=0, sticky=tk.W)
+
+        # Add Tonemapper Combobox in the new frame
+        self.tonemap_combobox = ttk.Combobox(
+            display_frame,
+            textvariable=self.tonemap_var,
+            values=TONEMAP,
+            state='readonly',
+            width=15
+        )
+        self.tonemap_combobox.grid(row=0, column=1, padx=(18, 0), sticky=tk.W)
+        self.tonemap_combobox.bind('<<ComboboxSelected>>', self.update_frame_preview)
+
+        # Add Tonemapper Info Button with tooltip
+        info_button_tonemap = ttk.Label(
+            display_frame,
+            text="ⓘ",
+            cursor="hand2"
+        )
+        info_button_tonemap.grid(row=0, column=2, padx=(5, 0))
+        
+        # Tooltip text for tonemapper
+        tooltip_text_tonemap = (
+            "Reinhard: Basic HDR to SDR conversion\n"
+            "Mobius: Natural-looking conversion\n"
+            "Hable: Game-like conversion (Cyberpunk 2077)"
+        )
+        
+        # Bind hover events for tonemapper tooltip
+        info_button_tonemap.bind('<Enter>', lambda e: self.show_tooltip(e, tooltip_text_tonemap))
+        info_button_tonemap.bind('<Leave>', self.hide_tooltip)
+
+        # Update tooltip text to include tonemapper info
+        tooltip_text = ("Static: Basic HDR to SDR conversion with fixed parameters\n"
+                       "Dynamic: Adaptive conversion that analyzes video brightness\n\n"
+                       "Tonemappers:\n"
+                       "Reinhard: Basic HDR to SDR conversion\n"
+                       "Mobius: Natural-looking conversion\n"
+                       "Hable: Game-like conversion (Cyberpunk 2077)")
 
         # Image Frame for Displaying Images
         self.image_frame = ttk.Frame(self.root, padding="10")
@@ -288,7 +331,8 @@ class HDRConverterGUI:
         # Re-extract the converted SDR frame with the selected filter
         selected_filter_index = self.filter_options.index(self.filter_var.get())
         self.converted_image_base = extract_frame_with_conversion(
-            video_path, gamma=1.0, filter_index=selected_filter_index
+            video_path, gamma=1.0, filter_index=selected_filter_index,
+            tonemapper=self.tonemap_var.get().lower()  # Pass current tonemapper
         )
         original_image_resized = self.original_image.resize((960, 540), Image.LANCZOS)
         original_photo = ImageTk.PhotoImage(original_image_resized)
@@ -325,6 +369,7 @@ class HDRConverterGUI:
             self.converted_title_label.grid_remove()
             self.arrange_widgets(image_frame=False)
         self.filter_combobox.selection_clear()
+        self.tonemap_combobox.selection_clear()
 
     def clear_preview(self):
         """Clear the frame preview images and reset cached images."""

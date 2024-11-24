@@ -39,7 +39,8 @@ class ConversionManager:
         cancel_button.grid()
 
         cmd = self.construct_ffmpeg_command(
-            input_path, output_path, gamma, properties, use_gpu, selected_filter_index
+            input_path, output_path, gamma, properties, use_gpu, selected_filter_index,
+            gui_instance.tonemap_var.get()  # Add tonemapper parameter
         )
         self.process = self.start_ffmpeg_process(cmd)
 
@@ -64,7 +65,8 @@ class ConversionManager:
         for element in elements:
             element.config(state="normal")
 
-    def construct_ffmpeg_command(self, input_path, output_path, gamma, properties, use_gpu, selected_filter_index):
+    def construct_ffmpeg_command(self, input_path, output_path, gamma, properties, use_gpu, 
+                               selected_filter_index, tonemapper='reinhard'):
         cmd = [
             FFMPEG_EXECUTABLE,
             '-loglevel', 'info',
@@ -95,12 +97,14 @@ class ConversionManager:
         if selected_filter_index == 1:
             maxfall = get_maxfall(input_path)
             filter_str = FFMPEG_FILTER[selected_filter_index].format(
-                gamma=gamma, width=properties["width"], height=properties["height"], npl=maxfall
+                gamma=gamma, width=properties["width"], height=properties["height"],
+                npl=maxfall, tonemapper=tonemapper
             )
             cmd += ['-filter_complex', filter_str]
         else:
             filter_str = FFMPEG_FILTER[selected_filter_index].format(
-                gamma=gamma, width=properties["width"], height=properties["height"]
+                gamma=gamma, width=properties["width"], height=properties["height"],
+                tonemapper=tonemapper
             )
             cmd += ['-filter:v', filter_str]
 

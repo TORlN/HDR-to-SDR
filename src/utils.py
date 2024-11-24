@@ -12,10 +12,10 @@ import shutil
 
 # Constants and initialization
 LOGGING_ENABLED = False
-TONEMAP = ["reinhard", "mobius", "hable"]
+TONEMAP = ["Reinhard", "Mobius", "Hable"]
 FFMPEG_FILTER = [
-    'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap=reinhard,eq=gamma={gamma},scale={width}:{height}',
-    'zscale=t=linear:npl={npl}, tonemap=tonemap=hable, zscale=t=bt709:m=bt709:r=tv:p=bt709, eq=gamma={gamma}, scale={width}:{height}'  # Added 'tonemap=' prefix
+    'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap={tonemapper},eq=gamma={gamma},scale={width}:{height}',
+    'zscale=t=linear:npl={npl},tonemap={tonemapper},zscale=t=bt709:m=bt709:r=tv:p=bt709,eq=gamma={gamma},scale={width}:{height}'
 ]
 FFMPEG_EXECUTABLE = None
 FFPROBE_EXECUTABLE = None
@@ -241,30 +241,31 @@ def get_maxfall(video_path):
                     return float(max_fall)
     return 100  # Default value if MAXFALL is not found
 
-def extract_frame_with_conversion(video_path, gamma, filter_index):
+def extract_frame_with_conversion(video_path, gamma, filter_index, tonemapper='reinhard'):
     """
-    Extracts a frame from the video 1/3rd of the way through and applies gamma correction.
+    Extracts a frame from the video and applies tonemapping conversion.
     Args:
         video_path (str): The path to the video file.
         gamma (float): The gamma correction value.
         filter_index (int): The index of the filter to use.
+        tonemapper (str): The tonemapping algorithm to use.
     Returns:
-        PIL.Image: The extracted and gamma-corrected frame as a PIL image.
+        PIL.Image: The extracted and converted frame as a PIL image.
     """
     properties = get_video_properties(video_path)
     if not properties or properties['duration'] == 0:
         raise ValueError("Invalid video properties or duration.")
 
-    target_time = properties['duration'] / 3  # Changed to 1/3rd of the duration
+    target_time = properties['duration'] / 3
 
-    if filter_index == 1:  # Adjusted index for 'Filter with MAXFALL'
+    if filter_index == 1:
         maxfall = get_maxfall(video_path)
         filter_str = FFMPEG_FILTER[filter_index].format(
-            gamma=gamma, width='iw', height='ih', npl=maxfall
+            gamma=gamma, width='iw', height='ih', npl=maxfall, tonemapper=tonemapper
         )
     else:
         filter_str = FFMPEG_FILTER[filter_index].format(
-            gamma=gamma, width='iw', height='ih'
+            gamma=gamma, width='iw', height='ih', tonemapper=tonemapper
         )
     cmd = [
         FFMPEG_EXECUTABLE, '-ss', str(target_time), '-i', video_path,

@@ -11,7 +11,7 @@ import json
 import shutil
 
 # Constants and initialization
-LOGGING_ENABLED = True
+LOGGING_ENABLED = False
 TONEMAP = ["Reinhard", "Mobius", "Hable"]
 FFMPEG_FILTER = [
     'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap={tonemapper},eq=gamma={gamma},scale={width}:{height}',

@@ -29,7 +29,7 @@ This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The 
 
 1. Clone the repository:
     ```sh
-    git clone https://github.com/<your-username>/<your-repo>.git
+    git clone https://github.com/TORlN/HDR-to-SDR
     cd <repository-directory>
     ```
 

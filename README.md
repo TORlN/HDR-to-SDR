@@ -23,8 +23,7 @@ This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The 
 ### Normal Installation
 
 1. Download the latest release from the [releases page](https://github.com/<your-username>/<your-repo>/releases).
-2. Extract the downloaded zip file.
-3. Run the `hdr_to_sdr_converter.exe` file.
+2. Run the `hdr_to_sdr_converter.exe` file.
 
 ### Development Installation
 

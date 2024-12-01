@@ -189,11 +189,7 @@ class HDRConverterGUI:
 
         # Update tooltip text to include tonemapper info
         tooltip_text = ("Static: Basic HDR to SDR conversion with fixed parameters\n"
-                       "Dynamic: Adaptive conversion that analyzes video brightness\n\n"
-                       "Tonemappers:\n"
-                       "Reinhard: Basic HDR to SDR conversion\n"
-                       "Mobius: Natural-looking conversion\n"
-                       "Hable: Game-like conversion (Cyberpunk 2077)")
+                       "Dynamic: Adaptive conversion that analyzes video brightness")
 
         # Image Frame for Displaying Images
         self.image_frame = ttk.Frame(self.root, padding="10")

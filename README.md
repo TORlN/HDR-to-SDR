@@ -1,5 +1,11 @@
 This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The application allows you to select an input video file, drag and drop files into the application, specify an output file name, adjust the gamma value, and monitor the conversion progress.
 
+> ## ⚠️ Project Status
+>
+> **The current release is the free Community Edition, and it does *not* match the source code in this repository.** The published `.exe` on the [releases page](https://github.com/TORlN/HDR-to-SDR/releases) works and is fully usable, but it is an earlier build that lags behind the ongoing development here.
+>
+> The source code in this repo is being actively reworked (responsiveness, reliability, and quality improvements) toward a **full monetized release**. Until that ships, treat the released Community Edition as the stable free version and this repository as a preview of work in progress.
+
 ## Features
 
 - **Select Input Video Files**: Choose from video files with extensions `.mp4`, `.mkv`, and `.mov`.

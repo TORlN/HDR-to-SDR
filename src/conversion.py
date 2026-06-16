@@ -34,6 +34,13 @@ class ConversionManager:
             messagebox.showwarning("Warning", "Failed to retrieve video properties.")
             return
 
+        # A missing/zero duration would make progress tracking divide by zero in
+        # the monitor thread (which would then die silently, leaving the UI stuck).
+        if not properties.get('duration'):
+            messagebox.showwarning(
+                "Warning", "Could not determine the video's duration, so it can't be converted.")
+            return
+
         self.disable_ui(interactable_elements)
         cancel_button.config(command=lambda: self.cancel_conversion(
             gui_instance, interactable_elements, cancel_button))
@@ -47,7 +54,7 @@ class ConversionManager:
 
         thread = threading.Thread(target=self.monitor_progress, args=(
             progress_var, properties['duration'], gui_instance, interactable_elements,
-            cancel_button, output_path, open_after_conversion, gamma))
+            cancel_button, output_path, open_after_conversion, gamma, tonemapper))
         thread.daemon = True
         thread.start()
 
@@ -110,11 +117,12 @@ class ConversionManager:
                 '-map', '[vout]'  # Map the filtered video output
             ]
 
-        # Map remaining streams
-        cmd += [
-            '-map', '0:a?',   # Map all audio streams if they exist
-            '-map', '0:s?'    # Map all subtitle streams if they exist
-        ]
+        # Map remaining streams. Audio is always mapped; subtitle mapping depends
+        # on the output container (see _container_stream_args).
+        subtitle_map_args, audio_codec_args, subtitle_codec_args = \
+            self._container_stream_args(output_path, properties)
+        cmd += ['-map', '0:a?']   # Map all audio streams if they exist
+        cmd += subtitle_map_args
 
         # Encoding settings
         if use_gpu:
@@ -142,8 +150,10 @@ class ConversionManager:
             '-r', str(properties['frame_rate']),
             '-pix_fmt', 'yuv420p',
             '-strict', '-2',
-            '-c:a', 'copy',      # Copy all audio streams as-is
-            '-c:s', 'copy',      # Copy all subtitle streams as-is
+        ]
+        cmd += audio_codec_args      # copy, or transcode when container demands
+        cmd += subtitle_codec_args   # copy / mov_text / omitted
+        cmd += [
             '-map_metadata', '0', # Copy all metadata
             '-movflags', '+faststart',  # Optimize for streaming playback
             os.path.normpath(output_path),
@@ -152,6 +162,45 @@ class ConversionManager:
 
         logging.debug(f"Constructed ffmpeg command: {' '.join(cmd)}")
         return cmd
+
+    # Audio/subtitle codecs that the MP4-family containers (.mp4/.m4v/.mov) accept
+    # via stream copy. Anything else must be transcoded or dropped.
+    _MP4_AUDIO_OK = {'aac', 'ac3', 'eac3', 'mp3', 'alac'}
+    _TEXT_SUBTITLES = {'subrip', 'srt', 'ass', 'ssa', 'text', 'mov_text', 'webvtt'}
+    _MP4_FAMILY = {'mp4', 'm4v', 'mov'}
+
+    def _container_stream_args(self, output_path, properties):
+        """Decide subtitle mapping and audio/subtitle codecs for the output container.
+
+        Prefer lossless stream copy. For MP4-family containers, which can't copy
+        TrueHD/DTS audio or ASS/PGS subtitles, fall back to transcoding audio to
+        AAC and text subtitles to mov_text, and drop image subtitles (e.g. PGS)
+        that no MP4 codec can represent. Non-MP4 containers (notably MKV) keep the
+        original copy-everything behavior.
+
+        Returns ``(subtitle_map_args, audio_codec_args, subtitle_codec_args)``.
+        """
+        ext = os.path.splitext(output_path)[1].lower().lstrip('.')
+        if ext not in self._MP4_FAMILY:
+            # MKV and friends accept the source streams as-is.
+            return (['-map', '0:s?'], ['-c:a', 'copy'], ['-c:s', 'copy'])
+
+        audio_codec = (properties.get('audio_codec') or '').lower()
+        if audio_codec and audio_codec not in self._MP4_AUDIO_OK:
+            bit_rate = properties.get('audio_bit_rate') or 0
+            target_rate = str(min(int(bit_rate), 384000)) if bit_rate else '192k'
+            audio_codec_args = ['-c:a', 'aac', '-b:a', target_rate]
+        else:
+            audio_codec_args = ['-c:a', 'copy']
+
+        # Map only subtitle streams MP4 can hold (text); drop image subs entirely.
+        subtitle_map_args = []
+        for stream in properties.get('subtitle_streams', []):
+            if (stream.get('codec_name') or '').lower() in self._TEXT_SUBTITLES:
+                subtitle_map_args += ['-map', f"0:{stream['index']}"]
+        subtitle_codec_args = ['-c:s', 'mov_text'] if subtitle_map_args else []
+
+        return (subtitle_map_args, audio_codec_args, subtitle_codec_args)
 
     def start_ffmpeg_process(self, cmd):
         """Start the FFmpeg process without showing a console window."""
@@ -166,7 +215,7 @@ class ConversionManager:
         process = subprocess.Popen(
             cmd,
             stderr=subprocess.PIPE,
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,  # output goes to a file; don't fill an unread pipe
             universal_newlines=True,
             startupinfo=startupinfo,
             creationflags=creationflags,
@@ -177,7 +226,8 @@ class ConversionManager:
         return process
 
     def monitor_progress(self, progress_var, duration, gui_instance, interactable_elements,
-                         cancel_button, output_path, open_after_conversion, gamma):
+                         cancel_button, output_path, open_after_conversion, gamma,
+                         tonemapper='reinhard'):
         progress_pattern = re.compile(r'time=(\d+:\d+:\d+\.\d+)')
         error_messages = []
         gpu_error_detected = False
@@ -189,7 +239,7 @@ class ConversionManager:
             logging.debug(decoded_line)
             error_messages.append(decoded_line)
             match = progress_pattern.search(decoded_line)
-            if match:
+            if match and duration:
                 elapsed_time = self.parse_time(match.group(1))
                 progress = (elapsed_time / duration) * 100
                 gui_instance.root.after(0, lambda p=progress: progress_var.set(p))
@@ -202,25 +252,34 @@ class ConversionManager:
             self.process.wait()
             if self.process.returncode != 0 and self.use_gpu and gpu_error_detected and not self.cancelled:
                 logging.warning("GPU acceleration failed. Retrying with CPU encoding.")
-                # Untick GPU checkbox
-                gui_instance.gpu_accel_var.set(False)
-                messagebox.showwarning("GPU Acceleration Failed",
-                                     "GPU acceleration failed. Switching to CPU encoding.")
-                self.start_conversion(
-                    input_path=gui_instance.input_path_var.get(),
-                    output_path=gui_instance.output_path_var.get(),
-                    gamma=gamma,
-                    use_gpu=False,  # Force CPU encoding
-                    selected_filter_index=self.filter_options.index(gui_instance.filter_var.get()),
-                    progress_var=progress_var,
-                    interactable_elements=interactable_elements,
-                    gui_instance=gui_instance,
-                    open_after_conversion=open_after_conversion,
-                    cancel_button=cancel_button
-                )
+                # The retry touches Tk (gpu checkbox, dialog, UI state) and must run
+                # on the main thread, not this worker thread.
+                gui_instance.root.after(0, lambda: self._retry_with_cpu(
+                    gui_instance, interactable_elements, cancel_button, progress_var,
+                    open_after_conversion, gamma, tonemapper))
             else:
                 self.handle_completion(gui_instance, interactable_elements, cancel_button,
                                     output_path, open_after_conversion, error_messages)
+
+    def _retry_with_cpu(self, gui_instance, interactable_elements, cancel_button,
+                        progress_var, open_after_conversion, gamma, tonemapper):
+        """Restart the conversion on the CPU after a GPU failure. Runs on the main thread."""
+        gui_instance.gpu_accel_var.set(False)
+        messagebox.showwarning("GPU Acceleration Failed",
+                               "GPU acceleration failed. Switching to CPU encoding.")
+        self.start_conversion(
+            input_path=gui_instance.input_path_var.get(),
+            output_path=gui_instance.output_path_var.get(),
+            gamma=gamma,
+            use_gpu=False,  # Force CPU encoding
+            selected_filter_index=self.filter_options.index(gui_instance.filter_var.get()),
+            progress_var=progress_var,
+            interactable_elements=interactable_elements,
+            gui_instance=gui_instance,
+            open_after_conversion=open_after_conversion,
+            cancel_button=cancel_button,
+            tonemapper=tonemapper,  # preserve the user's tonemapper across the retry
+        )
 
     def parse_time(self, time_str):
         hours, minutes, seconds = map(float, time_str.split(':'))
@@ -261,47 +320,6 @@ class ConversionManager:
 
             if hasattr(gui_instance, 'register_drop_target'):
                 gui_instance.register_drop_target()
-
-    def extract_frame(self, video_path, time=None):
-        properties = get_video_properties(video_path)
-        if not properties or properties['duration'] == 0:
-            raise ValueError("Invalid video properties or duration.")
-
-        if time is None:
-            time = properties['duration'] / 3
-
-        output_frame_path = os.path.join(os.path.dirname(video_path), 'frame_preview.jpg')
-
-        startupinfo = None
-        if sys.platform == "win32":
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = subprocess.SW_HIDE
-            creationflags = subprocess.CREATE_NO_WINDOW
-        else:
-            startupinfo = None
-            creationflags = 0
-
-        cmd = [
-            FFMPEG_EXECUTABLE,
-            '-ss', str(time),
-            '-i', os.path.normpath(video_path),
-            '-frames:v', '1',
-            '-q:v', '2',
-            os.path.normpath(output_frame_path),
-            '-y'
-        ]
-
-        subprocess.run(cmd, check=True, startupinfo=startupinfo, creationflags=creationflags)
-        return output_frame_path
-
-    def get_frame_preview(self, video_path):
-        properties = get_video_properties(video_path)
-        if not properties or properties['duration'] == 0:
-            raise ValueError("Invalid video properties or duration.")
-
-        frame = self.extract_frame(video_path)
-        return frame
 
     def is_gpu_available(self):
         try:

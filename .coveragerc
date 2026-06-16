@@ -1,0 +1,13 @@
+[run]
+source = src
+
+[report]
+show_missing = True
+# CI-visible coverage (sample videos are gitignored, so smoke tests skip) sits
+# at ~92%. The 90% floor guards against regressions with a small buffer so a
+# single skipped/removed test doesn't flap the build.
+fail_under = 90
+# main.pyw is the TkinterDnD + mainloop bootstrap: it can only run under a real
+# display with the packaged app, so it is intentionally not unit-tested.
+omit =
+    src/main.pyw

@@ -444,7 +444,7 @@ class TestConversionManager(unittest.TestCase):
             mock_popen.assert_called_once_with(
                 cmd,
                 stderr=subprocess.PIPE,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 universal_newlines=True,
                 startupinfo=None,
                 encoding='utf-8',  # Added encoding
@@ -463,6 +463,7 @@ class TestConversionManager(unittest.TestCase):
         
         # Set mocked constants to their actual integer values
         mock_subprocess.PIPE = subprocess.PIPE  # PIPE is -1
+        mock_subprocess.DEVNULL = subprocess.DEVNULL  # DEVNULL is -3
         mock_subprocess.STARTF_USESHOWWINDOW = subprocess.STARTF_USESHOWWINDOW  # Usually 1
         mock_subprocess.SW_HIDE = subprocess.SW_HIDE  # Usually 0
         
@@ -485,7 +486,7 @@ class TestConversionManager(unittest.TestCase):
             mock_popen.assert_called_once_with(
                 cmd,
                 stderr=subprocess.PIPE,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 universal_newlines=True,
                 startupinfo=startupinfo_instance,
                 encoding='utf-8',          # Added encoding
@@ -503,73 +504,6 @@ class TestConversionManager(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             run_ffmpeg_command(['ffmpeg', '-i', 'input.mp4', 'output.mkv'])
 
-    @patch('src.conversion.get_video_properties')
-    @patch('src.conversion.subprocess.run')
-    def test_extract_frame_success(self, mock_run, mock_get_props):
-        """Test successful frame extraction."""
-        mock_get_props.return_value = {
-            "width": 1920,
-            "height": 1080,
-            "bit_rate": 4000000,
-            "codec_name": 'h264',
-            "frame_rate": 30.0,
-            "audio_codec": 'aac',
-            "audio_bit_rate": 128000,
-            "duration": 120.0  # Ensure duration is positive
-        }
-        mock_run.return_value = MagicMock(returncode=0)
-        manager = ConversionManager()
-        frame_path = manager.extract_frame('input.mp4', time=30)
-        mock_run.assert_called_once()
-        self.assertEqual(frame_path, os.path.join(os.path.dirname('input.mp4'), 'frame_preview.jpg'))
-
-    @patch('src.conversion.subprocess.run', side_effect=subprocess.CalledProcessError(1, 'cmd'))
-    @patch('src.conversion.get_video_properties')  # Added patch for get_video_properties
-    def test_extract_frame_failure(self, mock_get_props, mock_run):
-        """Test frame extraction failure due to subprocess error."""
-        mock_get_props.return_value = {
-            "width": 1920,
-            "height": 1080,
-            "bit_rate": 4000000,
-            "codec_name": 'h264',
-            "frame_rate": 30.0,
-            "audio_codec": 'aac',
-            "audio_bit_rate": 128000,
-            "duration": 120.0  # Ensure duration is positive
-        }
-
-        manager = ConversionManager()
-        with self.assertRaises(subprocess.CalledProcessError):
-            manager.extract_frame('invalid_input.mp4', time=30)
-
-        mock_run.assert_called_once()
-        mock_get_props.assert_called_once_with('invalid_input.mp4')
-
-    @patch('src.conversion.ConversionManager.extract_frame', return_value='frame_preview.jpg')
-    @patch('src.conversion.get_video_properties', return_value={
-        "width": 1920,
-        "height": 1080,
-        "bit_rate": 4000000,
-        "codec_name": 'h264',
-        "frame_rate": 30.0,
-        "audio_codec": 'aac',
-        "audio_bit_rate": 128000,
-        "duration": 120.0
-    })
-    def test_get_frame_preview_success(self, mock_get_props, mock_extract_frame):
-        """Test successful retrieval of frame preview."""
-        manager = ConversionManager()
-        frame = manager.get_frame_preview('input.mp4')
-        mock_extract_frame.assert_called_once_with('input.mp4')  # Updated assertion
-        self.assertEqual(frame, 'frame_preview.jpg')
-    
-    @patch('src.conversion.get_video_properties', return_value=None)
-    def test_get_frame_preview_failure(self, mock_get_props):
-        """Test get_frame_preview when video properties are invalid."""
-        manager = ConversionManager()
-        with self.assertRaises(ValueError):
-            manager.get_frame_preview('input.mp4')
-    
     @patch('src.conversion.subprocess.run', return_value=MagicMock(returncode=1))
     def test_is_gpu_available_no_gpu(self, mock_run):
         """Test is_gpu_available when NVIDIA GPU is not available."""
@@ -692,6 +626,45 @@ class TestConversionManager(unittest.TestCase):
         ]
         self.assertEqual(cmd, expected_cmd)
 
+    @patch('src.conversion.platform.system', return_value='Darwin')
+    @patch('src.conversion.messagebox.showwarning')
+    def test_construct_command_gpu_unsupported_platform(self, mock_warn, _plat):
+        """On non-Windows/Linux, requesting GPU warns and falls back to CPU."""
+        manager = ConversionManager()
+        props = {
+            "width": 1920, "height": 1080, "bit_rate": 4000000, "frame_rate": 30.0,
+            "duration": 120.0, "audio_codec": "aac", "audio_bit_rate": 128000,
+            "subtitle_streams": [],
+        }
+        cmd = manager.construct_ffmpeg_command('in.mp4', 'out.mkv', 2.2, props,
+                                               True, 0, tonemapper='reinhard')
+        mock_warn.assert_called_once()
+        self.assertIn('libx264', cmd)
+        self.assertNotIn('h264_nvenc', cmd)
+        self.assertNotIn('-hwaccel', cmd)
+
+    @patch('src.conversion.subprocess.Popen')
+    @patch('src.conversion.subprocess.run', return_value=MagicMock(returncode=0))
+    def test_is_gpu_available_encoder_list_fails(self, mock_run, mock_popen):
+        proc = MagicMock()
+        proc.communicate.return_value = ('', '')
+        proc.returncode = 1
+        mock_popen.return_value = proc
+        self.assertFalse(ConversionManager().is_gpu_available())
+
+    @patch('src.conversion.subprocess.Popen')
+    @patch('src.conversion.subprocess.run', return_value=MagicMock(returncode=0))
+    def test_is_gpu_available_nvenc_not_listed(self, mock_run, mock_popen):
+        proc = MagicMock()
+        proc.communicate.return_value = ('libx264 libx265', '')
+        proc.returncode = 0
+        mock_popen.return_value = proc
+        self.assertFalse(ConversionManager().is_gpu_available())
+
+    @patch('src.conversion.subprocess.run', side_effect=FileNotFoundError())
+    def test_is_gpu_available_nvidia_smi_missing(self, mock_run):
+        self.assertFalse(ConversionManager().is_gpu_available())
+
     def test_is_gpu_available(self):
         """Test if GPU is available and h264_nvenc encoder exists."""
         # Setup
@@ -717,6 +690,77 @@ class TestConversionManager(unittest.TestCase):
             self.assertTrue(result)
             mock_run.assert_called_once()
             mock_popen.assert_called_once()
+
+    @patch('src.conversion.messagebox.showwarning')
+    @patch('src.conversion.subprocess.Popen')
+    @patch('src.conversion.get_video_properties')
+    def test_start_conversion_zero_duration_aborts(self, mock_get_props, mock_popen, mock_showwarning):
+        """A zero-duration file must abort before the monitor thread can divide by zero."""
+        mock_get_props.return_value = {
+            "width": 1920, "height": 1080, "bit_rate": 4000000,
+            "codec_name": 'h264', "frame_rate": 30.0, "audio_codec": 'aac',
+            "audio_bit_rate": 128000, "duration": 0, "subtitle_streams": []
+        }
+        root = Tk()
+        mock_gui = MagicMock()
+        mock_gui.root = root
+        progress_var = DoubleVar(master=root)
+
+        manager = ConversionManager()
+        manager.start_conversion('input.mp4', 'output.mkv', 2.2, False, 0,
+                                 progress_var, [], mock_gui, False, MagicMock())
+
+        mock_showwarning.assert_called_once()
+        self.assertIn("duration", mock_showwarning.call_args[0][1].lower())
+        mock_popen.assert_not_called()  # never launched ffmpeg
+        self.assertIsNone(manager.process)
+        root.destroy()
+
+
+class TestContainerStreamArgs(unittest.TestCase):
+    """Container-aware audio/subtitle handling in construct_ffmpeg_command."""
+
+    def setUp(self):
+        self.manager = ConversionManager()
+
+    def test_mkv_copies_everything(self):
+        props = {'audio_codec': 'truehd',
+                 'subtitle_streams': [{'codec_name': 'hdmv_pgs_subtitle', 'index': 2}]}
+        self.assertEqual(
+            self.manager._container_stream_args('out.mkv', props),
+            (['-map', '0:s?'], ['-c:a', 'copy'], ['-c:s', 'copy']))
+
+    def test_mp4_transcodes_truehd_and_keeps_only_text_subs(self):
+        props = {'audio_codec': 'truehd', 'audio_bit_rate': 0,
+                 'subtitle_streams': [
+                     {'codec_name': 'subrip', 'index': 3},
+                     {'codec_name': 'hdmv_pgs_subtitle', 'index': 2},
+                     {'codec_name': 'ass', 'index': 4},
+                 ]}
+        sub_map, audio, sub_codec = self.manager._container_stream_args('out.mp4', props)
+        self.assertEqual(sub_map, ['-map', '0:3', '-map', '0:4'])  # text subs only
+        self.assertEqual(audio, ['-c:a', 'aac', '-b:a', '192k'])    # no source bitrate
+        self.assertEqual(sub_codec, ['-c:s', 'mov_text'])
+
+    def test_mp4_caps_transcode_bitrate(self):
+        props = {'audio_codec': 'dts', 'audio_bit_rate': 1500000, 'subtitle_streams': []}
+        _, audio, _ = self.manager._container_stream_args('out.mp4', props)
+        self.assertEqual(audio, ['-c:a', 'aac', '-b:a', '384000'])
+
+    def test_mp4_copies_compatible_audio_and_drops_image_subs(self):
+        props = {'audio_codec': 'eac3', 'audio_bit_rate': 0,
+                 'subtitle_streams': [{'codec_name': 'hdmv_pgs_subtitle', 'index': 2}]}
+        sub_map, audio, sub_codec = self.manager._container_stream_args('out.mp4', props)
+        self.assertEqual(sub_map, [])          # image subs dropped
+        self.assertEqual(audio, ['-c:a', 'copy'])  # eac3 is mp4-legal
+        self.assertEqual(sub_codec, [])
+
+    def test_m4v_and_mov_behave_like_mp4(self):
+        props = {'audio_codec': 'truehd', 'audio_bit_rate': 0, 'subtitle_streams': []}
+        for path in ('out.m4v', 'out.MOV'):
+            _, audio, _ = self.manager._container_stream_args(path, props)
+            self.assertEqual(audio, ['-c:a', 'aac', '-b:a', '192k'])
+
 
 if __name__ == '__main__':
     unittest.main()

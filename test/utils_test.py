@@ -1,7 +1,10 @@
 import unittest
 from unittest.mock import patch, MagicMock, ANY
-from src.utils import get_video_properties, run_ffmpeg_command, extract_frame, extract_frame_with_conversion
-import subprocess  
+from src.utils import (
+    get_video_properties, run_ffmpeg_command, extract_frame,
+    extract_frame_with_conversion, get_executable_path, initialize_ffmpeg,
+)
+import subprocess
 from PIL import Image  # Added import
 import json  # Ensure json is imported
 
@@ -270,6 +273,104 @@ class TestExtractFrameWithConversion(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 extract_frame_with_conversion('input.mp4', gamma=2.2, filter_index=1)  # Added gamma and filter_index
 
+_VALID_PNG = (
+    b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01'
+    b'\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00'
+    b'\x00\x00\nIDATx\xdac\xf8\x0f\x00\x01\x01\x01\x00'
+    b'\x18\xdd\x8d\x1b\x00\x00\x00\x00IEND\xaeB`\x82'
+)
+
+
+class TestPreviewScaling(unittest.TestCase):
+    """Extraction can target a preview resolution so the GUI decodes less data."""
+
+    @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
+    @patch('src.utils.run_ffmpeg_command', return_value=_VALID_PNG)
+    def test_extract_frame_scales_when_size_given(self, mock_run, _props):
+        extract_frame('in.mp4', time_position=1.0, width=960, height=540)
+        args = mock_run.call_args[0][0]
+        self.assertIn('-vf', args)
+        self.assertIn('scale=960:540', args[args.index('-vf') + 1])
+
+    @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
+    @patch('src.utils.run_ffmpeg_command', return_value=_VALID_PNG)
+    def test_extract_frame_unscaled_by_default(self, mock_run, _props):
+        extract_frame('in.mp4', time_position=1.0)
+        self.assertNotIn('-vf', mock_run.call_args[0][0])  # unchanged default
+
+    @patch('src.utils.get_maxfall', return_value=100.0)
+    @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
+    @patch('src.utils.run_ffmpeg_command', return_value=_VALID_PNG)
+    def test_conversion_uses_given_size_in_scale(self, mock_run, _props, _mf):
+        extract_frame_with_conversion('in.mp4', gamma=1.0, filter_index=1,
+                                      width=960, height=540)
+        vf = mock_run.call_args[0][0][mock_run.call_args[0][0].index('-vf') + 1]
+        self.assertIn('scale=960:540', vf)
+
+
+class TestGetVideoPropertiesErrors(unittest.TestCase):
+
+    @patch('src.utils.subprocess.Popen')
+    def test_no_video_stream_returns_none(self, mock_popen):
+        proc = mock_popen.return_value
+        proc.communicate.return_value = (json.dumps({
+            "streams": [{"codec_type": "audio", "codec_name": "aac"}],
+            "format": {"duration": "10.0"},
+        }).encode('utf-8'), b'')
+        proc.returncode = 0
+        self.assertIsNone(get_video_properties('x.mp4'))
+
+    @patch('src.utils.subprocess.Popen')
+    def test_invalid_json_returns_none(self, mock_popen):
+        proc = mock_popen.return_value
+        proc.communicate.return_value = (b'this is not json', b'')
+        proc.returncode = 0
+        self.assertIsNone(get_video_properties('x.mp4'))
+
+
+class TestRunFfmpegColorspace(unittest.TestCase):
+
+    @patch('src.utils.subprocess.Popen')
+    def test_colorspace_error_gives_friendly_message(self, mock_popen):
+        proc = MagicMock()
+        proc.communicate.return_value = (
+            b'', b'Impossible to convert between the formats... '
+                 b'no path between colorspaces\n')
+        proc.returncode = 1
+        mock_popen.return_value = proc
+        with self.assertRaises(RuntimeError) as ctx:
+            run_ffmpeg_command(['ffmpeg', '-i', 'in.mkv', 'out.mkv'])
+        self.assertIn('Colorspace', str(ctx.exception))
+
+
+class TestExecutableResolution(unittest.TestCase):
+
+    @patch('src.utils.os.path.exists', return_value=True)
+    def test_found_in_bundle_dir(self, _exists):
+        path = get_executable_path('ffmpeg.exe')
+        # Resolves next to the module (or its stripped name off Windows).
+        self.assertTrue(path.endswith('ffmpeg.exe') or path.endswith('ffmpeg'))
+
+    @patch('src.utils.shutil.which', return_value='/usr/bin/ffmpeg')
+    @patch('src.utils.os.path.exists', return_value=False)
+    def test_falls_back_to_system_path(self, _exists, _which):
+        self.assertEqual(get_executable_path('ffmpeg.exe'), '/usr/bin/ffmpeg')
+
+    @patch('src.utils.shutil.which', return_value=None)
+    @patch('src.utils.os.path.exists', return_value=False)
+    def test_missing_everywhere_raises(self, _exists, _which):
+        with self.assertRaises(FileNotFoundError):
+            get_executable_path('ffmpeg.exe')
+
+
+class TestInitializeFfmpeg(unittest.TestCase):
+
+    @patch('src.utils.verify_ffmpeg_files', side_effect=RuntimeError('missing'))
+    def test_failure_raises_without_a_dialog(self, _verify):
+        # messagebox was removed from utils; failure must propagate, not pop a UI.
+        with self.assertRaises(RuntimeError):
+            initialize_ffmpeg()
+
+
 if __name__ == '__main__':
-    unittest.main()
     unittest.main()

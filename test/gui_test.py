@@ -88,6 +88,18 @@ class TestHDRConverterGUI(TestCase):
         # Verify UI updates
         self._assert_frame_updates()
 
+    @patch('src.gui.filedialog.askopenfilename')
+    def test_file_selection_webm_redirects_output_to_mkv(self, mock_file_dialog):
+        """A WebM input must produce an MKV output path (H.264 can't go in WebM)."""
+        mock_file_dialog.return_value = 'clip.webm'
+
+        self.gui.select_file()
+
+        self.mock_string_var.set.assert_has_calls([
+            call('clip.webm'),
+            call('clip_sdr.mkv')
+        ])
+
     @patch('src.gui.ImageTk.PhotoImage')
     @patch('src.gui.extract_frame_with_conversion')
     @patch('src.gui.extract_frame')
@@ -123,8 +135,16 @@ class TestHDRConverterGUI(TestCase):
         # Set the filter_var to return a valid filter option
         self.mock_string_var.get.return_value = 'Static'
 
-        # Call display_frames directly since that's where the functions are used
-        self.gui.display_frames('test_input.mp4')
+        # Preview extraction and rendering are now split so the slow ffmpeg work
+        # can run on a worker thread. Exercise both halves directly here; the
+        # threading orchestration itself is covered in characterization_test.
+        self.gui.original_image = None
+        self.gui.last_time_position = None
+        time_position = 100.0 / 6  # current_frame_index 1 of (total_frames 5 + 1)
+
+        original, converted = self.gui._extract_preview_images(
+            'test_input.mp4', time_position, filter_index=0, tonemapper='mobius'
+        )
 
         # Get the actual calls made to mock_extract and mock_convert
         extract_call = mock_extract.call_args
@@ -147,13 +167,16 @@ class TestHDRConverterGUI(TestCase):
         self.assertEqual(convert_call[1]['filter_index'], 0)
         self.assertEqual(convert_call[1]['tonemapper'], 'mobius')
 
+        # Render the extracted frames (main-thread Tk work).
+        self.gui._render_preview_images(original, converted, time_position)
+
         # Verify adjust_gamma is called with correct gamma value
         self.gui.adjust_gamma.assert_called_once_with(mock_image, 2.2)
 
         # Verify image resize calls
         mock_image.resize.assert_has_calls([
-            call((960, 540), Image.Resampling.LANCZOS),
-            call((960, 540), Image.Resampling.LANCZOS)
+            call((960, 540), Image.LANCZOS),
+            call((960, 540), Image.LANCZOS)
         ])
 
         # Verify PhotoImage creation and label updates

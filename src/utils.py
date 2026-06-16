@@ -1,9 +1,7 @@
 import ffmpeg
-from tkinter import messagebox
-from PIL import Image, ImageTk, UnidentifiedImageError
+from PIL import Image, UnidentifiedImageError
 import subprocess
 import os
-import numpy as np
 import io
 import logging
 import sys
@@ -144,13 +142,20 @@ def initialize_ffmpeg():
         logging.debug(f"Configured ffprobe binary: {ffmpeg._ffprobe_binary}")
 
     except Exception as e:
+        # Surfacing the error is the caller's job (the GUI shows it on startup);
+        # a utility module must not pop a dialog.
         logging.error(f"Error setting up ffmpeg: {str(e)}", exc_info=True)
-        messagebox.showerror("Error", f"Failed to initialize ffmpeg: {str(e)}")
         raise
 
 # Call initialization functions
 setup_logging()
-initialize_ffmpeg()
+try:
+    initialize_ffmpeg()
+except Exception:
+    # Importing this module must never crash or block on a dialog when ffmpeg is
+    # missing; FFMPEG_EXECUTABLE/FFPROBE_EXECUTABLE stay None and the GUI reports
+    # it to the user on startup (see HDRConverterGUI.__init__).
+    logging.error("ffmpeg could not be initialized at import time", exc_info=True)
 
 # Rest of your existing functions...
 def run_ffmpeg_command(cmd):
@@ -196,14 +201,34 @@ def run_ffmpeg_command(cmd):
         logging.error(f"Error running FFmpeg command: {str(e)}")
         raise RuntimeError(f"Error running FFmpeg command: {str(e)}")
 
+# MAXFALL is static mastering-display metadata, identical for every call on a
+# given file, yet probing it costs ~0.5-1.2s (ffprobe decodes ~1s of frames).
+# Memoize per path so it is paid once per video instead of once per preview.
+_MAXFALL_CACHE = {}
+
+
+def clear_maxfall_cache():
+    """Drop memoized MAXFALL values (call when loading a new/replaced file)."""
+    _MAXFALL_CACHE.clear()
+
+
 def get_maxfall(video_path):
     """
-    Extract MAXFALL from video metadata using ffprobe.
+    Extract MAXFALL from video metadata using ffprobe (memoized per path).
     Args:
         video_path (str): Path to the video file.
     Returns:
         float: The MAXFALL value.
     """
+    if video_path in _MAXFALL_CACHE:
+        return _MAXFALL_CACHE[video_path]
+    value = _compute_maxfall(video_path)
+    _MAXFALL_CACHE[video_path] = value
+    return value
+
+
+def _compute_maxfall(video_path):
+    """Probe MAXFALL from mastering-display metadata (uncached)."""
     cmd = [
         FFPROBE_EXECUTABLE,
         '-v', 'quiet',
@@ -241,7 +266,8 @@ def get_maxfall(video_path):
                     return float(max_fall)
     return 100  # Default value if MAXFALL is not found
 
-def extract_frame_with_conversion(video_path, gamma, filter_index, tonemapper='reinhard', time_position=None):
+def extract_frame_with_conversion(video_path, gamma, filter_index, tonemapper='reinhard',
+                                  time_position=None, width='iw', height='ih'):
     """
     Extracts a frame from the video and applies tonemapping conversion.
     Args:
@@ -250,6 +276,9 @@ def extract_frame_with_conversion(video_path, gamma, filter_index, tonemapper='r
         filter_index (int): The index of the filter to use.
         tonemapper (str): The tonemapping algorithm to use.
         time_position (float, optional): The time position to extract the frame from.
+        width, height: output scale for the filter chain. Default ('iw'/'ih') keeps
+            the source resolution; pass concrete sizes (e.g. 960, 540) to have ffmpeg
+            scale the preview down, decoding far less data for a snappier preview.
     Returns:
         PIL.Image: The extracted and converted frame as a PIL image.
     """
@@ -268,11 +297,11 @@ def extract_frame_with_conversion(video_path, gamma, filter_index, tonemapper='r
     if filter_index == 1:
         maxfall = get_maxfall(video_path)
         filter_str = FFMPEG_FILTER[filter_index].format(
-            gamma=gamma, width='iw', height='ih', npl=maxfall, tonemapper=tonemapper
+            gamma=gamma, width=width, height=height, npl=maxfall, tonemapper=tonemapper
         )
     else:
         filter_str = FFMPEG_FILTER[filter_index].format(
-            gamma=gamma, width='iw', height='ih', tonemapper=tonemapper
+            gamma=gamma, width=width, height=height, tonemapper=tonemapper
         )
     cmd = [
         FFMPEG_EXECUTABLE, '-ss', str(target_time), '-i', video_path,
@@ -287,29 +316,31 @@ def extract_frame_with_conversion(video_path, gamma, filter_index, tonemapper='r
         logging.error(f"Failed to extract and convert frame: {e}")
         raise RuntimeError("Failed to extract and convert frame.")
 
-def extract_frame(video_path, time_position=None):
+def extract_frame(video_path, time_position=None, width=None, height=None):
     """
     Extracts a frame from the video.
     Args:
         video_path (str): The path to the video file.
         time_position (float, optional): The time position to extract the frame from.
+        width, height (int, optional): when both given, ffmpeg scales the frame to
+            this size on the way out, so the preview decodes far less data.
     Returns:
         PIL.Image: The extracted frame as a PIL image.
     """
     properties = get_video_properties(video_path)
     if not properties or properties['duration'] == 0:
         raise ValueError("Invalid video properties or duration.")
-    
+
     # Calculate target time
     if time_position is None:
         target_time = properties['duration'] / 3  # Changed from /6 to /3
     else:
         target_time = time_position
 
-    cmd = [
-        FFMPEG_EXECUTABLE, '-ss', str(target_time), '-i', video_path,
-        '-vframes', '1', '-f', 'image2pipe', '-'
-    ]
+    cmd = [FFMPEG_EXECUTABLE, '-ss', str(target_time), '-i', video_path]
+    if width and height:
+        cmd += ['-vf', f'scale={width}:{height}']
+    cmd += ['-vframes', '1', '-f', 'image2pipe', '-']
 
     out = run_ffmpeg_command(cmd)
     try:

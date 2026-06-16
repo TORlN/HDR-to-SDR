@@ -4,12 +4,14 @@ from tkinter import filedialog, messagebox
 from tkinter import ttk
 import sv_ttk
 from conversion import conversion_manager  # Import the conversion_manager instance
-from utils import extract_frame_with_conversion, extract_frame, TONEMAP, get_video_properties  # Add get_video_properties
-from PIL import Image, ImageTk, ImageOps  # Add this import
+from utils import extract_frame_with_conversion, extract_frame, TONEMAP, get_video_properties, clear_maxfall_cache  # Add get_video_properties
+from PIL import Image, ImageTk
 from tkinterdnd2 import DND_FILES
 import logging
+import threading
 
 DEFAULT_MIN_SIZE = (550, 150)
+PREVIEW_SIZE = (960, 540)  # on-screen size of each preview pane
 
 class HDRConverterGUI:
     """
@@ -41,6 +43,13 @@ class HDRConverterGUI:
         self.current_frame_index = 1  # Default to 1 (1/6 of the video)
         self.total_frames = 5
         self.last_time_position = None
+        self._preview_generation = 0  # Debounce token for preview worker threads
+        self._preview_thread = None
+        self._converted_preview_base = None  # display-sized SDR frame; gamma applied on top
+        self._duration_path = None           # input path the cached duration belongs to
+        self._duration_value = None          # cached video duration (avoids repeat ffprobe)
+        self._preview_cache_original = {}    # (path, time) -> extracted HDR frame
+        self._preview_cache_converted = {}   # (path, time, filter, tonemapper) -> SDR frame
 
         # Create widgets and configure layout
         self.create_widgets()
@@ -55,6 +64,21 @@ class HDRConverterGUI:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.cancelled = False  # Flag to track cancellation
+
+        # ffmpeg/ffprobe are resolved lazily at import; if that failed (binaries
+        # missing) surface it here rather than letting later actions fail cryptically.
+        self.check_ffmpeg_available()
+
+    def check_ffmpeg_available(self):
+        """Warn the user if ffmpeg/ffprobe could not be located on startup."""
+        from utils import FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE
+        if not FFMPEG_EXECUTABLE or not FFPROBE_EXECUTABLE:
+            messagebox.showerror(
+                "FFmpeg Not Found",
+                "ffmpeg/ffprobe could not be located. The converter cannot run "
+                "without them. Please reinstall the application or install ffmpeg.")
+            return False
+        return True
 
     def on_close(self):
         """Handle the window close event by cancelling ongoing conversions and cleaning up."""
@@ -98,12 +122,12 @@ class HDRConverterGUI:
             to=3.0,
             orient=tk.HORIZONTAL,
             length=200,
-            command=self.update_frame_preview
+            command=self.on_gamma_change
         )
         self.gamma_slider.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=(10, 10))
         self.gamma_entry = ttk.Entry(self.control_frame, textvariable=self.gamma_var, width=5)
         self.gamma_entry.grid(row=2, column=2, sticky=tk.W, padx=(5, 0))
-        self.gamma_entry.bind('<Return>', self.update_frame_preview)
+        self.gamma_entry.bind('<Return>', self.on_gamma_change)
 
         # GPU Acceleration Checkbox
         self.gpu_accel_checkbutton = ttk.Checkbutton(
@@ -316,20 +340,39 @@ class HDRConverterGUI:
         )
         if file_path:
             self.input_path_var.set(file_path)
-            # Keep the same extension for output file
+            # Keep the same extension for output file (WebM is redirected to MKV).
             base, ext = os.path.splitext(file_path)
-            self.output_path_var.set(f"{base}_sdr{ext}")
+            self.output_path_var.set(self._supported_output_path(f"{base}_sdr{ext}"))
             # Reset the cached images
             self.original_image = None
             self.converted_image_base = None
+            self._reset_preview_cache()
             self.button_frame.grid()
             self.image_frame.grid()
             self.action_frame.grid()
             self.update_frame_preview()
             self.highlight_frame_button(1)  # Highlight button 1 when image is loaded
 
+    @staticmethod
+    def _supported_output_path(output_path):
+        """Redirect WebM output to MKV.
+
+        The converter always encodes H.264 video, which the WebM container cannot
+        hold (it only accepts VP8/VP9/AV1). Rather than fail the conversion, save
+        to MKV instead -- same video, a container that accepts it. Other
+        extensions are returned unchanged.
+        """
+        base, ext = os.path.splitext(output_path)
+        if ext.lower() == '.webm':
+            return base + '.mkv'
+        return output_path
+
     def adjust_gamma(self, image, gamma):
         """Adjust gamma of a PIL.Image."""
+        # gamma == 1.0 is the identity transform; skip the per-pixel LUT pass that
+        # runs on every gamma-slider tick.
+        if abs(gamma - 1.0) < 1e-6:
+            return image
         inv_gamma = 1.0 / gamma
         lut = [pow(i / 255.0, inv_gamma) * 255 for i in range(256)]
         # Extend LUT for all channels
@@ -337,64 +380,13 @@ class HDRConverterGUI:
         lut = [int(round(v)) for v in lut]  # Ensure values are integers
         return image.point(lut)
 
-    def display_frames(self, video_path):
-        """Extract and display frames using cached images and adjusted gamma."""
-        if self.original_image is None:
-            # Extract the original HDR frame
-            self.original_image = extract_frame(video_path)
-        # Re-extract the converted SDR frame with the selected filter
-        selected_filter_index = self.filter_options.index(self.filter_var.get())
-        tonemapper = self.tonemap_var.get().lower()  # Convert tonemapper to lowercase
-        self.converted_image_base = extract_frame_with_conversion(
-            video_path, gamma=1.0, filter_index=selected_filter_index,
-            tonemapper=tonemapper  # Pass current tonemapper
-        )
-        original_image_resized = self.original_image.resize((960, 540), Image.LANCZOS)
-        original_photo = ImageTk.PhotoImage(original_image_resized)
-        self.original_image_label.config(image=original_photo)
-        self.original_image_label.image = original_photo
-
-        # Apply gamma adjustment to the cached converted SDR image
-        gamma = self.gamma_var.get()
-        adjusted_converted_image = self.adjust_gamma(self.converted_image_base, gamma)
-        converted_image_resized = adjusted_converted_image.resize((960, 540), Image.LANCZOS)
-        converted_photo = ImageTk.PhotoImage(converted_image_resized)
-        self.converted_image_label.config(image=converted_photo)
-        self.converted_image_label.image = converted_photo
-
-        self.adjust_window_size()  # Ensure window size is adjusted after displaying images
-
-    def update_frame_preview(self, event=None):
-        """Update the frame preview without blocking the UI."""
-        filter_value = self.filter_var.get()
-        
-        if self.display_image_var.get() and self.input_path_var.get():
-            try:
-                video_path = self.input_path_var.get()
-                self.display_frames(video_path)
-                self.error_label.config(text="")
-                self.original_title_label.grid()
-                self.converted_title_label.grid()
-                self.button_container.grid()  # Show frame buttons
-                self.adjust_window_size()
-                self.arrange_widgets(image_frame=True)
-            except Exception as e:
-                self.handle_preview_error(e)
-        else:
-            self.clear_preview()
-            self.original_title_label.grid_remove()
-            self.converted_title_label.grid_remove()
-            self.button_container.grid_remove()  # Hide frame buttons
-            self.arrange_widgets(image_frame=False)
-        self.filter_combobox.selection_clear()
-        self.tonemap_combobox.selection_clear()
-
     def clear_preview(self):
         """Clear the frame preview images and reset cached images."""
         self.original_image_label.config(image='')
         self.converted_image_label.config(image='')
         self.original_image = None
         self.converted_image_base = None
+        self._converted_preview_base = None
         self.root.minsize(*DEFAULT_MIN_SIZE)
 
     def adjust_window_size(self):
@@ -462,12 +454,13 @@ class HDRConverterGUI:
             file_path = event.data.strip('{}')
             if file_path:
                 self.input_path_var.set(file_path)
-                # Keep the same extension for output file
+                # Keep the same extension for output file (WebM is redirected to MKV).
                 base, ext = os.path.splitext(file_path)
-                self.output_path_var.set(f"{base}_sdr{ext}")
+                self.output_path_var.set(self._supported_output_path(f"{base}_sdr{ext}"))
                 # Reset the cached images
                 self.original_image = None
                 self.converted_image_base = None
+                self._reset_preview_cache()
                 self.button_frame.grid()
                 self.image_frame.grid()
                 self.action_frame.grid()
@@ -480,6 +473,12 @@ class HDRConverterGUI:
     def convert_video(self):
         """Convert the video from HDR to SDR."""
         try:
+            # Validate the raw values before normpath -- os.path.normpath('') is
+            # '.', which would otherwise mask an empty field as a bogus path.
+            if not self.input_path_var.get() or not self.output_path_var.get():
+                messagebox.showwarning("Warning", "Please select both an input file and specify an output file.")
+                return
+
             input_path = os.path.normpath(self.input_path_var.get())
             output_path = os.path.normpath(self.output_path_var.get())
             gamma = self.gamma_var.get()
@@ -487,9 +486,16 @@ class HDRConverterGUI:
             selected_filter_index = self.filter_options.index(self.filter_var.get())
             tonemapper = self.tonemap_var.get().lower()  # Convert tonemapper to lowercase
 
-            if not input_path or not output_path:
-                messagebox.showwarning("Warning", "Please select both an input file and specify an output file.")
-                return
+            # WebM can't hold the H.264 video we encode; redirect to MKV and keep
+            # the displayed path in sync so success/open use the real output file.
+            redirected = self._supported_output_path(output_path)
+            if redirected != output_path:
+                output_path = redirected
+                self.output_path_var.set(output_path)
+                messagebox.showinfo(
+                    "Output format changed",
+                    "WebM can't store the H.264 video this converter produces, "
+                    "so the output will be saved as .mkv instead.")
 
             if not os.path.isfile(input_path):
                 messagebox.showerror("Error", f"Input file not found: {input_path}")
@@ -600,44 +606,171 @@ class HDRConverterGUI:
                 btn.configure(style='TButton')  # Reset to default style
 
     def display_frames(self, video_path):
-        """Extract and display frames using the current frame index."""
-        properties = get_video_properties(video_path)
-        duration = properties['duration']
-        time_position = (self.current_frame_index / (self.total_frames + 1)) * duration
+        """Kick off frame extraction on a worker thread and render on the main thread.
 
-        if self.original_image is None or self.last_time_position != time_position:
-            # Extract original frame at specified time position
-            self.original_image = extract_frame(video_path, time_position=time_position)
-            self.last_time_position = time_position
-
-        # Re-extract the converted SDR frame with the selected filter
+        The ffmpeg calls in :meth:`_extract_preview_images` are slow, so running
+        them inline would freeze the Tk event loop. We read the Tk-owned values
+        (filter, tonemapper, cached frame) on the calling (main) thread, hand the
+        plain values to a daemon worker, then marshal the result back onto the
+        main thread via ``root.after`` for the Tk rendering in
+        :meth:`_render_preview_images`.
+        """
         selected_filter_index = self.filter_options.index(self.filter_var.get())
         tonemapper = self.tonemap_var.get().lower()  # Convert tonemapper to lowercase
-        self.converted_image_base = extract_frame_with_conversion(
-            video_path, gamma=1.0, filter_index=selected_filter_index,
-            tonemapper=tonemapper, time_position=time_position
-        )
+
+        # Debounce: every request bumps a generation token. A worker only renders
+        # if it is still the most recent request, so a slow extraction kicked off
+        # by an earlier change can never clobber a newer preview.
+        self._preview_generation = getattr(self, '_preview_generation', 0) + 1
+        generation = self._preview_generation
+
+        def worker():
+            try:
+                duration = self._get_duration(video_path)
+                time_position = (self.current_frame_index / (self.total_frames + 1)) * duration
+                original, converted = self._extract_preview_images(
+                    video_path, time_position, selected_filter_index, tonemapper
+                )
+                if generation == self._preview_generation:
+                    self._schedule_on_main(lambda: self._render_preview_images(
+                        original, converted, time_position, generation))
+            except Exception as e:  # surface failures on the main thread
+                self._schedule_on_main(lambda err=e: self.handle_preview_error(err))
+
+        self._preview_thread = threading.Thread(target=worker, daemon=True)
+        self._preview_thread.start()
+
+    def _get_duration(self, video_path):
+        """Return the video duration, probing ffprobe only once per file.
+
+        The duration never changes for a given input, so caching it keeps filter/
+        frame/tonemapper changes from re-running ffprobe on every preview.
+        """
+        if getattr(self, '_duration_path', None) == video_path and getattr(self, '_duration_value', None):
+            return self._duration_value
+        properties = get_video_properties(video_path)
+        if not properties or not properties.get('duration'):
+            raise ValueError("Failed to retrieve video properties.")
+        self._duration_path = video_path
+        self._duration_value = properties['duration']
+        return self._duration_value
+
+    def _schedule_on_main(self, callback):
+        """Run a callback on the Tk main thread, tolerating shutdown races.
+
+        ``root.after`` raises once the interpreter/root is torn down (e.g. the
+        window was closed while a preview was still extracting); dropping the
+        stale UI update in that case is the correct, safe behavior.
+        """
+        try:
+            self.root.after(0, callback)
+        except (tk.TclError, RuntimeError):
+            pass
+
+    _PREVIEW_CACHE_MAX = 48  # bound preview-frame memory (~1.5MB each at 960x540)
+
+    def _extract_preview_images(self, video_path, time_position, filter_index, tonemapper):
+        """Return (original, converted) preview frames, caching ffmpeg results.
+
+        Safe to call off the main thread; must not touch Tk objects. Frames are
+        cached by content key so revisiting a frame/filter/tonemapper combo (e.g.
+        clicking back to frame 2, or toggling a filter and back) is a cache hit
+        with no ffmpeg work. The original HDR frame depends only on the time
+        position, so it is shared across filters/tonemappers.
+        """
+        if not hasattr(self, '_preview_cache_original'):  # bare instances (tests)
+            self._preview_cache_original = {}
+            self._preview_cache_converted = {}
+
+        time_key = round(time_position, 3)
+        original_key = (video_path, time_key)
+        original = self._preview_cache_original.get(original_key)
+        if original is None:
+            original = extract_frame(video_path, time_position=time_position,
+                                     width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1])
+            self._cache_store(self._preview_cache_original, original_key, original)
+
+        converted_key = (video_path, time_key, filter_index, tonemapper)
+        converted = self._preview_cache_converted.get(converted_key)
+        if converted is None:
+            converted = extract_frame_with_conversion(
+                video_path, gamma=1.0, filter_index=filter_index,
+                tonemapper=tonemapper, time_position=time_position,
+                width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1]
+            )
+            self._cache_store(self._preview_cache_converted, converted_key, converted)
+        return original, converted
+
+    def _cache_store(self, cache, key, value):
+        """Insert into a preview cache, evicting the oldest entry past the cap."""
+        cache[key] = value
+        if len(cache) > self._PREVIEW_CACHE_MAX:
+            cache.pop(next(iter(cache)))
+
+    def _reset_preview_cache(self):
+        """Drop all cached preview frames (e.g. when a new file is loaded)."""
+        self._preview_cache_original = {}
+        self._preview_cache_converted = {}
+        # MAXFALL is memoized per path in utils; drop it so a replaced file at the
+        # same path re-probes instead of reusing stale mastering metadata.
+        clear_maxfall_cache()
+
+    def _render_preview_images(self, original_image, converted_image_base, time_position,
+                               generation=None):
+        """Apply extracted frames to the Tk labels. Must run on the main thread.
+
+        ``generation`` re-checks the debounce token at render time so a callback
+        already queued on the event loop is dropped if a newer preview superseded
+        it between scheduling and execution.
+        """
+        if generation is not None and generation != getattr(self, '_preview_generation', generation):
+            return
+        self.original_image = original_image
+        self.last_time_position = time_position
+        self.converted_image_base = converted_image_base
 
         # Resize and display original image
-        original_image_resized = self.original_image.resize((960, 540), Image.LANCZOS)
+        original_image_resized = original_image.resize(PREVIEW_SIZE, Image.LANCZOS)
         original_photo = ImageTk.PhotoImage(original_image_resized)
         self.original_image_label.config(image=original_photo)
         self.original_image_label.image = original_photo
 
-        # Apply gamma adjustment to the cached converted SDR image
-        gamma = self.gamma_var.get()
-        adjusted_converted_image = self.adjust_gamma(self.converted_image_base, gamma)
-        converted_image_resized = adjusted_converted_image.resize((960, 540), Image.LANCZOS)
-        converted_photo = ImageTk.PhotoImage(converted_image_resized)
-        self.converted_image_label.config(image=converted_photo)
-        self.converted_image_label.image = converted_photo
+        # Cache the converted frame at display size (gamma not yet applied) so a
+        # gamma change only re-runs the cheap PIL gamma pass -- no ffmpeg, no
+        # resizing a full-resolution frame, no window resize.
+        self._converted_preview_base = converted_image_base.resize(PREVIEW_SIZE, Image.LANCZOS)
+        self._apply_gamma_to_preview()
 
         self.adjust_window_size()  # Ensure window size is adjusted after displaying images
 
+    def _apply_gamma_to_preview(self):
+        """Apply the current gamma to the cached display-sized SDR frame.
+
+        Runs on every gamma-slider tick; deliberately cheap (one PIL point() pass
+        on a 960x540 image, no extraction, no window resize).
+        """
+        base = self._converted_preview_base
+        if base is None:
+            return
+        adjusted = self.adjust_gamma(base, self.gamma_var.get())
+        converted_photo = ImageTk.PhotoImage(adjusted)
+        self.converted_image_label.config(image=converted_photo)
+        self.converted_image_label.image = converted_photo
+
+    def on_gamma_change(self, event=None):
+        """Handle gamma slider/entry changes.
+
+        Gamma is a pure post-process on the already-extracted SDR frame, so when a
+        preview frame is cached we re-apply gamma directly instead of re-running
+        the ffmpeg extraction pipeline.
+        """
+        if self.display_image_var.get() and self._converted_preview_base is not None:
+            self._apply_gamma_to_preview()
+        else:
+            self.update_frame_preview()
+
     def update_frame_preview(self, event=None):
         """Update the frame preview without blocking the UI."""
-        filter_value = self.filter_var.get()
-        
         if self.display_image_var.get() and self.input_path_var.get():
             try:
                 video_path = self.input_path_var.get()
@@ -646,7 +779,8 @@ class HDRConverterGUI:
                 self.original_title_label.grid()
                 self.converted_title_label.grid()
                 self.button_container.grid()  # Show frame buttons
-                self.adjust_window_size()
+                # Window sizing happens in _render_preview_images once the frames
+                # are actually ready (display_frames now runs asynchronously).
                 self.arrange_widgets(image_frame=True)
             except Exception as e:
                 self.handle_preview_error(e)

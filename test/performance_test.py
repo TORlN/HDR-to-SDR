@@ -128,6 +128,8 @@ class TestSnappinessGuards(unittest.TestCase):
         gui.gamma_var.get.return_value = 1.0
         gui.adjust_gamma = lambda img, g: img
         gui.adjust_window_size = MagicMock()
+        gui._hide_preview_loading = MagicMock()
+        gui._reveal_preview = MagicMock()
         full_res = Image.new('RGB', (3840, 1632), (10, 20, 30))
 
         gui._render_preview_images(full_res, full_res, 5.0)

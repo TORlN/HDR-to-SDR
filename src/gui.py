@@ -50,6 +50,7 @@ class HDRConverterGUI:
         self._duration_value = None          # cached video duration (avoids repeat ffprobe)
         self._preview_cache_original = {}    # (path, time) -> extracted HDR frame
         self._preview_cache_converted = {}   # (path, time, filter, tonemapper) -> SDR frame
+        self._cache_lock = threading.Lock()  # display + pre-warm workers share the caches
 
         # Create widgets and configure layout
         self.create_widgets()
@@ -125,6 +126,8 @@ class HDRConverterGUI:
             command=self.on_gamma_change
         )
         self.gamma_slider.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=(10, 10))
+        # Make a click on the trough jump the knob to the click (see _gamma_slider_jump).
+        self.gamma_slider.bind('<Button-1>', self._gamma_slider_jump)
         self.gamma_entry = ttk.Entry(self.control_frame, textvariable=self.gamma_var, width=5)
         self.gamma_entry.grid(row=2, column=2, sticky=tk.W, padx=(5, 0))
         self.gamma_entry.bind('<Return>', self.on_gamma_change)
@@ -250,6 +253,17 @@ class HDRConverterGUI:
                            command=lambda idx=i: self.on_frame_button_click(idx))
             btn.grid(row=i-1, column=0, pady=5)
             self.frame_buttons.append(btn)
+
+        # Loading indicator shown over the image area while a preview frame is
+        # being extracted (the titles, frame buttons and images stay hidden until
+        # the frames are actually ready -- see _show_preview_loading/_reveal_preview).
+        self.loading_frame = ttk.Frame(self.image_frame)
+        self.loading_label = ttk.Label(self.loading_frame, text="Rendering preview...")
+        self.loading_label.grid(row=0, column=0, pady=(40, 8))
+        self.loading_bar = ttk.Progressbar(self.loading_frame, mode='indeterminate', length=240)
+        self.loading_bar.grid(row=1, column=0, pady=(0, 40))
+        self.loading_frame.grid(row=1, column=0, columnspan=3)
+        self.loading_frame.grid_remove()  # hidden until a preview is loading
 
         # Error Label
         self.error_label = ttk.Label(self.control_frame, text='', foreground='red')
@@ -442,9 +456,11 @@ class HDRConverterGUI:
     def handle_preview_error(self, error):
         """Handle errors that occur during frame preview update."""
         self.error_label.config(text=f"Error displaying image: {error}")
+        self._hide_preview_loading()
         self.clear_preview()
         self.original_title_label.grid_remove()
         self.converted_title_label.grid_remove()
+        self.button_container.grid_remove()
 
     def handle_file_drop(self, event):
         """Handle file drop events and update the input and output path variables."""
@@ -634,6 +650,11 @@ class HDRConverterGUI:
                 if generation == self._preview_generation:
                     self._schedule_on_main(lambda: self._render_preview_images(
                         original, converted, time_position, generation))
+                # With the visible frame rendered, pre-extract the other seek
+                # buttons in the background so their first click is an instant
+                # cache hit instead of a multi-hundred-ms ffmpeg wait.
+                self._prewarm_other_frames(video_path, duration,
+                                           selected_filter_index, tonemapper, generation)
             except Exception as e:  # surface failures on the main thread
                 self._schedule_on_main(lambda err=e: self.handle_preview_error(err))
 
@@ -702,10 +723,38 @@ class HDRConverterGUI:
         return original, converted
 
     def _cache_store(self, cache, key, value):
-        """Insert into a preview cache, evicting the oldest entry past the cap."""
-        cache[key] = value
-        if len(cache) > self._PREVIEW_CACHE_MAX:
-            cache.pop(next(iter(cache)))
+        """Insert into a preview cache, evicting the oldest entry past the cap.
+
+        Locked: the display worker and the background pre-warm worker can write
+        concurrently, and the FIFO eviction iterates the dict.
+        """
+        if not hasattr(self, '_cache_lock'):  # bare instances (tests)
+            self._cache_lock = threading.Lock()
+        with self._cache_lock:
+            cache[key] = value
+            if len(cache) > self._PREVIEW_CACHE_MAX:
+                cache.pop(next(iter(cache)))
+
+    def _prewarm_other_frames(self, video_path, duration, filter_index, tonemapper, generation):
+        """Pre-extract the non-visible seek-button frames into the cache.
+
+        Runs on the preview worker thread after the requested frame has been
+        rendered. Each frame button maps to a fixed time position; warming them
+        up front turns the first click on each into a cache hit. Best-effort:
+        bails as soon as a newer preview request supersedes this one (so we never
+        keep decoding for a filter/tonemapper/file the user has moved on from),
+        and never lets a failure escape (the real click path reports errors).
+        """
+        for index in range(1, self.total_frames + 1):
+            if generation != self._preview_generation:
+                return  # superseded: stop wasting ffmpeg on a stale request
+            if index == self.current_frame_index:
+                continue  # the visible frame is already extracted
+            time_position = (index / (self.total_frames + 1)) * duration
+            try:
+                self._extract_preview_images(video_path, time_position, filter_index, tonemapper)
+            except Exception:
+                logging.exception("preview pre-warm failed for frame %s", index)
 
     def _reset_preview_cache(self):
         """Drop all cached preview frames (e.g. when a new file is loaded)."""
@@ -725,6 +774,8 @@ class HDRConverterGUI:
         """
         if generation is not None and generation != getattr(self, '_preview_generation', generation):
             return
+        # Frames are ready: drop the spinner and reveal the preview.
+        self._hide_preview_loading()
         self.original_image = original_image
         self.last_time_position = time_position
         self.converted_image_base = converted_image_base
@@ -741,6 +792,7 @@ class HDRConverterGUI:
         self._converted_preview_base = converted_image_base.resize(PREVIEW_SIZE, Image.LANCZOS)
         self._apply_gamma_to_preview()
 
+        self._reveal_preview()  # show titles, frame buttons and the images
         self.adjust_window_size()  # Ensure window size is adjusted after displaying images
 
     def _apply_gamma_to_preview(self):
@@ -756,6 +808,51 @@ class HDRConverterGUI:
         converted_photo = ImageTk.PhotoImage(adjusted)
         self.converted_image_label.config(image=converted_photo)
         self.converted_image_label.image = converted_photo
+
+    def _gamma_slider_jump(self, event):
+        """Move the gamma knob straight to a trough click instead of nudging it.
+
+        ttk.Scale's default behavior when you click the trough (the bar, not the
+        knob) is to step the value by a fixed page increment toward the click --
+        so the knob never lands where you clicked. Intercept trough clicks and set
+        the value from the click position so the knob jumps under the cursor.
+        ``Scale.set`` fires the slider's ``command`` (on_gamma_change), so the
+        preview refreshes. Clicks on the knob itself fall through to native drag.
+        """
+        slider = self.gamma_slider
+        if 'slider' in slider.identify(event.x, event.y):
+            return  # clicking the knob: let the default drag handle it
+        width = slider.winfo_width()
+        if width <= 0:
+            return
+        fraction = min(max(event.x / width, 0.0), 1.0)
+        low = float(slider.cget('from'))
+        high = float(slider.cget('to'))
+        slider.set(low + fraction * (high - low))
+        return 'break'  # suppress the default page-jump
+
+    def _show_preview_loading(self):
+        """Show the loading spinner and hide the preview until frames are ready."""
+        self.original_title_label.grid_remove()
+        self.converted_title_label.grid_remove()
+        self.button_container.grid_remove()
+        self.original_image_label.grid_remove()
+        self.converted_image_label.grid_remove()
+        self.loading_frame.grid()
+        self.loading_bar.start(12)
+
+    def _hide_preview_loading(self):
+        """Stop and hide the loading spinner."""
+        self.loading_bar.stop()
+        self.loading_frame.grid_remove()
+
+    def _reveal_preview(self):
+        """Reveal the titles, frame buttons and images once frames have rendered."""
+        self.original_image_label.grid()
+        self.converted_image_label.grid()
+        self.original_title_label.grid()
+        self.converted_title_label.grid()
+        self.button_container.grid()
 
     def on_gamma_change(self, event=None):
         """Handle gamma slider/entry changes.
@@ -774,18 +871,18 @@ class HDRConverterGUI:
         if self.display_image_var.get() and self.input_path_var.get():
             try:
                 video_path = self.input_path_var.get()
-                self.display_frames(video_path)
                 self.error_label.config(text="")
-                self.original_title_label.grid()
-                self.converted_title_label.grid()
-                self.button_container.grid()  # Show frame buttons
-                # Window sizing happens in _render_preview_images once the frames
-                # are actually ready (display_frames now runs asynchronously).
+                # Show the spinner and hide titles/buttons/images now; they are
+                # revealed in _render_preview_images once the frames are ready
+                # (display_frames runs the slow extraction asynchronously).
+                self._show_preview_loading()
+                self.display_frames(video_path)
                 self.arrange_widgets(image_frame=True)
             except Exception as e:
                 self.handle_preview_error(e)
         else:
             self.clear_preview()
+            self._hide_preview_loading()
             self.original_title_label.grid_remove()
             self.converted_title_label.grid_remove()
             self.button_container.grid_remove()  # Hide frame buttons

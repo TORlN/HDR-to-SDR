@@ -252,6 +252,44 @@ class TestUserActions(_GuiTestBase):
         self.gui.cancel_conversion()
         mock_cm.cancel_conversion.assert_called_once()
 
+    def test_preview_loading_hides_titles_buttons_and_shows_spinner(self):
+        # While frames extract, the spinner is up and titles/buttons are hidden.
+        self.gui.display_image_var.set(True)
+        self.gui.input_path_var.set('in.mkv')
+        with patch.object(self.gui, 'display_frames'):  # don't spawn real ffmpeg
+            self.gui.update_frame_preview()
+        self.assertNotEqual(self.gui.loading_frame.grid_info(), {})   # spinner shown
+        self.assertEqual(self.gui.original_title_label.grid_info(), {})  # title hidden
+        self.assertEqual(self.gui.converted_title_label.grid_info(), {})
+        self.assertEqual(self.gui.button_container.grid_info(), {})   # buttons hidden
+
+    def test_render_reveals_titles_buttons_and_hides_spinner(self):
+        from PIL import Image as PILImage
+        tk._default_root = self.root
+        self.gui.display_image_var.set(True)
+        # Put the UI into the loading state first.
+        self.gui._show_preview_loading()
+        frame = PILImage.new('RGB', (960, 540), (40, 50, 60))
+
+        self.gui._render_preview_images(frame, frame, time_position=5.0)
+
+        self.assertEqual(self.gui.loading_frame.grid_info(), {})        # spinner gone
+        self.assertNotEqual(self.gui.original_title_label.grid_info(), {})  # revealed
+        self.assertNotEqual(self.gui.converted_title_label.grid_info(), {})
+        self.assertNotEqual(self.gui.button_container.grid_info(), {})
+        self.assertTrue(self.gui.converted_image_label.cget('image'))
+
+    def test_gamma_trough_click_jumps_knob_to_position(self):
+        # A click near the far right of the trough must jump the gamma value near
+        # the maximum (3.0), not nudge it by a fixed step. The withdrawn window
+        # isn't laid out, so stub the realized width for a deterministic mapping.
+        slider = self.gui.gamma_slider
+        event = types.SimpleNamespace(x=199, y=10)
+        with patch.object(slider, 'identify', return_value='trough'), \
+             patch.object(slider, 'winfo_width', return_value=200):
+            self.gui._gamma_slider_jump(event)
+        self.assertGreater(self.gui.gamma_var.get(), 2.5)  # real ttk.Scale variable
+
     def test_gamma_change_updates_preview_without_reextracting(self):
         # With a cached SDR frame, a gamma change is a pure PIL pass: it updates
         # the converted label and never falls back to ffmpeg re-extraction.

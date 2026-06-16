@@ -277,6 +277,7 @@ class TestPreviewWorkerThread(unittest.TestCase):
 
         gui._extract_preview_images = fake_extract
         gui._render_preview_images = MagicMock()
+        gui._prewarm_other_frames = MagicMock()  # isolate the visible-frame extraction
 
         with patch('src.gui.get_video_properties', return_value={'duration': 100.0}):
             gui.display_frames('in.mp4')
@@ -375,6 +376,73 @@ class TestPreviewWorkerThread(unittest.TestCase):
         callback()
         gui.handle_preview_error.assert_called_once()
 
+    def test_worker_prewarms_other_frames_after_render(self):
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui.current_frame_index = 1
+        gui.total_frames = 5
+        gui.filter_options = ['Static', 'Dynamic']
+        gui.filter_var = MagicMock(); gui.filter_var.get.return_value = 'Static'
+        gui.tonemap_var = MagicMock(); gui.tonemap_var.get.return_value = 'Mobius'
+        gui._extract_preview_images = MagicMock(return_value=('o', 'c'))
+        gui._render_preview_images = MagicMock()
+        gui._prewarm_other_frames = MagicMock()
+
+        with patch('src.gui.get_video_properties', return_value={'duration': 60.0}):
+            gui.display_frames('in.mp4')
+            gui._preview_thread.join(timeout=5)
+
+        gui._prewarm_other_frames.assert_called_once()
+        vp, duration, fi, tm, gen = gui._prewarm_other_frames.call_args[0]
+        self.assertEqual((vp, duration, fi, tm), ('in.mp4', 60.0, 0, 'mobius'))
+
+
+class TestPreviewPrewarm(unittest.TestCase):
+    """Other seek-button frames are pre-extracted so the first click is instant."""
+
+    def _gui(self, current=1, total=5, generation=3):
+        gui = _bare_gui()
+        gui.current_frame_index = current
+        gui.total_frames = total
+        gui._preview_generation = generation
+        return gui
+
+    def test_extracts_every_other_frame_position(self):
+        gui = self._gui(current=1)
+        calls = []
+        gui._extract_preview_images = lambda vp, t, fi, tm: calls.append((round(t, 3), fi, tm))
+        gui._prewarm_other_frames('in.mkv', 60.0, 1, 'mobius', generation=3)
+        # positions index/(total+1)*duration for indexes 2..5 (index 1 = current, skipped)
+        self.assertEqual(sorted(c[0] for c in calls), [20.0, 30.0, 40.0, 50.0])
+        self.assertTrue(all(c[1] == 1 and c[2] == 'mobius' for c in calls))
+
+    def test_skips_the_currently_displayed_frame(self):
+        gui = self._gui(current=3)
+        times = []
+        gui._extract_preview_images = lambda vp, t, fi, tm: times.append(round(t, 3))
+        gui._prewarm_other_frames('in.mkv', 60.0, 0, 'reinhard', generation=3)
+        self.assertEqual(len(times), 4)
+        self.assertNotIn(30.0, times)  # frame 3 -> 3/6*60 = 30 is the visible one
+
+    def test_stops_immediately_when_superseded(self):
+        gui = self._gui()
+        calls = []
+        gui._extract_preview_images = lambda *a: calls.append(a)
+        # passed generation (1) is stale vs current (3): a newer request supersedes
+        gui._prewarm_other_frames('in.mkv', 60.0, 1, 'mobius', generation=1)
+        self.assertEqual(calls, [])
+
+    def test_extraction_errors_are_swallowed(self):
+        gui = self._gui()
+        def boom(*a):
+            raise RuntimeError('decode fail')
+        gui._extract_preview_images = boom
+        # Best-effort background work: a failure must not propagate.
+        with patch('src.gui.logging'):  # silence the expected logged traceback
+            gui._prewarm_other_frames('in.mkv', 60.0, 1, 'mobius', generation=3)
+
+
+class TestPreviewWorkerThreadRender(unittest.TestCase):
     @patch('src.gui.ImageTk.PhotoImage')
     def test_render_updates_labels_and_caches(self, mock_photo):
         gui = _bare_gui()
@@ -388,6 +456,8 @@ class TestPreviewWorkerThread(unittest.TestCase):
         gui.original_image_label = MagicMock()
         gui.converted_image_label = MagicMock()
         gui.adjust_window_size = MagicMock()
+        gui._hide_preview_loading = MagicMock()
+        gui._reveal_preview = MagicMock()
 
         gui._render_preview_images(mock_img, mock_img, time_position=12.0)
 
@@ -749,6 +819,8 @@ class TestGuiErrorAndResizePaths(unittest.TestCase):
         gui.clear_preview = MagicMock()
         gui.original_title_label = MagicMock()
         gui.converted_title_label = MagicMock()
+        gui.button_container = MagicMock()
+        gui._hide_preview_loading = MagicMock()
         gui.handle_preview_error(ValueError('boom'))
         gui.error_label.config.assert_called_once()
         gui.clear_preview.assert_called_once()
@@ -810,6 +882,7 @@ class TestGuiErrorAndResizePaths(unittest.TestCase):
         gui.arrange_widgets = MagicMock()
         gui.filter_combobox = MagicMock()
         gui.tonemap_combobox = MagicMock()
+        gui._show_preview_loading = MagicMock()
 
         gui.update_frame_preview()
 
@@ -910,6 +983,150 @@ class TestGuiLifecycle(unittest.TestCase):
 
         mock_cm.cancel_conversion.assert_not_called()
         gui.root.destroy.assert_not_called()
+
+
+class TestGammaSliderJump(unittest.TestCase):
+    """Clicking the slider trough must move the knob to the click, not nudge it."""
+
+    def _slider(self, element, width=200, lo=0.1, hi=3.0):
+        slider = MagicMock()
+        slider.identify.return_value = element
+        slider.winfo_width.return_value = width
+        slider.cget.side_effect = lambda k: {'from': lo, 'to': hi}[k]
+        return slider
+
+    def test_trough_click_jumps_to_position(self):
+        gui = _bare_gui()
+        gui.gamma_slider = self._slider('Horizontal.Scale.trough')
+        event = MagicMock(); event.x = 100  # halfway across width 200
+
+        result = gui._gamma_slider_jump(event)
+
+        gui.gamma_slider.set.assert_called_once()
+        value = gui.gamma_slider.set.call_args[0][0]
+        self.assertAlmostEqual(value, 0.1 + 0.5 * (3.0 - 0.1), places=4)  # 1.55
+        self.assertEqual(result, 'break')  # suppress the default page-jump
+
+    def test_click_on_knob_falls_through_to_drag(self):
+        gui = _bare_gui()
+        gui.gamma_slider = self._slider('Horizontal.Scale.slider')
+        event = MagicMock(); event.x = 100
+
+        result = gui._gamma_slider_jump(event)
+
+        gui.gamma_slider.set.assert_not_called()  # let the native drag handle it
+        self.assertIsNone(result)
+
+    def test_click_is_clamped_within_range(self):
+        gui = _bare_gui()
+        gui.gamma_slider = self._slider('trough')
+        event = MagicMock(); event.x = 500  # past the right edge
+
+        gui._gamma_slider_jump(event)
+
+        self.assertAlmostEqual(gui.gamma_slider.set.call_args[0][0], 3.0, places=4)
+
+
+class TestPreviewLoadingIndicator(unittest.TestCase):
+    """A spinner shows while frames extract; titles/buttons hide until ready."""
+
+    def _loading_widgets(self, gui):
+        for attr in ('original_title_label', 'converted_title_label',
+                     'button_container', 'original_image_label',
+                     'converted_image_label', 'loading_frame', 'loading_bar'):
+            setattr(gui, attr, MagicMock())
+
+    def test_show_loading_hides_titles_buttons_and_starts_spinner(self):
+        gui = _bare_gui()
+        self._loading_widgets(gui)
+
+        gui._show_preview_loading()
+
+        gui.original_title_label.grid_remove.assert_called_once()
+        gui.converted_title_label.grid_remove.assert_called_once()
+        gui.button_container.grid_remove.assert_called_once()
+        gui.loading_frame.grid.assert_called_once()
+        gui.loading_bar.start.assert_called_once()
+
+    def test_reveal_shows_titles_buttons_and_images(self):
+        gui = _bare_gui()
+        self._loading_widgets(gui)
+
+        gui._reveal_preview()
+
+        gui.original_title_label.grid.assert_called_once()
+        gui.converted_title_label.grid.assert_called_once()
+        gui.button_container.grid.assert_called_once()
+        gui.original_image_label.grid.assert_called_once()
+        gui.converted_image_label.grid.assert_called_once()
+
+    def test_hide_loading_stops_spinner(self):
+        gui = _bare_gui()
+        self._loading_widgets(gui)
+
+        gui._hide_preview_loading()
+
+        gui.loading_bar.stop.assert_called_once()
+        gui.loading_frame.grid_remove.assert_called_once()
+
+    def test_render_hides_spinner_then_reveals(self):
+        gui = _bare_gui()
+        img = MagicMock(spec=Image.Image)
+        img.resize.return_value = img
+        gui.gamma_var = MagicMock(); gui.gamma_var.get.return_value = 1.0
+        gui.adjust_gamma = MagicMock(return_value=img)
+        gui.original_image_label = MagicMock()
+        gui.converted_image_label = MagicMock()
+        gui.adjust_window_size = MagicMock()
+        gui._hide_preview_loading = MagicMock()
+        gui._reveal_preview = MagicMock()
+
+        with patch('src.gui.ImageTk.PhotoImage'):
+            gui._render_preview_images(img, img, time_position=5.0)
+
+        gui._hide_preview_loading.assert_called_once()
+        gui._reveal_preview.assert_called_once()
+
+    def test_stale_render_does_not_touch_loading(self):
+        # A superseded worker (older generation) must not flip the spinner off.
+        gui = _bare_gui()
+        gui._preview_generation = 7
+        gui._hide_preview_loading = MagicMock()
+        gui._reveal_preview = MagicMock()
+
+        gui._render_preview_images('o', 'c', 1.0, generation=4)
+
+        gui._hide_preview_loading.assert_not_called()
+        gui._reveal_preview.assert_not_called()
+
+    def test_update_frame_preview_shows_loading_before_extraction(self):
+        gui = _bare_gui()
+        gui.display_image_var = MagicMock(); gui.display_image_var.get.return_value = True
+        gui.input_path_var = MagicMock(); gui.input_path_var.get.return_value = 'in.mkv'
+        gui.error_label = MagicMock()
+        gui.arrange_widgets = MagicMock()
+        gui.filter_combobox = MagicMock()
+        gui.tonemap_combobox = MagicMock()
+        gui._show_preview_loading = MagicMock()
+        gui.display_frames = MagicMock()
+
+        gui.update_frame_preview()
+
+        gui._show_preview_loading.assert_called_once()
+        gui.display_frames.assert_called_once_with('in.mkv')
+
+    def test_handle_preview_error_hides_loading(self):
+        gui = _bare_gui()
+        gui.error_label = MagicMock()
+        gui.clear_preview = MagicMock()
+        gui.original_title_label = MagicMock()
+        gui.converted_title_label = MagicMock()
+        gui.button_container = MagicMock()
+        gui._hide_preview_loading = MagicMock()
+
+        gui.handle_preview_error(ValueError('boom'))
+
+        gui._hide_preview_loading.assert_called_once()
 
 
 if __name__ == '__main__':

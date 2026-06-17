@@ -509,6 +509,8 @@ class TestGuiInteractions(unittest.TestCase):
         gui.drop_target_registered = True
         gui.input_path_var = MagicMock()
         gui.output_path_var = MagicMock()
+        gui.format_var = MagicMock()
+        gui.custom_time_var = MagicMock()
         gui.original_image = 'stale'
         gui.converted_image_base = 'stale'
         gui.button_frame = MagicMock()
@@ -560,21 +562,332 @@ class TestGuiInteractions(unittest.TestCase):
         gui.update_frame_preview.assert_called_once()
 
 
-class TestSupportedOutputPath(unittest.TestCase):
-    """WebM output is redirected to MKV (H.264 can't live in WebM)."""
+class TestOutputFormat(unittest.TestCase):
+    """The output container is an explicit user choice (MP4 / MKV / MOV)."""
 
-    def test_webm_redirects_to_mkv(self):
+    def test_output_path_takes_chosen_extension(self):
         self.assertEqual(
-            HDRConverterGUI._supported_output_path('C:/v/movie_sdr.webm'),
+            HDRConverterGUI._output_path_with_format('C:/v/movie_sdr.webm', 'MKV'),
             'C:/v/movie_sdr.mkv')
-
-    def test_webm_redirect_is_case_insensitive(self):
         self.assertEqual(
-            HDRConverterGUI._supported_output_path('movie.WEBM'), 'movie.mkv')
+            HDRConverterGUI._output_path_with_format('C:/v/movie_sdr.mkv', 'MP4'),
+            'C:/v/movie_sdr.mp4')
 
-    def test_supported_extensions_pass_through(self):
-        for path in ('a.mkv', 'a.mp4', 'a.m4v', 'a.mov', 'a.avi'):
-            self.assertEqual(HDRConverterGUI._supported_output_path(path), path)
+    def test_format_defaults_match_input_container(self):
+        self.assertEqual(HDRConverterGUI._format_for_input('a.mp4'), 'MP4')
+        self.assertEqual(HDRConverterGUI._format_for_input('a.m4v'), 'MP4')
+        self.assertEqual(HDRConverterGUI._format_for_input('a.mov'), 'MOV')
+        self.assertEqual(HDRConverterGUI._format_for_input('a.mkv'), 'MKV')
+
+    def test_unsupported_input_containers_default_to_mkv(self):
+        # WebM/AVI can't be expressed as MP4/MKV/MOV 1:1 -> safest default is MKV.
+        for path in ('a.webm', 'a.avi', 'a.unknown'):
+            self.assertEqual(HDRConverterGUI._format_for_input(path), 'MKV')
+
+
+class TestQualityRange(unittest.TestCase):
+    """The Quality slider spans CRF 17-28 on CPU and CQ 15-30 on GPU."""
+
+    def _gui(self, gpu):
+        gui = _bare_gui()
+        gui.gpu_accel_var = MagicMock(); gui.gpu_accel_var.get.return_value = gpu
+        gui.quality_slider = MagicMock()
+        gui.quality_var = MagicMock()
+        return gui
+
+    def test_cpu_range_is_17_to_28(self):
+        gui = self._gui(gpu=False)
+        gui.quality_var.get.return_value = 23
+        gui._apply_quality_range()
+        # from_=worst(28, left=smaller file), to=best(17, right=better quality)
+        gui.quality_slider.configure.assert_called_once_with(from_=28, to=17)
+
+    def test_gpu_range_is_15_to_30(self):
+        gui = self._gui(gpu=True)
+        gui.quality_var.get.return_value = 23
+        gui._apply_quality_range()
+        gui.quality_slider.configure.assert_called_once_with(from_=30, to=15)
+
+    def test_value_is_clamped_into_the_active_range(self):
+        gui = self._gui(gpu=False)        # CPU range 17..28
+        gui.quality_var.get.return_value = 14   # below CPU minimum
+        gui._apply_quality_range()
+        gui.quality_var.set.assert_called_once_with(17)
+
+
+class TestTimestampParsing(unittest.TestCase):
+    """_parse_timestamp turns an HH:MM:SS / MM:SS / SS string into seconds."""
+
+    def test_parses_seconds_only(self):
+        self.assertAlmostEqual(HDRConverterGUI._parse_timestamp('90'), 90.0)
+
+    def test_parses_minutes_seconds(self):
+        self.assertAlmostEqual(HDRConverterGUI._parse_timestamp('1:30'), 90.0)
+
+    def test_parses_hours_minutes_seconds(self):
+        self.assertAlmostEqual(HDRConverterGUI._parse_timestamp('0:01:30'), 90.0)
+        self.assertAlmostEqual(HDRConverterGUI._parse_timestamp('1:00:00'), 3600.0)
+
+    def test_parses_fractional_seconds(self):
+        self.assertAlmostEqual(HDRConverterGUI._parse_timestamp('0:00:01.5'), 1.5)
+
+    def test_rejects_empty(self):
+        with self.assertRaises(ValueError):
+            HDRConverterGUI._parse_timestamp('   ')
+
+    def test_rejects_nonnumeric(self):
+        with self.assertRaises(ValueError):
+            HDRConverterGUI._parse_timestamp('abc')
+
+    def test_rejects_too_many_parts(self):
+        with self.assertRaises(ValueError):
+            HDRConverterGUI._parse_timestamp('1:2:3:4')
+
+    def test_rejects_negative(self):
+        with self.assertRaises(ValueError):
+            HDRConverterGUI._parse_timestamp('-5')
+
+
+class TestPreviewTimePosition(unittest.TestCase):
+    """_preview_time_position picks the frame-index slot unless a custom seek is set."""
+
+    def test_uses_frame_index_by_default(self):
+        gui = _bare_gui()
+        gui.current_frame_index = 2
+        gui.total_frames = 5
+        gui.custom_time_position = None
+        self.assertAlmostEqual(gui._preview_time_position(60.0), 2 / 6 * 60)
+
+    def test_custom_time_overrides_frame_index(self):
+        gui = _bare_gui()
+        gui.current_frame_index = 2
+        gui.total_frames = 5
+        gui.custom_time_position = 12.5
+        self.assertAlmostEqual(gui._preview_time_position(60.0), 12.5)
+
+    def test_custom_time_clamped_to_duration(self):
+        gui = _bare_gui()
+        gui.current_frame_index = 1
+        gui.total_frames = 5
+        gui.custom_time_position = 999.0
+        self.assertAlmostEqual(gui._preview_time_position(60.0), 60.0)
+
+    def test_missing_attribute_falls_back_to_frame_index(self):
+        # Bare instances created before custom-seek existed must still work.
+        gui = _bare_gui()
+        gui.current_frame_index = 3
+        gui.total_frames = 5
+        self.assertAlmostEqual(gui._preview_time_position(60.0), 3 / 6 * 60)
+
+
+class TestCustomSeek(unittest.TestCase):
+    """The custom-seek entry previews an arbitrary timestamp."""
+
+    def _gui(self):
+        gui = _bare_gui()
+        gui.custom_time_var = MagicMock()
+        gui.error_label = MagicMock()
+        gui.highlight_frame_button = MagicMock()
+        gui.update_frame_preview = MagicMock()
+        gui.original_image = 'stale'
+        gui.converted_image_base = 'stale'
+        return gui
+
+    def test_valid_timestamp_sets_position_and_refreshes(self):
+        gui = self._gui()
+        gui.custom_time_var.get.return_value = '1:30'
+        gui.on_custom_seek()
+        self.assertAlmostEqual(gui.custom_time_position, 90.0)
+        self.assertIsNone(gui.original_image)   # cache invalidated
+        self.assertIsNone(gui.converted_image_base)
+        gui.highlight_frame_button.assert_called_once_with(0)  # no button selected
+        gui.update_frame_preview.assert_called_once()
+
+    def test_invalid_timestamp_shows_error_and_does_not_refresh(self):
+        gui = self._gui()
+        gui.custom_time_var.get.return_value = 'not a time'
+        gui.on_custom_seek()
+        gui.update_frame_preview.assert_not_called()
+        gui.error_label.config.assert_called_once()  # error surfaced
+        self.assertFalse(hasattr(gui, 'custom_time_position'))
+
+    def test_frame_button_click_clears_custom_seek(self):
+        gui = _bare_gui()
+        gui.custom_time_position = 42.0
+        gui.original_image = None
+        gui.converted_image_base = None
+        gui.highlight_frame_button = MagicMock()
+        gui.update_frame_preview = MagicMock()
+        gui.on_frame_button_click(2)
+        self.assertIsNone(gui.custom_time_position)  # back to frame-index mode
+
+
+class TestDropPathParsing(unittest.TestCase):
+    """_parse_drop_paths splits a tkdnd drop payload into individual file paths."""
+
+    def test_single_unbraced(self):
+        self.assertEqual(HDRConverterGUI._parse_drop_paths('C:/a.mkv'), ['C:/a.mkv'])
+
+    def test_braced_with_spaces(self):
+        self.assertEqual(HDRConverterGUI._parse_drop_paths('{C:/my movie.mkv}'),
+                         ['C:/my movie.mkv'])
+
+    def test_multiple_mixed(self):
+        self.assertEqual(
+            HDRConverterGUI._parse_drop_paths('{C:/a b.mkv} C:/c.mkv'),
+            ['C:/a b.mkv', 'C:/c.mkv'])
+
+    def test_empty_payload(self):
+        self.assertEqual(HDRConverterGUI._parse_drop_paths('   '), [])
+
+
+class TestBatchQueue(unittest.TestCase):
+    """The batch queue holds multiple files with per-file status."""
+
+    def _gui(self):
+        gui = _bare_gui()
+        gui.batch_items = []
+        gui.batch_listbox = MagicMock()
+        gui._refresh_batch_list = MagicMock()
+        return gui
+
+    def test_add_batch_files_builds_items_with_output_paths(self):
+        gui = self._gui()
+        gui.add_batch_files(['C:/v/a.mp4', 'C:/v/b.mkv'])
+        self.assertEqual(len(gui.batch_items), 2)
+        self.assertEqual(gui.batch_items[0]['input'], 'C:/v/a.mp4')
+        self.assertEqual(gui.batch_items[0]['output'], 'C:/v/a_sdr.mp4')
+        self.assertEqual(gui.batch_items[1]['output'], 'C:/v/b_sdr.mkv')
+        self.assertTrue(all(it['status'] == 'Pending' for it in gui.batch_items))
+        gui._refresh_batch_list.assert_called_once()
+
+    def test_add_batch_files_skips_empty(self):
+        gui = self._gui()
+        gui.add_batch_files(['', 'C:/v/a.mp4'])
+        self.assertEqual(len(gui.batch_items), 1)
+
+    def test_clear_batch_queue_empties(self):
+        gui = self._gui()
+        gui.batch_items = [{'status': 'Pending'}]
+        gui.clear_batch_queue()
+        self.assertEqual(gui.batch_items, [])
+        gui._refresh_batch_list.assert_called_once()
+
+    def test_remove_selected_removes_by_index(self):
+        gui = self._gui()
+        gui.batch_items = [{'input': 'a'}, {'input': 'b'}, {'input': 'c'}]
+        gui.batch_listbox.curselection.return_value = (1,)
+        gui.remove_selected_batch_item()
+        self.assertEqual([it['input'] for it in gui.batch_items], ['a', 'c'])
+
+    def test_refresh_list_shows_status_icons(self):
+        gui = _bare_gui()
+        gui.batch_listbox = MagicMock()
+        gui.batch_items = [
+            {'input': 'C:/v/a.mp4', 'status': 'Pending'},
+            {'input': 'C:/v/b.mp4', 'status': 'Done'},
+        ]
+        gui._refresh_batch_list()
+        gui.batch_listbox.delete.assert_called_once()
+        inserts = [c[0][1] for c in gui.batch_listbox.insert.call_args_list]
+        self.assertIn('a.mp4', inserts[0])
+        self.assertIn(HDRConverterGUI._STATUS_ICONS['Pending'], inserts[0])
+        self.assertIn('b.mp4', inserts[1])
+        self.assertIn(HDRConverterGUI._STATUS_ICONS['Done'], inserts[1])
+
+    def test_multi_file_drop_adds_to_batch(self):
+        gui = _bare_gui()
+        gui.drop_target_registered = True
+        gui.add_batch_files = MagicMock()
+        event = MagicMock()
+        event.data = '{C:/a.mkv} {C:/b.mkv}'
+        gui.handle_file_drop(event)
+        gui.add_batch_files.assert_called_once_with(['C:/a.mkv', 'C:/b.mkv'])
+
+
+class TestBatchProcessing(unittest.TestCase):
+    """The queue converts files sequentially, advancing on each completion."""
+
+    def _gui(self):
+        gui = _bare_gui()
+        gui.batch_items = []
+        gui._refresh_batch_list = MagicMock()
+        gui.gamma_var = MagicMock(); gui.gamma_var.get.return_value = 1.0
+        gui.gpu_accel_var = MagicMock(); gui.gpu_accel_var.get.return_value = False
+        gui.filter_options = ['Static', 'Dynamic']
+        gui.filter_var = MagicMock(); gui.filter_var.get.return_value = 'Static'
+        gui.tonemap_var = MagicMock(); gui.tonemap_var.get.return_value = 'Mobius'
+        gui.quality_var = MagicMock(); gui.quality_var.get.return_value = 20
+        gui.open_after_conversion_var = MagicMock()
+        gui.open_after_conversion_var.get.return_value = False
+        gui.progress_var = MagicMock()
+        gui.interactable_elements = []
+        gui.cancel_button = MagicMock()
+        gui.drop_target_registered = True
+        gui.unregister_drop_target = MagicMock()
+        gui.register_drop_target = MagicMock()
+        return gui
+
+    def _item(self, name, status='Pending'):
+        return {'input': f'{name}.mkv', 'output': f'{name}_sdr.mkv',
+                'format': 'MKV', 'status': status}
+
+    @patch('src.gui.conversion_manager')
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_start_batch_starts_first_pending_item(self, _isfile, mock_cm):
+        gui = self._gui()
+        gui.batch_items = [self._item('a'), self._item('b')]
+        gui.start_batch()
+        self.assertEqual(gui.batch_items[0]['status'], 'Converting')
+        mock_cm.start_conversion.assert_called_once()
+        kwargs = mock_cm.start_conversion.call_args.kwargs
+        self.assertEqual(kwargs['on_complete'], gui._on_batch_item_complete)
+        self.assertEqual(kwargs['quality'], 20)
+        gui.unregister_drop_target.assert_called_once()  # like a single-file convert
+
+    @patch('src.gui.conversion_manager')
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_complete_advances_to_next_item(self, _isfile, mock_cm):
+        gui = self._gui()
+        gui.batch_items = [self._item('a', 'Converting'), self._item('b')]
+        gui._current_batch_item = gui.batch_items[0]
+        gui._on_batch_item_complete(True)
+        self.assertEqual(gui.batch_items[0]['status'], 'Done')
+        self.assertEqual(gui.batch_items[1]['status'], 'Converting')
+        mock_cm.start_conversion.assert_called_once()  # next item kicked off
+
+    @patch('src.gui.messagebox')
+    @patch('src.gui.conversion_manager')
+    def test_complete_finishes_when_no_pending_left(self, mock_cm, mock_mb):
+        gui = self._gui()
+        gui.batch_items = [self._item('a', 'Converting')]
+        gui._current_batch_item = gui.batch_items[0]
+        gui._on_batch_item_complete(False)
+        self.assertEqual(gui.batch_items[0]['status'], 'Failed')
+        mock_cm.start_conversion.assert_not_called()  # queue exhausted
+        mock_mb.showinfo.assert_called_once()          # single summary dialog
+        gui.cancel_button.grid_remove.assert_called_once()
+        gui.register_drop_target.assert_called_once()
+
+    @patch('src.gui.messagebox')
+    @patch('src.gui.conversion_manager')
+    def test_missing_input_is_failed_and_skipped(self, mock_cm, mock_mb):
+        gui = self._gui()
+        gui.batch_items = [self._item('gone'), self._item('b')]
+        with patch('src.gui.os.path.isfile', side_effect=lambda p: 'b.mkv' in p):
+            gui.start_batch()
+        self.assertEqual(gui.batch_items[0]['status'], 'Failed')
+        self.assertEqual(gui.batch_items[1]['status'], 'Converting')
+        mock_cm.start_conversion.assert_called_once()
+
+    @patch('src.gui.conversion_manager')
+    def test_convert_video_runs_batch_when_queue_nonempty(self, mock_cm):
+        gui = self._gui()
+        gui.batch_items = [self._item('a')]
+        gui.start_batch = MagicMock()
+        gui.convert_video()
+        gui.start_batch.assert_called_once()
+        mock_cm.start_conversion.assert_not_called()  # single-file path skipped
 
 
 class TestPreviewExtractionCache(unittest.TestCase):
@@ -751,6 +1064,8 @@ class TestConvertVideoBranches(unittest.TestCase):
         gui.filter_options = ['Static', 'Dynamic']
         gui.filter_var = MagicMock(); gui.filter_var.get.return_value = 'Static'
         gui.tonemap_var = MagicMock(); gui.tonemap_var.get.return_value = 'Mobius'
+        gui.quality_var = MagicMock(); gui.quality_var.get.return_value = 21
+        gui.format_var = MagicMock(); gui.format_var.get.return_value = 'MKV'
         return gui
 
     @patch('src.gui.conversion_manager')
@@ -794,9 +1109,11 @@ class TestConvertVideoBranches(unittest.TestCase):
     @patch('src.gui.messagebox')
     @patch('src.gui.os.path.exists', return_value=False)
     @patch('src.gui.os.path.isfile', return_value=True)
-    def test_webm_output_redirects_with_notice_then_starts(self, _isfile, _exists, mock_mb, mock_cm):
+    def test_output_container_governs_extension(self, _isfile, _exists, mock_mb, mock_cm):
+        # The format dropdown now sets the container; no silent WebM notice.
         gui = self._gui()
         gui.output_path_var.get.return_value = 'out.webm'
+        gui.format_var.get.return_value = 'MKV'
         gui.drop_target_registered = False
         gui.cancel_button = MagicMock()
         gui.progress_var = MagicMock()
@@ -806,9 +1123,30 @@ class TestConvertVideoBranches(unittest.TestCase):
 
         gui.convert_video()
 
-        mock_mb.showinfo.assert_called_once()           # format-changed notice
+        mock_mb.showinfo.assert_not_called()             # no surprise dialog
         gui.output_path_var.set.assert_called_with('out.mkv')
         mock_cm.start_conversion.assert_called_once()
+
+    @patch('src.gui.conversion_manager')
+    @patch('src.gui.messagebox')
+    @patch('src.gui.os.path.exists', return_value=False)
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_convert_passes_quality_and_container(self, _isfile, _exists, mock_mb, mock_cm):
+        gui = self._gui()
+        gui.quality_var.get.return_value = 19
+        gui.format_var.get.return_value = 'MP4'
+        gui.drop_target_registered = False
+        gui.cancel_button = MagicMock()
+        gui.progress_var = MagicMock()
+        gui.interactable_elements = []
+        gui.open_after_conversion_var = MagicMock()
+        gui.open_after_conversion_var.get.return_value = False
+
+        gui.convert_video()
+
+        _, kwargs = mock_cm.start_conversion.call_args
+        self.assertEqual(kwargs['quality'], 19)
+        gui.output_path_var.set.assert_called_with('out.mp4')  # MP4 container forced
 
 
 class TestGuiErrorAndResizePaths(unittest.TestCase):
@@ -928,6 +1266,18 @@ class TestGuiLifecycle(unittest.TestCase):
         gui.root.drop_target_unregister.reset_mock()
         gui.unregister_drop_target()
         gui.root.drop_target_unregister.assert_not_called()
+
+    @patch('src.gui.save_settings')
+    def test_save_current_settings_includes_quality(self, mock_save):
+        gui = _bare_gui()
+        for name, val in [('gamma_var', 1.0), ('filter_var', 'Static'),
+                          ('tonemap_var', 'Mobius'), ('gpu_accel_var', False),
+                          ('open_after_conversion_var', False), ('display_image_var', True),
+                          ('quality_var', 21)]:
+            m = MagicMock(); m.get.return_value = val
+            setattr(gui, name, m)
+        gui._save_current_settings()
+        self.assertEqual(mock_save.call_args[0][0]['quality'], 21)
 
     @patch('src.gui.conversion_manager')
     def test_cancel_conversion_delegates_to_manager(self, mock_cm):

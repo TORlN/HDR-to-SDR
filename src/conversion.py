@@ -21,7 +21,8 @@ class ConversionManager:
 
     def start_conversion(self, input_path, output_path, gamma, use_gpu, selected_filter_index,
                          progress_var, interactable_elements, gui_instance,
-                         open_after_conversion, cancel_button, tonemapper='reinhard'):
+                         open_after_conversion, cancel_button, tonemapper='reinhard',
+                         quality=23, on_complete=None):
         if not self.verify_paths(input_path, output_path):
             return
 
@@ -29,6 +30,10 @@ class ConversionManager:
         output_path = os.path.abspath(output_path)
         self.cancelled = False
         self.use_gpu = use_gpu  # Store the use_gpu state
+        self._quality = quality  # remembered so a GPU->CPU retry keeps the same quality
+        # When set (batch/queue runs), the per-file success/error dialog is
+        # suppressed and this callback drives queue progression instead.
+        self._on_complete = on_complete
 
         properties = get_video_properties(input_path)
         if properties is None:
@@ -49,7 +54,7 @@ class ConversionManager:
 
         cmd = self.construct_ffmpeg_command(
             input_path, output_path, gamma, properties, use_gpu, selected_filter_index,
-            tonemapper=tonemapper
+            tonemapper=tonemapper, quality=quality
         )
         self.process = self.start_ffmpeg_process(cmd)
 
@@ -74,8 +79,8 @@ class ConversionManager:
         for element in elements:
             element.config(state="normal")
 
-    def construct_ffmpeg_command(self, input_path, output_path, gamma, properties, use_gpu, 
-                               selected_filter_index, tonemapper='reinhard'):
+    def construct_ffmpeg_command(self, input_path, output_path, gamma, properties, use_gpu,
+                               selected_filter_index, tonemapper='reinhard', quality=23):
         cmd = [
             FFMPEG_EXECUTABLE,
             '-loglevel', 'info',
@@ -140,14 +145,16 @@ class ConversionManager:
         cmd += ['-map', '0:a?']   # Map all audio streams if they exist
         cmd += subtitle_map_args
 
-        # Encoding settings
+        # Encoding settings. `quality` is the user's quality slider value: CRF for
+        # libx264, CQ/global_quality/QP for the GPU encoders (lower = better).
+        quality = str(quality)
         if active_encoder == 'h264_nvenc':
             cmd += [
                 '-c:v', 'h264_nvenc',
                 '-preset', 'p4',
                 '-tune', 'hq',
                 '-rc', 'vbr',
-                '-cq', '20',
+                '-cq', quality,
                 '-b:v', str(properties['bit_rate']),
                 '-maxrate', str(int(properties['bit_rate'] * 1)),
                 '-bufsize', str(int(properties['bit_rate'] * 2))
@@ -156,12 +163,13 @@ class ConversionManager:
             cmd += [
                 '-c:v', 'h264_amf',
                 '-quality', 'balanced',
-                '-b:v', str(properties['bit_rate']),
+                '-rc', 'cqp',
+                '-qp_i', quality, '-qp_p', quality, '-qp_b', quality,
             ]
         elif active_encoder == 'h264_qsv':
             cmd += [
                 '-c:v', 'h264_qsv',
-                '-global_quality', '23',
+                '-global_quality', quality,
                 '-b:v', str(properties['bit_rate']),
             ]
         else:
@@ -169,7 +177,7 @@ class ConversionManager:
                 '-c:v', 'libx264',
                 '-preset', 'veryfast',
                 '-tune', 'film',
-                '-crf', '23',
+                '-crf', quality,
                 '-b:v', str(properties['bit_rate'])
             ]
 
@@ -307,6 +315,8 @@ class ConversionManager:
             open_after_conversion=open_after_conversion,
             cancel_button=cancel_button,
             tonemapper=tonemapper,  # preserve the user's tonemapper across the retry
+            quality=getattr(self, '_quality', 23),  # and the quality setting
+            on_complete=getattr(self, '_on_complete', None),  # and the batch hook
         )
 
     def parse_time(self, time_str):
@@ -316,6 +326,19 @@ class ConversionManager:
     def handle_completion(self, gui_instance, interactable_elements, cancel_button,
                           output_path, open_after_conversion, error_messages):
         def _handle():
+            on_complete = getattr(self, '_on_complete', None)
+            if on_complete is not None:
+                # Batch/queue mode: no per-file dialog and the UI stays disabled
+                # between files. The callback marks status and advances the queue
+                # (the final summary + UI re-enable happen when the queue drains).
+                success = bool(self.process and self.process.returncode == 0)
+                if not success and not self.cancelled:
+                    tail = '\n'.join(error_messages[-50:])
+                    logging.error(f"Batch item failed with code "
+                                  f"{self.process.returncode}: {tail}")
+                on_complete(success)
+                return
+
             if self.process and self.process.returncode == 0:
                 logging.info("Conversion completed successfully.")
                 messagebox.showinfo(

@@ -10,6 +10,7 @@ from PIL import Image, ImageTk
 from tkinterdnd2 import DND_FILES
 import logging
 import threading
+import re
 
 DEFAULT_MIN_SIZE = (550, 150)
 PREVIEW_SIZE = (960, 540)  # on-screen size of each preview pane
@@ -41,6 +42,12 @@ class HDRConverterGUI:
         self.filter_options = ['Static', 'Dynamic']
         self.filter_var = tk.StringVar(value=_s['filter'])
         self.tonemap_var = tk.StringVar(value=_s['tonemapper'])
+        self.quality_var = tk.IntVar(value=_s['quality'])
+        self.format_var = tk.StringVar(value='MKV')  # output container; set from input on load
+        self.custom_time_var = tk.StringVar()  # HH:MM:SS for the custom-seek entry
+        self.custom_time_position = None  # absolute seconds when a custom seek is active
+        self.batch_items = []  # queued files: {input, output, format, status}
+        self._current_batch_item = None  # the item currently converting
         self.tooltip = None  # Add this line for tooltip tracking
         self.current_frame_index = 1  # Default to 1 (1/6 of the video)
         self.total_frames = 5
@@ -106,6 +113,7 @@ class HDRConverterGUI:
                 'gpu_accel': self.gpu_accel_var.get(),
                 'open_after_conversion': self.open_after_conversion_var.get(),
                 'display_preview': self.display_image_var.get(),
+                'quality': self.quality_var.get(),
             })
         except AttributeError:
             pass  # bare/partially-initialized instance (test contexts only)
@@ -131,6 +139,13 @@ class HDRConverterGUI:
         ttk.Label(self.control_frame, text="Output File:").grid(row=1, column=0, sticky=tk.W)
         self.output_entry = ttk.Entry(self.control_frame, textvariable=self.output_path_var, width=40)
         self.output_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=(10, 10))
+        # Output container dropdown: an explicit MP4/MKV/MOV choice (col 2).
+        self.format_combobox = ttk.Combobox(
+            self.control_frame, textvariable=self.format_var,
+            values=self._OUTPUT_FORMATS, state='readonly', width=6
+        )
+        self.format_combobox.grid(row=1, column=2, sticky=tk.W, padx=(5, 0))
+        self.format_combobox.bind('<<ComboboxSelected>>', self._on_format_change)
 
         # Gamma Adjustment Widgets
         ttk.Label(self.control_frame, text="Gamma:").grid(row=2, column=0, sticky=tk.W)
@@ -236,6 +251,24 @@ class HDRConverterGUI:
         tooltip_text = ("Static: Basic HDR to SDR conversion with fixed parameters\n"
                        "Dynamic: Adaptive conversion that analyzes video brightness")
 
+        # Quality slider: one control whose range depends on CPU (CRF 17-28) vs
+        # GPU (CQ 15-30) mode. Driven by a command that snaps to whole steps (the
+        # scale emits floats); the value label and range are kept in sync.
+        quality_frame = ttk.Frame(self.control_frame)
+        quality_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(5, 0))
+        ttk.Label(quality_frame, text="Quality:").grid(row=0, column=0, sticky=tk.W)
+        self.quality_slider = ttk.Scale(
+            quality_frame, from_=self._CRF_RANGE[0], to=self._CRF_RANGE[1],
+            orient=tk.HORIZONTAL, length=200, command=self._on_quality_change
+        )
+        self.quality_slider.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 8))
+        self.quality_slider.set(self.quality_var.get())
+        self.quality_value_label = ttk.Label(quality_frame, textvariable=self.quality_var, width=3)
+        self.quality_value_label.grid(row=0, column=2, sticky=tk.W)
+        ttk.Label(quality_frame, text="Smaller File  ◀──▶  Better Quality",
+                  foreground='gray').grid(row=1, column=1, columnspan=2, sticky=tk.W, padx=(10, 0))
+        quality_frame.columnconfigure(1, weight=1)
+
         # Image Frame for Displaying Images
         self.image_frame = ttk.Frame(self.root, padding="10")
         self.image_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
@@ -267,10 +300,21 @@ class HDRConverterGUI:
         style.configure('Selected.TButton', relief='sunken')  # Style for selected button
 
         for i in range(1, 6):
-            btn = ttk.Button(self.button_container, text=str(i), 
+            btn = ttk.Button(self.button_container, text=str(i),
                            command=lambda idx=i: self.on_frame_button_click(idx))
             btn.grid(row=i-1, column=0, pady=5)
             self.frame_buttons.append(btn)
+
+        # Custom seek: type an exact HH:MM:SS (or MM:SS / SS) below the numbered
+        # buttons to preview any moment. Lives in button_container so it hides and
+        # reveals together with the frame buttons during loading.
+        self.custom_time_entry = ttk.Entry(
+            self.button_container, textvariable=self.custom_time_var, width=8)
+        self.custom_time_entry.grid(row=self.total_frames, column=0, pady=(10, 2))
+        self.custom_time_entry.bind('<Return>', self.on_custom_seek)
+        self.custom_seek_button = ttk.Button(
+            self.button_container, text="Go", width=4, command=self.on_custom_seek)
+        self.custom_seek_button.grid(row=self.total_frames + 1, column=0, pady=(0, 5))
 
         # Loading indicator shown over the image area while a preview frame is
         # being extracted (the titles, frame buttons and images stay hidden until
@@ -285,12 +329,12 @@ class HDRConverterGUI:
 
         # Info strip: shows video metadata (resolution, fps, codec, HDR/SDR) after a file is loaded
         self.info_label = ttk.Label(self.control_frame, text='', foreground='gray')
-        self.info_label.grid(row=5, column=0, columnspan=3, sticky=tk.W, padx=(0, 10))
+        self.info_label.grid(row=6, column=0, columnspan=3, sticky=tk.W, padx=(0, 10))
         self.info_label.grid_remove()  # hidden until a file is loaded
 
-        # Error Label (row 6 so it doesn't overlap the display/tonemap row 4)
+        # Error Label (row 7 so it doesn't overlap the quality/info rows)
         self.error_label = ttk.Label(self.control_frame, text='', foreground='red')
-        self.error_label.grid(row=6, column=0, columnspan=3, sticky=tk.W)
+        self.error_label.grid(row=7, column=0, columnspan=3, sticky=tk.W)
 
         # Button Frame
         self.button_frame = ttk.Frame(self.image_frame)
@@ -331,12 +375,46 @@ class HDRConverterGUI:
         self.progress_bar = ttk.Progressbar(self.image_frame, variable=self.progress_var, maximum=100)
         self.progress_bar.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E))
 
+        # Batch Queue panel: add several files and convert them one after another.
+        # Always visible so files can be queued before selecting a single preview.
+        self.batch_frame = ttk.LabelFrame(self.root, text="Batch Queue", padding="10")
+        self.batch_frame.grid(row=3, column=0, padx=10, pady=(0, 10), sticky=(tk.W, tk.E))
+        self.batch_frame.columnconfigure(0, weight=1)
+
+        batch_buttons = ttk.Frame(self.batch_frame)
+        batch_buttons.grid(row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
+        self.add_files_button = ttk.Button(
+            batch_buttons, text="Add Files", command=self.browse_batch_files)
+        self.add_files_button.grid(row=0, column=0, padx=(0, 5))
+        self.remove_batch_button = ttk.Button(
+            batch_buttons, text="Remove", command=self.remove_selected_batch_item)
+        self.remove_batch_button.grid(row=0, column=1, padx=(0, 5))
+        self.clear_batch_button = ttk.Button(
+            batch_buttons, text="Clear", command=self.clear_batch_queue)
+        self.clear_batch_button.grid(row=0, column=2, padx=(0, 5))
+        ttk.Label(self.batch_frame, foreground='gray',
+                  text="Queued files convert sequentially when you press Convert.").grid(
+            row=0, column=2, sticky=tk.E)
+
+        self.batch_listbox = tk.Listbox(self.batch_frame, height=4, activestyle='none')
+        self.batch_listbox.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E))
+        batch_scroll = ttk.Scrollbar(
+            self.batch_frame, orient=tk.VERTICAL, command=self.batch_listbox.yview)
+        batch_scroll.grid(row=1, column=2, sticky=(tk.N, tk.S))
+        self.batch_listbox.config(yscrollcommand=batch_scroll.set)
+
         # List of interactable elements
         self.interactable_elements = [
             self.browse_button, self.convert_button, self.gamma_slider,
             self.open_after_conversion_checkbutton, self.display_image_checkbutton,
-            self.input_entry, self.output_entry, self.gamma_entry, self.gpu_accel_checkbutton
+            self.input_entry, self.output_entry, self.gamma_entry, self.gpu_accel_checkbutton,
+            self.quality_slider, self.format_combobox,
+            self.custom_time_entry, self.custom_seek_button,
+            self.add_files_button, self.clear_batch_button, self.remove_batch_button
         ]
+
+        # Set the Quality slider's range for the loaded CPU/GPU mode.
+        self._apply_quality_range()
 
     def configure_grid(self):
         """Configure the grid layout for the main window and frames."""
@@ -344,7 +422,7 @@ class HDRConverterGUI:
         self.control_frame.columnconfigure(0, weight=0)
         self.control_frame.columnconfigure(1, weight=1)
         self.control_frame.columnconfigure(2, weight=0)
-        for i in range(7):
+        for i in range(8):
             self.control_frame.rowconfigure(i, weight=0)
 
         # Image Frame Grid Configuration
@@ -377,12 +455,15 @@ class HDRConverterGUI:
         )
         if file_path:
             self.input_path_var.set(file_path)
-            # Keep the same extension for output file (WebM is redirected to MKV).
-            base, ext = os.path.splitext(file_path)
-            self.output_path_var.set(self._supported_output_path(f"{base}_sdr{ext}"))
+            # Default the output container to the input's, then build the path.
+            fmt = self._format_for_input(file_path)
+            self.format_var.set(fmt)
+            base = os.path.splitext(file_path)[0]
+            self.output_path_var.set(self._output_path_with_format(f"{base}_sdr", fmt))
             # Reset the cached images
             self.original_image = None
             self.converted_image_base = None
+            self._reset_custom_seek()  # a new file starts on the numbered frames
             self._reset_preview_cache()
             self._update_info_label(file_path)
             self.button_frame.grid()
@@ -391,19 +472,100 @@ class HDRConverterGUI:
             self.update_frame_preview()
             self.highlight_frame_button(1)  # Highlight button 1 when image is loaded
 
-    @staticmethod
-    def _supported_output_path(output_path):
-        """Redirect WebM output to MKV.
+    # Output containers the user can pick. The converter always encodes H.264, so
+    # all three can hold the video; subtitle/audio handling per container lives in
+    # ConversionManager._container_stream_args.
+    _OUTPUT_FORMATS = ['MP4', 'MKV', 'MOV']
+    _INPUT_FORMAT_MAP = {'mp4': 'MP4', 'm4v': 'MP4', 'mov': 'MOV', 'mkv': 'MKV'}
 
-        The converter always encodes H.264 video, which the WebM container cannot
-        hold (it only accepts VP8/VP9/AV1). Rather than fail the conversion, save
-        to MKV instead -- same video, a container that accepts it. Other
-        extensions are returned unchanged.
+    @staticmethod
+    def _output_path_with_format(path, fmt):
+        """Return ``path`` with its extension replaced by the chosen container."""
+        base = os.path.splitext(path)[0]
+        return f"{base}.{fmt.lower()}"
+
+    @classmethod
+    def _format_for_input(cls, input_path):
+        """Pick a sensible default output container from the input's extension.
+
+        WebM/AVI (and anything unrecognized) can't map 1:1 to MP4/MKV/MOV, so they
+        default to MKV, which holds essentially any stream.
         """
-        base, ext = os.path.splitext(output_path)
-        if ext.lower() == '.webm':
-            return base + '.mkv'
-        return output_path
+        ext = os.path.splitext(input_path)[1].lower().lstrip('.')
+        return cls._INPUT_FORMAT_MAP.get(ext, 'MKV')
+
+    # Quality slider ranges as (worst, best): left end = smaller file (higher
+    # CRF/CQ), right end = better quality (lower). CPU uses CRF, GPU uses CQ.
+    _CRF_RANGE = (28, 17)
+    _CQ_RANGE = (30, 15)
+
+    def _apply_quality_range(self):
+        """Set the Quality slider's range for the current CPU/GPU mode and clamp."""
+        worst, best = self._CQ_RANGE if self.gpu_accel_var.get() else self._CRF_RANGE
+        self.quality_slider.configure(from_=worst, to=best)
+        lo, hi = min(worst, best), max(worst, best)
+        clamped = max(lo, min(hi, self.quality_var.get()))
+        self.quality_var.set(clamped)
+        self.quality_slider.set(clamped)  # keep the knob in sync with the clamp
+
+    def _on_quality_change(self, value):
+        """Snap the Quality slider to whole CRF/CQ steps (the scale emits floats)."""
+        self.quality_var.set(int(float(value)))
+
+    @staticmethod
+    def _parse_timestamp(text):
+        """Parse 'HH:MM:SS', 'MM:SS', or 'SS' (fractions allowed) into seconds.
+
+        Raises ValueError on empty input, non-numeric parts, a negative value, or
+        more than three colon-separated fields.
+        """
+        text = text.strip()
+        if not text:
+            raise ValueError("empty timestamp")
+        parts = text.split(':')
+        if len(parts) > 3:
+            raise ValueError("too many ':' separators")
+        seconds = 0.0
+        for part in parts:
+            value = float(part)  # raises ValueError on non-numeric
+            if value < 0:
+                raise ValueError("negative time component")
+            seconds = seconds * 60 + value
+        return seconds
+
+    def _preview_time_position(self, duration):
+        """Return the preview's seek position, honoring an active custom seek.
+
+        Defaults to the current frame button's evenly-spaced slot; a custom seek
+        (set via the HH:MM:SS entry) overrides it, clamped to the video duration.
+        """
+        custom = getattr(self, 'custom_time_position', None)
+        if custom is not None:
+            return max(0.0, min(custom, duration))
+        return (self.current_frame_index / (self.total_frames + 1)) * duration
+
+    def on_custom_seek(self, event=None):
+        """Preview the timestamp typed in the custom-seek entry."""
+        try:
+            seconds = self._parse_timestamp(self.custom_time_var.get())
+        except ValueError:
+            self.error_label.config(text="Invalid time. Use HH:MM:SS, MM:SS, or seconds.")
+            return
+        self.error_label.config(text="")
+        self.custom_time_position = seconds
+        self.original_image = None       # invalidate the cached visible frame
+        self.converted_image_base = None
+        self.highlight_frame_button(0)   # no numbered button corresponds to a custom seek
+        self.update_frame_preview()
+
+    def _on_format_change(self, event=None):
+        """Rewrite the output path's extension when the container dropdown changes."""
+        current = self.output_path_var.get()
+        if current:
+            self.output_path_var.set(
+                self._output_path_with_format(current, self.format_var.get()))
+        if hasattr(self, 'format_combobox'):
+            self.format_combobox.selection_clear()
 
     @staticmethod
     def _build_info_text(properties):
@@ -517,15 +679,25 @@ class HDRConverterGUI:
         try:
             if not self.drop_target_registered:
                 return  # Ignore drop if not registered
-            file_path = event.data.strip('{}')
+            paths = self._parse_drop_paths(event.data)
+            if not paths:
+                return
+            if len(paths) > 1:
+                # Several files dropped at once -> queue them for batch conversion.
+                self.add_batch_files(paths)
+                return
+            file_path = paths[0]
             if file_path:
                 self.input_path_var.set(file_path)
-                # Keep the same extension for output file (WebM is redirected to MKV).
-                base, ext = os.path.splitext(file_path)
-                self.output_path_var.set(self._supported_output_path(f"{base}_sdr{ext}"))
+                # Default the output container to the input's, then build the path.
+                fmt = self._format_for_input(file_path)
+                self.format_var.set(fmt)
+                base = os.path.splitext(file_path)[0]
+                self.output_path_var.set(self._output_path_with_format(f"{base}_sdr", fmt))
                 # Reset the cached images
                 self.original_image = None
                 self.converted_image_base = None
+                self._reset_custom_seek()  # a new file starts on the numbered frames
                 self._reset_preview_cache()
                 self._update_info_label(file_path)
                 self.button_frame.grid()
@@ -538,7 +710,14 @@ class HDRConverterGUI:
             messagebox.showerror("Error", f"Error handling file drop: {e}")
 
     def convert_video(self):
-        """Convert the video from HDR to SDR."""
+        """Convert the video from HDR to SDR.
+
+        When the batch queue holds files, Convert runs the queue sequentially;
+        otherwise it converts the single input/output selected above.
+        """
+        if getattr(self, 'batch_items', None):
+            self.start_batch()
+            return
         try:
             # Validate the raw values before normpath -- os.path.normpath('') is
             # '.', which would otherwise mask an empty field as a bogus path.
@@ -552,17 +731,12 @@ class HDRConverterGUI:
             use_gpu = self.gpu_accel_var.get()  # Get GPU acceleration state
             selected_filter_index = self.filter_options.index(self.filter_var.get())
             tonemapper = self.tonemap_var.get().lower()  # Convert tonemapper to lowercase
+            quality = int(self.quality_var.get())
 
-            # WebM can't hold the H.264 video we encode; redirect to MKV and keep
-            # the displayed path in sync so success/open use the real output file.
-            redirected = self._supported_output_path(output_path)
-            if redirected != output_path:
-                output_path = redirected
-                self.output_path_var.set(output_path)
-                messagebox.showinfo(
-                    "Output format changed",
-                    "WebM can't store the H.264 video this converter produces, "
-                    "so the output will be saved as .mkv instead.")
+            # The chosen container (format dropdown) governs the output extension,
+            # regardless of the input format; keep the displayed path in sync.
+            output_path = self._output_path_with_format(output_path, self.format_var.get())
+            self.output_path_var.set(output_path)
 
             if not os.path.isfile(input_path):
                 messagebox.showerror("Error", f"Input file not found: {input_path}")
@@ -587,7 +761,8 @@ class HDRConverterGUI:
                 input_path, output_path, gamma, use_gpu, selected_filter_index,
                 self.progress_var, self.interactable_elements, self,
                 self.open_after_conversion_var.get(), self.cancel_button,
-                tonemapper=tonemapper  # Pass tonemapper to the conversion
+                tonemapper=tonemapper,  # Pass tonemapper to the conversion
+                quality=quality
             )
         except Exception as e:
             logging.error(f"Conversion error: {str(e)}", exc_info=True)
@@ -600,6 +775,131 @@ class HDRConverterGUI:
             self, self.interactable_elements, self.cancel_button
         )
         # The drop target is re-registered within the ConversionManager's cancel_conversion method
+
+    # --- Batch queue (sequential multi-file conversion) ---
+
+    _STATUS_ICONS = {'Pending': '•', 'Converting': '▶', 'Done': '✓', 'Failed': '✗'}
+
+    @staticmethod
+    def _parse_drop_paths(data):
+        """Split a tkdnd drop payload into individual file paths.
+
+        tkdnd joins multiple dropped paths with spaces and wraps any path that
+        contains spaces in ``{}``. Returns the list of unwrapped, non-empty paths.
+        """
+        tokens = re.findall(r'\{[^}]*\}|\S+', data or '')
+        return [t.strip('{}') for t in tokens if t.strip('{}')]
+
+    def browse_batch_files(self):
+        """Open a multi-select dialog and add the chosen files to the queue."""
+        paths = filedialog.askopenfilenames(
+            filetypes=[
+                ("All Video Files", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v"),
+                ("All files", "*.*"),
+            ]
+        )
+        if paths:
+            self.add_batch_files(paths)
+
+    def add_batch_files(self, paths):
+        """Append video files to the batch queue, building each output path."""
+        for path in paths:
+            if not path:
+                continue
+            fmt = self._format_for_input(path)
+            base = os.path.splitext(path)[0]
+            output_path = self._output_path_with_format(f"{base}_sdr", fmt)
+            self.batch_items.append(
+                {'input': path, 'output': output_path, 'format': fmt, 'status': 'Pending'})
+        self._refresh_batch_list()
+
+    def remove_selected_batch_item(self):
+        """Remove the highlighted queue entries."""
+        if not hasattr(self, 'batch_listbox'):
+            return
+        for index in sorted(self.batch_listbox.curselection(), reverse=True):
+            del self.batch_items[index]
+        self._refresh_batch_list()
+
+    def clear_batch_queue(self):
+        """Empty the batch queue."""
+        self.batch_items = []
+        self._refresh_batch_list()
+
+    def _refresh_batch_list(self):
+        """Redraw the queue listbox from batch_items with per-file status icons."""
+        if not hasattr(self, 'batch_listbox'):
+            return
+        self.batch_listbox.delete(0, tk.END)
+        for item in self.batch_items:
+            icon = self._STATUS_ICONS.get(item['status'], '•')
+            self.batch_listbox.insert(tk.END, f"{icon}  {os.path.basename(item['input'])}")
+
+    def start_batch(self):
+        """Begin converting the queued files one after another."""
+        if not self.batch_items:
+            return False
+        # Mirror the single-file convert path: free the drop target and reveal
+        # the cancel button (start_conversion disables the rest of the UI).
+        if self.drop_target_registered:
+            self.unregister_drop_target()
+        self.cancel_button.grid()
+        return self._start_next_batch_item()
+
+    def _start_next_batch_item(self):
+        """Start the next Pending item, or finish the batch if none remain."""
+        item = next((it for it in self.batch_items if it['status'] == 'Pending'), None)
+        if item is None:
+            self._finish_batch()
+            return False
+
+        input_path = os.path.normpath(item['input'])
+        if not os.path.isfile(input_path):
+            logging.error(f"Batch input not found, skipping: {input_path}")
+            item['status'] = 'Failed'
+            self._refresh_batch_list()
+            return self._start_next_batch_item()  # skip to the next file
+
+        item['status'] = 'Converting'
+        self._current_batch_item = item
+        self._refresh_batch_list()
+        self.progress_var.set(0)
+
+        output_path = os.path.normpath(item['output'])
+        gamma = self.gamma_var.get()
+        use_gpu = self.gpu_accel_var.get()
+        selected_filter_index = self.filter_options.index(self.filter_var.get())
+        tonemapper = self.tonemap_var.get().lower()
+        quality = int(self.quality_var.get())
+
+        conversion_manager.start_conversion(
+            input_path, output_path, gamma, use_gpu, selected_filter_index,
+            self.progress_var, self.interactable_elements, self,
+            self.open_after_conversion_var.get(), self.cancel_button,
+            tonemapper=tonemapper, quality=quality,
+            on_complete=self._on_batch_item_complete
+        )
+        return True
+
+    def _on_batch_item_complete(self, success):
+        """Mark the finished item and advance the queue (runs on the main thread)."""
+        if self._current_batch_item is not None:
+            self._current_batch_item['status'] = 'Done' if success else 'Failed'
+        self._current_batch_item = None
+        self._refresh_batch_list()
+        self._start_next_batch_item()  # finishes the batch when nothing is left
+
+    def _finish_batch(self):
+        """Re-enable the UI and report a one-line summary once the queue drains."""
+        done = sum(1 for it in self.batch_items if it['status'] == 'Done')
+        failed = sum(1 for it in self.batch_items if it['status'] == 'Failed')
+        for element in self.interactable_elements:
+            element.config(state='normal')
+        self.cancel_button.grid_remove()
+        if hasattr(self, 'register_drop_target'):
+            self.register_drop_target()
+        messagebox.showinfo(
+            "Batch Complete", f"Batch finished: {done} succeeded, {failed} failed.")
 
     def register_drop_target(self):
         """Register the drag and drop target."""
@@ -634,6 +934,9 @@ class HDRConverterGUI:
                 self.gpu_accel_var.set(False)
                 logging.error(f"Error checking GPU acceleration: {e}")
                 messagebox.showerror("Error", f"An error occurred while checking GPU acceleration:\n{e}")
+        # CPU and GPU use different quality scales (CRF vs CQ); re-range the slider.
+        if hasattr(self, 'quality_slider'):
+            self._apply_quality_range()
 
     def show_tooltip(self, event, text):
         """Show tooltip window at mouse position"""
@@ -659,6 +962,7 @@ class HDRConverterGUI:
     def on_frame_button_click(self, index):
         """Handle frame button clicks to update the displayed frames."""
         self.current_frame_index = index
+        self.custom_time_position = None  # a numbered button overrides a custom seek
         self.original_image = None  # Reset cached images
         self.converted_image_base = None
         self.highlight_frame_button(index)  # Update button highlight
@@ -694,7 +998,7 @@ class HDRConverterGUI:
         def worker():
             try:
                 duration = self._get_duration(video_path)
-                time_position = (self.current_frame_index / (self.total_frames + 1)) * duration
+                time_position = self._preview_time_position(duration)
                 original, converted = self._extract_preview_images(
                     video_path, time_position, selected_filter_index, tonemapper
                 )
@@ -806,6 +1110,11 @@ class HDRConverterGUI:
                 self._extract_preview_images(video_path, time_position, filter_index, tonemapper)
             except Exception:
                 logging.exception("preview pre-warm failed for frame %s", index)
+
+    def _reset_custom_seek(self):
+        """Clear any active custom seek so a newly loaded file starts on frame 1."""
+        self.custom_time_position = None
+        self.custom_time_var.set('')
 
     def _reset_preview_cache(self):
         """Drop all cached preview frames (e.g. when a new file is loaded)."""

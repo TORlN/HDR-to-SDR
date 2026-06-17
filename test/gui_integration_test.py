@@ -92,10 +92,27 @@ class TestConstruction(_GuiTestBase):
         self.assertAlmostEqual(float(self.gui.gamma_slider.cget('from')), 0.1)
         self.assertAlmostEqual(float(self.gui.gamma_slider.cget('to')), 3.0)
 
+    def test_format_combobox_values_and_readonly(self):
+        self.assertEqual(tuple(self.gui.format_combobox.cget('values')),
+                         ('MP4', 'MKV', 'MOV'))
+        self.assertEqual(str(self.gui.format_combobox.cget('state')), 'readonly')
+
+    def test_quality_slider_defaults_to_cpu_crf_range(self):
+        # GPU off by default -> CRF range, worst(28) on the left, best(17) on the right.
+        self.assertAlmostEqual(float(self.gui.quality_slider.cget('from')), 28)
+        self.assertAlmostEqual(float(self.gui.quality_slider.cget('to')), 17)
+
     def test_five_numbered_frame_buttons(self):
         self.assertEqual(len(self.gui.frame_buttons), 5)
         self.assertEqual([b.cget('text') for b in self.gui.frame_buttons],
                          ['1', '2', '3', '4', '5'])
+
+    def test_custom_seek_entry_and_button_exist(self):
+        self.assertIsInstance(self.gui.custom_time_entry, ttk.Entry)
+        self.assertIsInstance(self.gui.custom_seek_button, ttk.Button)
+        # Both live inside the frame-button container so they hide/reveal with it.
+        self.assertEqual(self.gui.custom_time_entry.winfo_parent(),
+                         str(self.gui.button_container))
 
     def test_entries_bound_to_path_variables(self):
         self.assertEqual(self.gui.input_entry.cget('textvariable'),
@@ -110,11 +127,42 @@ class TestConstruction(_GuiTestBase):
             self.gui.display_image_checkbutton, self.gui.input_entry,
             self.gui.output_entry, self.gui.gamma_entry,
             self.gui.gpu_accel_checkbutton,
+            self.gui.quality_slider, self.gui.format_combobox,
+            self.gui.custom_time_entry, self.gui.custom_seek_button,
+            self.gui.add_files_button, self.gui.clear_batch_button,
+            self.gui.remove_batch_button,
         }
         self.assertEqual(set(self.gui.interactable_elements), expected)
 
     def test_drop_target_registered_on_start(self):
         self.assertTrue(self.gui.drop_target_registered)
+
+
+class TestBatchQueueWidgets(_GuiTestBase):
+    """Real-widget checks for the batch (multi-file) queue panel."""
+
+    def test_batch_widgets_exist(self):
+        self.assertIsInstance(self.gui.batch_listbox, tk.Listbox)
+        self.assertIsInstance(self.gui.add_files_button, ttk.Button)
+        self.assertIsInstance(self.gui.clear_batch_button, ttk.Button)
+        self.assertEqual(self.gui.batch_items, [])
+
+    def test_add_batch_files_populates_listbox(self):
+        self.gui.add_batch_files(['C:/v/a.mp4', 'C:/v/b.mkv'])
+        self.assertEqual(self.gui.batch_listbox.size(), 2)
+        self.assertIn('a.mp4', self.gui.batch_listbox.get(0))
+
+    def test_clear_batch_empties_listbox(self):
+        self.gui.add_batch_files(['C:/v/a.mp4'])
+        self.gui.clear_batch_queue()
+        self.assertEqual(self.gui.batch_listbox.size(), 0)
+        self.assertEqual(self.gui.batch_items, [])
+
+    @patch('src.gui.filedialog.askopenfilenames')
+    def test_browse_batch_files_adds_selection(self, mock_dialog):
+        mock_dialog.return_value = ('C:/v/a.mkv', 'C:/v/b.mkv')
+        self.gui.browse_batch_files()
+        self.assertEqual(self.gui.batch_listbox.size(), 2)
 
 
 class TestStateAndLayout(_GuiTestBase):
@@ -223,6 +271,26 @@ class TestUserActions(_GuiTestBase):
         self.gui.update_frame_preview()  # must not call ffmpeg or raise
         self.assertEqual(tuple(self.root.minsize()), DEFAULT_MIN_SIZE)
         self.assertEqual(self.gui.button_container.grid_info(), {})
+
+    def test_custom_seek_sets_position_and_previews(self):
+        self.gui.custom_time_var.set('0:00:10')
+        with patch.object(self.gui, 'update_frame_preview') as mock_update:
+            self.gui.on_custom_seek()
+        self.assertAlmostEqual(self.gui.custom_time_position, 10.0)
+        mock_update.assert_called_once()
+
+    def test_custom_seek_invalid_shows_error(self):
+        self.gui.custom_time_var.set('garbage')
+        with patch.object(self.gui, 'update_frame_preview') as mock_update:
+            self.gui.on_custom_seek()
+        mock_update.assert_not_called()
+        self.assertTrue(self.gui.error_label.cget('text'))
+
+    def test_frame_button_click_clears_custom_seek(self):
+        self.gui.custom_time_position = 33.0
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.on_frame_button_click(2)
+        self.assertIsNone(self.gui.custom_time_position)
 
     def test_frame_button_click_updates_index_and_highlight(self):
         self.gui.original_image = 'cached'

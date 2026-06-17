@@ -63,6 +63,12 @@ class TestHDRConverterGUI(TestCase):
         for element in mock_elements:
             setattr(self.gui, element, MagicMock())
 
+        # Give these their own mocks (the suite shares one mock for all StringVars,
+        # which would otherwise interleave format_var.set calls with input/output).
+        self.gui.format_var = MagicMock(get=MagicMock(return_value='MKV'))
+        self.gui.quality_var = MagicMock(get=MagicMock(return_value=23))
+        self.gui.custom_time_var = MagicMock(get=MagicMock(return_value=''))
+
     def tearDown(self):
         """Clean up after each test."""
         # Stop all patches

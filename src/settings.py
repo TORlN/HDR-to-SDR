@@ -15,6 +15,7 @@ DEFAULTS = {
     'gpu_accel': False,
     'open_after_conversion': False,
     'display_preview': True,
+    'quality': 23,  # encoder quality (CRF for CPU / CQ for GPU); lower = better
 }
 
 

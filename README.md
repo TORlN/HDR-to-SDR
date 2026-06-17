@@ -9,14 +9,18 @@ This is a simple GUI application to convert HDR videos to SDR using FFmpeg. The 
 ## Features
 
 - **Select Input Video Files**: Choose from video files with extensions `.mp4`, `.mkv`, and `.mov`.
-- **Drag and Drop Files**: Simply drag and drop your video files into the application window for easy selection.
+- **Drag and Drop Files**: Drag and drop a single file to preview it, or drop several at once to queue them for batch conversion.
 - **Specify Output File Name**: Define the name and location of the converted SDR video file.
 - **Adjust Gamma Value**: Use a slider to adjust the gamma value for the conversion process, allowing for fine-tuning of the output video.
 - **Monitor Conversion Progress**: A progress bar displays the current status of the conversion process.
 - **Open Output File**: Option to automatically open the output file after the conversion is complete.
-- **GPU Acceleration**: Utilize NVIDIA GPUs for faster conversion using CUDA if available.
+- **GPU Acceleration**: Utilize NVIDIA, AMD, or Intel GPUs for faster conversion (h264_nvenc / h264_amf / h264_qsv) if available.
 - **Conversion Methods**: Choose between a static or dynamic conversion method. Static uses the same conversion no matter the file, dynamic takes the brightness of the original into account.
 - **Tonemappers**: Choose between 3 different tonemappers Reinhard, Mobius, and Hable.
+- **Quality Control**: A single Quality slider (CRF 17–28 on CPU, CQ 15–30 on GPU) to trade file size against quality.
+- **Output Container**: Explicitly choose the output container (MP4 / MKV / MOV); it defaults to match the input.
+- **Custom Frame Preview**: Jump the preview to any exact timestamp (HH:MM:SS / MM:SS / seconds), in addition to the five evenly-spaced frame buttons.
+- **Batch Conversion Queue**: Add multiple files (via "Add Files" or by dropping several at once) and convert them sequentially, with a per-file status list and a summary when the queue finishes.
 
 ## Requirements
 

@@ -665,6 +665,53 @@ class TestConversionManager(unittest.TestCase):
         self.assertNotIn('h264_nvenc', cmd)
         self.assertNotIn('-hwaccel', cmd)
 
+    _QUALITY_PROPS = {
+        "width": 1920, "height": 1080, "bit_rate": 4000000, "codec_name": 'h264',
+        "frame_rate": 30.0, "audio_codec": 'aac', "audio_bit_rate": 128000,
+        "duration": 120.0, "subtitle_streams": [],
+    }
+
+    def test_quality_sets_crf_for_cpu(self):
+        manager = ConversionManager()
+        cmd = manager.construct_ffmpeg_command(
+            'in.mp4', 'out.mkv', 2.2, self._QUALITY_PROPS, False, 0,
+            tonemapper='reinhard', quality=19)
+        self.assertEqual(cmd[cmd.index('-crf') + 1], '19')
+
+    def test_quality_default_is_23(self):
+        manager = ConversionManager()
+        cmd = manager.construct_ffmpeg_command(
+            'in.mp4', 'out.mkv', 2.2, self._QUALITY_PROPS, False, 0, tonemapper='reinhard')
+        self.assertEqual(cmd[cmd.index('-crf') + 1], '23')
+
+    @patch('src.conversion.get_maxfall', return_value=10)
+    def test_quality_sets_cq_for_nvenc(self, _mf):
+        manager = ConversionManager()
+        manager._gpu_encoder = 'h264_nvenc'
+        cmd = manager.construct_ffmpeg_command(
+            'in.mp4', 'out.mkv', 2.2, self._QUALITY_PROPS, True, 1,
+            tonemapper='reinhard', quality=18)
+        self.assertEqual(cmd[cmd.index('-cq') + 1], '18')
+
+    def test_quality_sets_global_quality_for_qsv(self):
+        manager = ConversionManager()
+        manager._gpu_encoder = 'h264_qsv'
+        cmd = manager.construct_ffmpeg_command(
+            'in.mp4', 'out.mkv', 2.2, self._QUALITY_PROPS, True, 0,
+            tonemapper='reinhard', quality=27)
+        self.assertEqual(cmd[cmd.index('-global_quality') + 1], '27')
+
+    @patch('src.conversion.platform.system', return_value='Windows')
+    def test_quality_sets_qp_for_amf(self, _plat):
+        manager = ConversionManager()
+        manager._gpu_encoder = 'h264_amf'
+        cmd = manager.construct_ffmpeg_command(
+            'in.mp4', 'out.mkv', 2.2, self._QUALITY_PROPS, True, 0,
+            tonemapper='reinhard', quality=22)
+        self.assertIn('h264_amf', cmd)
+        self.assertEqual(cmd[cmd.index('-qp_i') + 1], '22')
+        self.assertEqual(cmd[cmd.index('-qp_p') + 1], '22')
+
     def test_is_gpu_available_encoder_list_fails(self):
         """is_gpu_available returns False when encoder detection finds nothing."""
         manager = ConversionManager()
@@ -713,6 +760,65 @@ class TestConversionManager(unittest.TestCase):
         mock_popen.assert_not_called()  # never launched ffmpeg
         self.assertIsNone(manager.process)
         root.destroy()
+
+
+class TestBatchCompletionHook(unittest.TestCase):
+    """An on_complete callback replaces the per-file dialog for batch (queue) runs."""
+
+    _PROPS = {
+        "width": 1920, "height": 1080, "bit_rate": 4000000, "codec_name": 'h264',
+        "frame_rate": 30.0, "audio_codec": 'aac', "audio_bit_rate": 128000,
+        "duration": 10.0, "subtitle_streams": [],
+    }
+
+    def _gui(self):
+        gui = MagicMock()
+        gui.root.after = MagicMock(side_effect=lambda delay, func: func())
+        return gui
+
+    @patch('src.conversion.messagebox')
+    @patch('src.conversion.webbrowser.open')
+    def test_on_complete_called_instead_of_dialog_on_success(self, mock_open, mock_mb):
+        manager = ConversionManager()
+        manager.process = MagicMock(); manager.process.returncode = 0
+        manager._on_complete = MagicMock()
+        manager.handle_completion(self._gui(), [], MagicMock(), 'out.mkv', False, [])
+        manager._on_complete.assert_called_once_with(True)
+        mock_mb.showinfo.assert_not_called()  # no per-file success dialog
+
+    @patch('src.conversion.messagebox')
+    def test_on_complete_called_with_false_on_failure(self, mock_mb):
+        manager = ConversionManager()
+        manager.process = MagicMock(); manager.process.returncode = 1
+        manager.cancelled = False
+        manager._on_complete = MagicMock()
+        manager.handle_completion(self._gui(), [], MagicMock(), 'out.mkv', False, ['err'])
+        manager._on_complete.assert_called_once_with(False)
+        mock_mb.showerror.assert_not_called()  # no per-file error dialog
+
+    @patch('src.conversion.messagebox')
+    def test_on_complete_does_not_enable_ui_between_files(self, mock_mb):
+        # Between queued files the UI must stay disabled and the cancel button shown.
+        manager = ConversionManager()
+        manager.process = MagicMock(); manager.process.returncode = 0
+        manager._on_complete = MagicMock()
+        cancel = MagicMock()
+        with patch.object(manager, 'enable_ui') as mock_enable:
+            manager.handle_completion(self._gui(), ['e'], cancel, 'out.mkv', False, [])
+        mock_enable.assert_not_called()
+        cancel.grid_remove.assert_not_called()
+
+    @patch('src.conversion.get_video_properties')
+    @patch('src.conversion.subprocess.Popen')
+    def test_start_conversion_stores_on_complete(self, mock_popen, mock_props):
+        mock_props.return_value = dict(self._PROPS)
+        proc = MagicMock(); proc.stderr = iter([]); proc.returncode = 0
+        mock_popen.return_value = proc
+        manager = ConversionManager()
+        done = MagicMock()
+        manager.start_conversion('in.mp4', 'out.mkv', 1.0, False, 0, MagicMock(),
+                                 [], self._gui(), False, MagicMock(), on_complete=done)
+        self.assertIs(manager._on_complete, done)
 
 
 class TestDetectGpuEncoder(unittest.TestCase):

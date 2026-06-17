@@ -128,6 +128,16 @@ class TestConstruction(_GuiTestBase):
         self.assertEqual(self.gui.custom_seek_label.winfo_parent(),
                          str(self.gui.button_container))
 
+    def test_button_column_does_not_stretch(self):
+        # Issue 1: when the window is maximized the frame-button column must not
+        # absorb a third of the width (which left the buttons floating far to the
+        # right of the converted image). The two image columns share the stretch;
+        # the button column stays at its natural width, hugging the preview.
+        cfg = self.gui.image_frame.grid_columnconfigure
+        self.assertEqual(int(cfg(0)['weight']), 1)
+        self.assertEqual(int(cfg(1)['weight']), 1)
+        self.assertEqual(int(cfg(2)['weight']), 0)
+
     def test_entries_bound_to_path_variables(self):
         self.assertEqual(self.gui.input_entry.cget('textvariable'),
                          str(self.gui.input_path_var))
@@ -188,6 +198,18 @@ class TestBatchQueueWidgets(_GuiTestBase):
         self.assertIsInstance(self.gui.add_files_button, ttk.Button)
         self.assertIsInstance(self.gui.clear_batch_button, ttk.Button)
         self.assertEqual(self.gui.batch_items, [])
+
+    def test_batch_listbox_shows_several_rows(self):
+        # Issue 2: a 4-row list made browsing a queue cramped. Show enough rows
+        # that a handful of queued files are visible without scrolling.
+        self.assertGreaterEqual(int(self.gui.batch_listbox.cget('height')), 8)
+
+    def test_batch_listbox_fills_frame_vertically(self):
+        # The listbox stretches to fill the batch panel (N/S) so the scrollbar
+        # spans the whole list, not just four rows of it.
+        info = self.gui.batch_listbox.grid_info()
+        self.assertIn('n', str(info.get('sticky', '')))
+        self.assertIn('s', str(info.get('sticky', '')))
 
     def test_add_batch_files_populates_listbox(self):
         with patch.object(self.gui, 'update_frame_preview'):  # don't spawn ffmpeg

@@ -426,11 +426,14 @@ class HDRConverterGUI:
                   text="Add or drop multiple files to convert them in sequence.").grid(
             row=1, column=0, columnspan=2, sticky=tk.W, pady=(4, 4))
 
-        self.batch_listbox = tk.Listbox(self.batch_frame, height=4, activestyle='none')
-        self.batch_listbox.grid(row=2, column=0, sticky=(tk.W, tk.E))
+        # A taller list that fills the panel vertically, so a queue of several
+        # files is visible at a glance and the scrollbar spans the whole list.
+        self.batch_listbox = tk.Listbox(self.batch_frame, height=8, activestyle='none')
+        self.batch_listbox.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         batch_scroll = ttk.Scrollbar(
             self.batch_frame, orient=tk.VERTICAL, command=self.batch_listbox.yview)
         batch_scroll.grid(row=2, column=1, sticky=(tk.N, tk.S))
+        self.batch_frame.rowconfigure(2, weight=1)
         self.batch_listbox.config(yscrollcommand=batch_scroll.set)
         self.batch_listbox.bind('<<ListboxSelect>>', self.on_batch_item_select)
 
@@ -459,7 +462,10 @@ class HDRConverterGUI:
         # Image Frame Grid Configuration
         self.image_frame.columnconfigure(0, weight=1)
         self.image_frame.columnconfigure(1, weight=1)
-        self.image_frame.columnconfigure(2, weight=1)
+        # The frame-button column keeps its natural width (weight 0) so it hugs
+        # the converted preview instead of floating in an empty third of the
+        # window when maximized; the two image columns share the extra width.
+        self.image_frame.columnconfigure(2, weight=0)
         self.image_frame.rowconfigure(0, weight=0)
         self.image_frame.rowconfigure(1, weight=1)
         self.image_frame.rowconfigure(2, weight=0)

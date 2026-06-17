@@ -138,6 +138,34 @@ class TestConstruction(_GuiTestBase):
         self.assertTrue(self.gui.drop_target_registered)
 
 
+class TestDarkTheme(_GuiTestBase):
+    """The color-based dark clam theme (replaces image-based sv_ttk)."""
+
+    def test_uses_clam_engine(self):
+        self.assertEqual(ttk.Style(self.root).theme_use(), 'clam')
+
+    def test_window_background_is_dark(self):
+        from src.dark_theme import BG
+        self.assertEqual(str(self.root.cget('background')), BG)
+
+    def test_listbox_inherits_dark_colors(self):
+        # apply_dark_theme runs before create_widgets, so the classic Listbox
+        # picks up the dark field color from the option database.
+        from src.dark_theme import FIELD
+        self.assertEqual(str(self.gui.batch_listbox.cget('background')), FIELD)
+
+    def test_slider_knob_is_a_single_accent_color(self):
+        # Fill, border and both bevel colors are pinned to the accent so the
+        # gamma/quality knobs render as one flat color (no "blue edges, dark
+        # middle" bevel).
+        from src.dark_theme import ACCENT
+        style = ttk.Style(self.root)
+        for key in ('background', 'bordercolor', 'lightcolor', 'darkcolor'):
+            self.assertEqual(
+                str(style.lookup('Horizontal.TScale', key)), ACCENT,
+                f"Horizontal.TScale {key} should be the accent color")
+
+
 class TestBatchQueueWidgets(_GuiTestBase):
     """Real-widget checks for the batch (multi-file) queue panel."""
 

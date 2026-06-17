@@ -2,7 +2,7 @@ import os
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from tkinter import ttk
-import sv_ttk
+from dark_theme import apply_dark_theme
 from conversion import conversion_manager  # Import the conversion_manager instance
 from utils import extract_frame_with_conversion, extract_frame, TONEMAP, get_video_properties, clear_maxfall_cache
 from settings import load_settings, save_settings
@@ -13,7 +13,11 @@ import threading
 import re
 
 DEFAULT_MIN_SIZE = (550, 150)
-PREVIEW_SIZE = (960, 540)  # on-screen size of each preview pane
+PREVIEW_SIZE = (960, 540)       # native (max) on-screen size of each preview pane
+_MIN_PANE_W = 240               # don't shrink a preview pane narrower than this
+_RESIZE_DEBOUNCE_MS = 60        # coalesce a burst of resize events into one rescale
+_PREVIEW_WIDTH_RESERVE = 160    # frame-button column + inter-pane padding (per row)
+_PREVIEW_HEIGHT_RESERVE = 130   # titles + frame-button row + progress bar + padding
 
 class HDRConverterGUI:
     """
@@ -24,7 +28,11 @@ class HDRConverterGUI:
         """Initialize the GUI and set up all components."""
         self.root = root
         self.root.title("HDR to SDR Converter")
-        sv_ttk.set_theme("dark")
+        # Color-based dark theme (clam). Applied before create_widgets so the
+        # classic Listbox inherits the dark colors via the option database. Not
+        # image-based (unlike sv_ttk), so the widget tree doesn't re-render from
+        # PNG assets on every resize tick -- keeps window resizing smooth.
+        apply_dark_theme(self.root)
         self.root.minsize(*DEFAULT_MIN_SIZE)
         self.root.resizable(True, True)  # let the user size the window now that it holds more
 
@@ -72,6 +80,11 @@ class HDRConverterGUI:
 
         # Bind the window close event
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+        # Rescale the previews to follow the window (debounced -- see handler).
+        self._resize_job = None
+        self._window_auto_fitted = False
+        self.root.bind('<Configure>', self._on_window_configure)
 
         self.cancelled = False  # Flag to track cancellation
 
@@ -406,6 +419,7 @@ class HDRConverterGUI:
             self.batch_frame, orient=tk.VERTICAL, command=self.batch_listbox.yview)
         batch_scroll.grid(row=2, column=1, sticky=(tk.N, tk.S))
         self.batch_listbox.config(yscrollcommand=batch_scroll.set)
+        self.batch_listbox.bind('<<ListboxSelect>>', self.on_batch_item_select)
 
         # List of interactable elements
         self.interactable_elements = [
@@ -665,26 +679,101 @@ class HDRConverterGUI:
         self.root.minsize(*DEFAULT_MIN_SIZE)
 
     def adjust_window_size(self):
-        """Adjust the window size to fit the displayed images."""
-        self.root.geometry("")  # Reset window size to fit images
+        """Fit the window to the previews on first reveal; keep minsize small.
+
+        The minimum size stays at ``DEFAULT_MIN_SIZE`` so the user can always
+        drag the window smaller than the previews -- the panes rescale to follow
+        (see :meth:`_on_window_configure`). We only shrink-wrap the geometry
+        once, on the first preview, so re-rendering a later frame never yanks a
+        window the user has since resized.
+        """
+        self.root.minsize(*DEFAULT_MIN_SIZE)
+        if getattr(self, '_window_auto_fitted', False):
+            return
+
+        self.root.geometry("")  # shrink-wrap to the first previews
         self.root.update_idletasks()
-        
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
-        new_width = self.root.winfo_width()
-        new_height = self.root.winfo_height()
-
-        if new_width > screen_width or new_height > screen_height:
-            # Reduce image size to fit within screen bounds
-            max_width = screen_width - 100  # Leave some margin
-            max_height = screen_height - 100  # Leave some margin
-            self.resize_images(max_width, max_height)
-            self.root.geometry("")  # Reset window size again after resizing images
+        if self.root.winfo_width() > screen_width or self.root.winfo_height() > screen_height:
+            # First previews already overflow the screen -> shrink them to fit.
+            self.resize_images(screen_width - 100, screen_height - 100)
+            self.root.geometry("")
             self.root.update_idletasks()
-            new_width = self.root.winfo_width()
-            new_height = self.root.winfo_height()
+        self._window_auto_fitted = True
 
-        self.root.minsize(new_width, new_height)
+    @staticmethod
+    def _fit_preview_pane(available_width, available_height):
+        """Size one 16:9 preview pane to fit a box, never upscaling past source.
+
+        Scales to the available width (clamped to ``_MIN_PANE_W`` so a pane never
+        collapses), then trims to the available height when the height-limited
+        box is the tighter constraint. Returns a (w, h) of at least 1px.
+        """
+        src_w, src_h = PREVIEW_SIZE
+        w = min(src_w, max(_MIN_PANE_W, int(available_width)))
+        h = round(w * src_h / src_w)
+        if available_height and h > available_height:
+            h = int(available_height)
+            w = round(h * src_w / src_h)
+        return (max(1, int(w)), max(1, int(h)))
+
+    def _preview_target_size(self):
+        """Per-pane preview size derived from the live image-frame geometry."""
+        if not hasattr(self, 'image_frame'):
+            return PREVIEW_SIZE
+        frame_w = self.image_frame.winfo_width()
+        frame_h = self.image_frame.winfo_height()
+        if not isinstance(frame_w, int) or frame_w <= 1:
+            return PREVIEW_SIZE  # not laid out yet (or mocked) -> native size
+        avail_w = (frame_w - _PREVIEW_WIDTH_RESERVE) / 2  # two panes share the width
+        avail_h = frame_h - _PREVIEW_HEIGHT_RESERVE if frame_h > 1 else 0
+        return self._fit_preview_pane(avail_w, avail_h)
+
+    def _render_preview_at_size(self, size):
+        """(Re)render both panes at ``size``; SDR pane keeps the live gamma.
+
+        Resizes from the cached PREVIEW_SIZE bases (``original_image`` and
+        ``converted_image_base``) -- a couple of PIL resizes, no ffmpeg.
+        """
+        if getattr(self, 'original_image', None) is None:
+            return  # nothing extracted yet
+        self._preview_render_size = size
+        original_resized = self.original_image.resize(size, Image.LANCZOS)
+        original_photo = ImageTk.PhotoImage(original_resized)
+        self.original_image_label.config(image=original_photo)
+        self.original_image_label.image = original_photo
+        if self.converted_image_base is not None:
+            self._converted_preview_base = self.converted_image_base.resize(size, Image.LANCZOS)
+            self._apply_gamma_to_preview()
+
+    def _on_window_configure(self, event=None):
+        """Coalesce live resize events into a single debounced preview rescale.
+
+        Dragging the window edge fires ``<Configure>`` rapidly; rescaling two
+        images on every event is what makes resizing feel laggy. Cancel any
+        pending rescale and schedule one shortly after the last event, so the
+        previews snap to the new size once the drag settles instead of thrashing
+        PIL on every pixel. Ignores Configure events from child widgets and does
+        nothing when there is no preview on screen to rescale.
+        """
+        if event is not None and event.widget is not self.root:
+            return
+        if getattr(self, 'original_image', None) is None:
+            return
+        if getattr(self, '_resize_job', None) is not None:
+            try:
+                self.root.after_cancel(self._resize_job)
+            except Exception:
+                pass
+        self._resize_job = self.root.after(_RESIZE_DEBOUNCE_MS, self._rescale_preview_to_window)
+
+    def _rescale_preview_to_window(self):
+        """Re-render the previews at the size that fits the settled window."""
+        self._resize_job = None
+        if getattr(self, 'original_image', None) is None:
+            return
+        self._render_preview_at_size(self._preview_target_size())
 
     def resize_images(self, max_width, max_height):
         """Resize images to fit within the specified maximum width and height."""
@@ -885,6 +974,24 @@ class HDRConverterGUI:
             self._load_input_file(self.batch_items[0]['input'])
         else:
             self._unload_input_file()
+
+    def on_batch_item_select(self, event=None):
+        """Preview the queue entry the user clicks.
+
+        Selecting a file other than the one already on screen loads it into the
+        input/output boxes and renders its frames, exactly as if it had been
+        browsed. Re-selecting the file already shown is a no-op (no spinner
+        flash), and an empty selection is ignored.
+        """
+        if not hasattr(self, 'batch_listbox') or not hasattr(self, 'input_path_var'):
+            return
+        selection = self.batch_listbox.curselection()
+        if not selection:
+            return
+        item = self.batch_items[selection[0]]
+        if self.input_path_var.get() == item['input']:
+            return  # already showing this file -- skip the reload
+        self._load_input_file(item['input'])
 
     def _refresh_batch_list(self):
         """Redraw the queue listbox from batch_items with per-file status icons."""
@@ -1206,17 +1313,11 @@ class HDRConverterGUI:
         self.last_time_position = time_position
         self.converted_image_base = converted_image_base
 
-        # Resize and display original image
-        original_image_resized = original_image.resize(PREVIEW_SIZE, Image.LANCZOS)
-        original_photo = ImageTk.PhotoImage(original_image_resized)
-        self.original_image_label.config(image=original_photo)
-        self.original_image_label.image = original_photo
-
-        # Cache the converted frame at display size (gamma not yet applied) so a
-        # gamma change only re-runs the cheap PIL gamma pass -- no ffmpeg, no
-        # resizing a full-resolution frame, no window resize.
-        self._converted_preview_base = converted_image_base.resize(PREVIEW_SIZE, Image.LANCZOS)
-        self._apply_gamma_to_preview()
+        # Render both panes at the size that fits the current window (responsive:
+        # shrinks with the window instead of a fixed 960x540). This also re-caches
+        # the display-sized SDR base so a later gamma change only re-runs the
+        # cheap PIL gamma pass -- no ffmpeg, no full-res resize.
+        self._render_preview_at_size(self._preview_target_size())
 
         self._reveal_preview()  # show titles, frame buttons and the images
         self.adjust_window_size()  # Ensure window size is adjusted after displaying images

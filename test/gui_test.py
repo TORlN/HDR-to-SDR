@@ -32,7 +32,10 @@ class TestHDRConverterGUI(TestCase):
         gui_patches = {
             'string_var': patch('src.gui.tk.StringVar', return_value=self.mock_string_var),
             'double_var': patch('src.gui.tk.DoubleVar', return_value=self.mock_progress_var),
-            'bool_var': patch('src.gui.tk.BooleanVar', return_value=self.mock_bool_var)
+            'bool_var': patch('src.gui.tk.BooleanVar', return_value=self.mock_bool_var),
+            # quality_var is an IntVar; mock it too (the dark theme no longer
+            # creates a hidden default root that used to satisfy real Var creation).
+            'int_var': patch('src.gui.tk.IntVar', return_value=self.mock_progress_var),
         }
 
         # Combine all patches

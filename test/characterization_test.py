@@ -935,6 +935,35 @@ class TestBatchQueue(unittest.TestCase):
         gui.image_frame.grid_remove.assert_called_once()
         gui.update_frame_preview.assert_called_once()
 
+    # --- Clicking a queue entry previews that file (selection -> preview) ---
+
+    def test_click_other_queue_item_loads_it_into_preview(self):
+        gui = self._gui()
+        gui.input_path_var = MagicMock(); gui.input_path_var.get.return_value = 'a.mkv'
+        gui._load_input_file = MagicMock()
+        gui.batch_items = [{'input': 'a.mkv'}, {'input': 'b.mkv'}]
+        gui.batch_listbox.curselection.return_value = (1,)  # click the second file
+        gui.on_batch_item_select()
+        gui._load_input_file.assert_called_once_with('b.mkv')
+
+    def test_click_already_shown_item_does_not_reload(self):
+        gui = self._gui()
+        gui.input_path_var = MagicMock(); gui.input_path_var.get.return_value = 'a.mkv'
+        gui._load_input_file = MagicMock()
+        gui.batch_items = [{'input': 'a.mkv'}, {'input': 'b.mkv'}]
+        gui.batch_listbox.curselection.return_value = (0,)  # the file already on screen
+        gui.on_batch_item_select()
+        gui._load_input_file.assert_not_called()  # no spinner flash for the shown file
+
+    def test_click_with_no_selection_is_a_noop(self):
+        gui = self._gui()
+        gui.input_path_var = MagicMock(); gui.input_path_var.get.return_value = 'a.mkv'
+        gui._load_input_file = MagicMock()
+        gui.batch_items = [{'input': 'a.mkv'}]
+        gui.batch_listbox.curselection.return_value = ()  # selection cleared
+        gui.on_batch_item_select()
+        gui._load_input_file.assert_not_called()
+
 
 class TestBatchProcessing(unittest.TestCase):
     """The queue converts files sequentially, advancing on each completion."""
@@ -1402,14 +1431,125 @@ class TestGuiErrorAndResizePaths(unittest.TestCase):
     def test_adjust_window_size_shrinks_when_exceeding_screen(self):
         gui = _bare_gui()
         gui.root = MagicMock()
+        gui._window_auto_fitted = False
         gui.root.winfo_screenwidth.return_value = 1920
         gui.root.winfo_screenheight.return_value = 1080
-        gui.root.winfo_width.side_effect = [5000, 1800]   # oversize, then fixed
-        gui.root.winfo_height.side_effect = [3000, 1000]
+        gui.root.winfo_width.return_value = 5000   # oversize -> trigger image shrink
+        gui.root.winfo_height.return_value = 3000
         gui.resize_images = MagicMock()
         gui.adjust_window_size()
-        gui.resize_images.assert_called_once()
-        gui.root.minsize.assert_called_with(1800, 1000)
+        gui.resize_images.assert_called_once_with(1820, 980)  # screen minus margin
+        # minsize stays small so the user can always drag below the previews
+        gui.root.minsize.assert_called_with(*DEFAULT_MIN_SIZE)
+
+    def test_adjust_window_size_only_auto_fits_once(self):
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui._window_auto_fitted = True  # already fitted on a prior preview
+        gui.adjust_window_size()
+        gui.root.geometry.assert_not_called()  # don't yank a user-resized window
+        gui.root.minsize.assert_called_once_with(*DEFAULT_MIN_SIZE)
+
+
+class TestResponsivePreview(unittest.TestCase):
+    """Previews scale to the window (issue 1) with a debounced resize."""
+
+    def test_fit_pane_caps_at_source_size(self):
+        # Plenty of room -> never upscale past the native preview size.
+        self.assertEqual(
+            HDRConverterGUI._fit_preview_pane(5000, 5000), PREVIEW_SIZE)
+
+    def test_fit_pane_scales_to_width(self):
+        w, h = HDRConverterGUI._fit_preview_pane(600, 5000)
+        self.assertEqual(w, 600)
+        self.assertEqual(h, round(600 * PREVIEW_SIZE[1] / PREVIEW_SIZE[0]))  # 16:9
+
+    def test_fit_pane_is_height_limited(self):
+        w, h = HDRConverterGUI._fit_preview_pane(900, 300)
+        self.assertEqual(h, 300)
+        self.assertEqual(w, round(300 * PREVIEW_SIZE[0] / PREVIEW_SIZE[1]))
+
+    def test_fit_pane_clamps_to_minimum_width(self):
+        from src.gui import _MIN_PANE_W
+        w, _h = HDRConverterGUI._fit_preview_pane(10, 5000)
+        self.assertEqual(w, _MIN_PANE_W)  # don't shrink a pane to nothing
+
+    @patch('src.gui.ImageTk.PhotoImage')
+    def test_render_at_size_resizes_both_panes(self, _mock_photo):
+        gui = _bare_gui()
+        img = MagicMock(spec=Image.Image)
+        img.resize.return_value = img
+        gui.original_image = img
+        gui.converted_image_base = img
+        gui.original_image_label = MagicMock()
+        gui.converted_image_label = MagicMock()
+        gui._apply_gamma_to_preview = MagicMock()
+        gui._render_preview_at_size((400, 225))
+        img.resize.assert_any_call((400, 225), Image.LANCZOS)
+        gui.original_image_label.config.assert_called_once()
+        # SDR base re-cached at the new size, then gamma applied on top.
+        gui._apply_gamma_to_preview.assert_called_once()
+
+    def test_render_at_size_noop_without_frame(self):
+        gui = _bare_gui()
+        gui.original_image = None
+        gui.original_image_label = MagicMock()
+        gui._render_preview_at_size((400, 225))
+        gui.original_image_label.config.assert_not_called()
+
+    def test_configure_ignores_child_widget_events(self):
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui.original_image = MagicMock()
+        event = MagicMock(); event.widget = MagicMock()  # a child, not the root
+        gui._on_window_configure(event)
+        gui.root.after.assert_not_called()
+
+    def test_configure_noop_without_preview(self):
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui.original_image = None
+        event = MagicMock(); event.widget = gui.root
+        gui._on_window_configure(event)
+        gui.root.after.assert_not_called()
+
+    def test_configure_debounces_pending_rescale(self):
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui.root.after.return_value = 'job2'
+        gui.original_image = MagicMock()
+        gui._resize_job = 'job1'
+        event = MagicMock(); event.widget = gui.root
+        gui._on_window_configure(event)
+        gui.root.after_cancel.assert_called_once_with('job1')  # cancel the stale one
+        gui.root.after.assert_called_once()
+        self.assertEqual(gui._resize_job, 'job2')
+
+    def test_target_size_from_live_frame_geometry(self):
+        gui = _bare_gui()
+        gui.image_frame = MagicMock()
+        gui.image_frame.winfo_width.return_value = 1360
+        gui.image_frame.winfo_height.return_value = 800
+        w, h = gui._preview_target_size()
+        # (1360 - reserve)/2 per pane, capped at source, 16:9.
+        self.assertLessEqual(w, PREVIEW_SIZE[0])
+        self.assertEqual(h, round(w * PREVIEW_SIZE[1] / PREVIEW_SIZE[0]))
+
+    def test_target_size_falls_back_before_layout(self):
+        gui = _bare_gui()
+        gui.image_frame = MagicMock()
+        gui.image_frame.winfo_width.return_value = 1  # not laid out yet
+        self.assertEqual(gui._preview_target_size(), PREVIEW_SIZE)
+
+    def test_rescale_renders_at_target_size(self):
+        gui = _bare_gui()
+        gui.original_image = MagicMock()
+        gui._preview_target_size = MagicMock(return_value=(320, 180))
+        gui._render_preview_at_size = MagicMock()
+        gui._resize_job = 'job'
+        gui._rescale_preview_to_window()
+        gui._render_preview_at_size.assert_called_once_with((320, 180))
+        self.assertIsNone(gui._resize_job)
 
 
 class TestGuiLifecycle(unittest.TestCase):

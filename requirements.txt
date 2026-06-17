@@ -1,5 +1,4 @@
 ffmpeg-python==0.2.0
 pillow==12.2.0
 tkinterdnd2==0.5.0
-sv-ttk==2.6.1
 pyinstaller==6.21.0

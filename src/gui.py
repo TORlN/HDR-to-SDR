@@ -26,7 +26,7 @@ class HDRConverterGUI:
         self.root.title("HDR to SDR Converter")
         sv_ttk.set_theme("dark")
         self.root.minsize(*DEFAULT_MIN_SIZE)
-        self.root.resizable(False, False)
+        self.root.resizable(True, True)  # let the user size the window now that it holds more
 
         # Variables
         _s = load_settings()
@@ -133,7 +133,7 @@ class HDRConverterGUI:
             text="Browse",
             command=self.select_file
         )
-        self.browse_button.grid(row=0, column=2, sticky=tk.W, padx=(5, 0))
+        self.browse_button.grid(row=0, column=2, sticky=(tk.W, tk.E), padx=(5, 0))
 
         # Output File Widgets
         ttk.Label(self.control_frame, text="Output File:").grid(row=1, column=0, sticky=tk.W)
@@ -144,7 +144,7 @@ class HDRConverterGUI:
             self.control_frame, textvariable=self.format_var,
             values=self._OUTPUT_FORMATS, state='readonly', width=6
         )
-        self.format_combobox.grid(row=1, column=2, sticky=tk.W, padx=(5, 0))
+        self.format_combobox.grid(row=1, column=2, sticky=(tk.W, tk.E), padx=(5, 0))
         self.format_combobox.bind('<<ComboboxSelected>>', self._on_format_change)
 
         # Gamma Adjustment Widgets
@@ -162,7 +162,7 @@ class HDRConverterGUI:
         # Make a click on the trough jump the knob to the click (see _gamma_slider_jump).
         self.gamma_slider.bind('<Button-1>', self._gamma_slider_jump)
         self.gamma_entry = ttk.Entry(self.control_frame, textvariable=self.gamma_var, width=5)
-        self.gamma_entry.grid(row=2, column=2, sticky=tk.W, padx=(5, 0))
+        self.gamma_entry.grid(row=2, column=2, sticky=(tk.W, tk.E), padx=(5, 0))
         self.gamma_entry.bind('<Return>', self.on_gamma_change)
 
         # GPU Acceleration Checkbox
@@ -341,10 +341,10 @@ class HDRConverterGUI:
         self.button_frame.grid(row=2, column=0, columnspan=3, pady=(5, 0), sticky=tk.N)
         self.button_frame.grid_remove()
 
-        # Action Frame
+        # Action Frame: Convert/Cancel live here and stay visible at the bottom, so
+        # the queue can be converted even when no single preview file is loaded.
         self.action_frame = ttk.Frame(self.root)
-        self.action_frame.grid(row=2, column=0, pady=(10, 0), sticky=tk.N)
-        self.action_frame.grid_remove()
+        self.action_frame.grid(row=3, column=0, pady=(0, 10), sticky=tk.N)
 
         # Open After Conversion Checkbox
         self.open_after_conversion_checkbutton = ttk.Checkbutton(
@@ -378,11 +378,11 @@ class HDRConverterGUI:
         # Batch Queue panel: add several files and convert them one after another.
         # Always visible so files can be queued before selecting a single preview.
         self.batch_frame = ttk.LabelFrame(self.root, text="Batch Queue", padding="10")
-        self.batch_frame.grid(row=3, column=0, padx=10, pady=(0, 10), sticky=(tk.W, tk.E))
+        self.batch_frame.grid(row=2, column=0, padx=10, pady=(0, 5), sticky=(tk.W, tk.E))
         self.batch_frame.columnconfigure(0, weight=1)
 
         batch_buttons = ttk.Frame(self.batch_frame)
-        batch_buttons.grid(row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
+        batch_buttons.grid(row=0, column=0, columnspan=2, sticky=tk.W)
         self.add_files_button = ttk.Button(
             batch_buttons, text="Add Files", command=self.browse_batch_files)
         self.add_files_button.grid(row=0, column=0, padx=(0, 5))
@@ -392,15 +392,16 @@ class HDRConverterGUI:
         self.clear_batch_button = ttk.Button(
             batch_buttons, text="Clear", command=self.clear_batch_queue)
         self.clear_batch_button.grid(row=0, column=2, padx=(0, 5))
+
         ttk.Label(self.batch_frame, foreground='gray',
-                  text="Queued files convert sequentially when you press Convert.").grid(
-            row=0, column=2, sticky=tk.E)
+                  text="Add or drop multiple files to convert them in sequence.").grid(
+            row=1, column=0, columnspan=2, sticky=tk.W, pady=(4, 4))
 
         self.batch_listbox = tk.Listbox(self.batch_frame, height=4, activestyle='none')
-        self.batch_listbox.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E))
+        self.batch_listbox.grid(row=2, column=0, sticky=(tk.W, tk.E))
         batch_scroll = ttk.Scrollbar(
             self.batch_frame, orient=tk.VERTICAL, command=self.batch_listbox.yview)
-        batch_scroll.grid(row=1, column=2, sticky=(tk.N, tk.S))
+        batch_scroll.grid(row=2, column=1, sticky=(tk.N, tk.S))
         self.batch_listbox.config(yscrollcommand=batch_scroll.set)
 
         # List of interactable elements
@@ -454,23 +455,53 @@ class HDRConverterGUI:
             ]
         )
         if file_path:
-            self.input_path_var.set(file_path)
-            # Default the output container to the input's, then build the path.
-            fmt = self._format_for_input(file_path)
-            self.format_var.set(fmt)
-            base = os.path.splitext(file_path)[0]
-            self.output_path_var.set(self._output_path_with_format(f"{base}_sdr", fmt))
-            # Reset the cached images
-            self.original_image = None
-            self.converted_image_base = None
-            self._reset_custom_seek()  # a new file starts on the numbered frames
-            self._reset_preview_cache()
-            self._update_info_label(file_path)
-            self.button_frame.grid()
-            self.image_frame.grid()
-            self.action_frame.grid()
-            self.update_frame_preview()
-            self.highlight_frame_button(1)  # Highlight button 1 when image is loaded
+            self._load_input_file(file_path)
+
+    def _load_input_file(self, file_path):
+        """Load a file into the input/output boxes and refresh the preview.
+
+        Shared by Browse, single-file drop, and the batch queue (which loads the
+        top of the queue here so its first frames show as if it were selected).
+        """
+        self.input_path_var.set(file_path)
+        # Default the output container to the input's, then build the path.
+        fmt = self._format_for_input(file_path)
+        self.format_var.set(fmt)
+        base = os.path.splitext(file_path)[0]
+        self.output_path_var.set(self._output_path_with_format(f"{base}_sdr", fmt))
+        # Reset the cached images
+        self.original_image = None
+        self.converted_image_base = None
+        self._reset_custom_seek()  # a new file starts on the numbered frames
+        self._reset_preview_cache()
+        self._update_info_label(file_path)
+        self.button_frame.grid()
+        self.image_frame.grid()
+        self.action_frame.grid()
+        self.update_frame_preview()
+        self.highlight_frame_button(1)  # Highlight button 1 when image is loaded
+
+    def _unload_input_file(self):
+        """Clear the loaded input file and hide its preview area.
+
+        The inverse of :meth:`_load_input_file`: used when the previewed file is
+        removed from (or the whole) batch queue, leaving nothing to show.
+        """
+        self.input_path_var.set('')
+        self.output_path_var.set('')
+        self.original_image = None
+        self.converted_image_base = None
+        self._converted_preview_base = None
+        self._reset_custom_seek()
+        self._reset_preview_cache()
+        if hasattr(self, 'info_label'):
+            self.info_label.config(text='')
+            self.info_label.grid_remove()
+        # With an empty input path this clears the images and hides the
+        # titles/frame buttons; then drop the whole image frame too.
+        self.update_frame_preview()
+        if hasattr(self, 'image_frame'):
+            self.image_frame.grid_remove()
 
     # Output containers the user can pick. The converter always encodes H.264, so
     # all three can hold the video; subtitle/audio handling per container lives in
@@ -688,23 +719,7 @@ class HDRConverterGUI:
                 return
             file_path = paths[0]
             if file_path:
-                self.input_path_var.set(file_path)
-                # Default the output container to the input's, then build the path.
-                fmt = self._format_for_input(file_path)
-                self.format_var.set(fmt)
-                base = os.path.splitext(file_path)[0]
-                self.output_path_var.set(self._output_path_with_format(f"{base}_sdr", fmt))
-                # Reset the cached images
-                self.original_image = None
-                self.converted_image_base = None
-                self._reset_custom_seek()  # a new file starts on the numbered frames
-                self._reset_preview_cache()
-                self._update_info_label(file_path)
-                self.button_frame.grid()
-                self.image_frame.grid()
-                self.action_frame.grid()
-                self.update_frame_preview()
-                self.highlight_frame_button(1)  # Highlight button 1 when image is loaded
+                self._load_input_file(file_path)
         except Exception as e:
             logging.error(f"Error handling file drop: {e}")
             messagebox.showerror("Error", f"Error handling file drop: {e}")
@@ -812,19 +827,46 @@ class HDRConverterGUI:
             self.batch_items.append(
                 {'input': path, 'output': output_path, 'format': fmt, 'status': 'Pending'})
         self._refresh_batch_list()
+        # Load the top of the queue into the preview (as if it had been selected),
+        # unless a file is already loaded -- don't clobber a deliberate selection.
+        if (self.batch_items and hasattr(self, 'input_path_var')
+                and not self.input_path_var.get()):
+            self._load_input_file(self.batch_items[0]['input'])
 
     def remove_selected_batch_item(self):
         """Remove the highlighted queue entries."""
         if not hasattr(self, 'batch_listbox'):
             return
-        for index in sorted(self.batch_listbox.curselection(), reverse=True):
+        selected = sorted(self.batch_listbox.curselection(), reverse=True)
+        removed_inputs = [self.batch_items[i]['input'] for i in selected]
+        for index in selected:
             del self.batch_items[index]
         self._refresh_batch_list()
+        self._resync_preview_after_queue_change(removed_inputs)
 
     def clear_batch_queue(self):
         """Empty the batch queue."""
+        removed_inputs = [it['input'] for it in self.batch_items]
         self.batch_items = []
         self._refresh_batch_list()
+        self._resync_preview_after_queue_change(removed_inputs)
+
+    def _resync_preview_after_queue_change(self, removed_inputs):
+        """Keep the preview consistent after queue entries are removed/cleared.
+
+        If the file currently shown in the preview was one of the removed
+        entries, fall forward to the new top of the queue; if nothing is left,
+        unload the preview entirely. A file the user picked by hand (not via the
+        queue) is left untouched.
+        """
+        if not hasattr(self, 'input_path_var'):
+            return  # bare/partial instance (tests) -- no preview to sync
+        if self.input_path_var.get() not in removed_inputs:
+            return  # the shown file wasn't removed -- leave the preview as-is
+        if self.batch_items:
+            self._load_input_file(self.batch_items[0]['input'])
+        else:
+            self._unload_input_file()
 
     def _refresh_batch_list(self):
         """Redraw the queue listbox from batch_items with per-file status icons."""
@@ -864,6 +906,9 @@ class HDRConverterGUI:
         self._current_batch_item = item
         self._refresh_batch_list()
         self.progress_var.set(0)
+        # Switch the preview to the file now being converted, as if it had been
+        # selected, so the frames track the queue's progress.
+        self._load_input_file(item['input'])
 
         output_path = os.path.normpath(item['output'])
         gamma = self.gamma_var.get()

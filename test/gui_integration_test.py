@@ -148,12 +148,14 @@ class TestBatchQueueWidgets(_GuiTestBase):
         self.assertEqual(self.gui.batch_items, [])
 
     def test_add_batch_files_populates_listbox(self):
-        self.gui.add_batch_files(['C:/v/a.mp4', 'C:/v/b.mkv'])
+        with patch.object(self.gui, 'update_frame_preview'):  # don't spawn ffmpeg
+            self.gui.add_batch_files(['C:/v/a.mp4', 'C:/v/b.mkv'])
         self.assertEqual(self.gui.batch_listbox.size(), 2)
         self.assertIn('a.mp4', self.gui.batch_listbox.get(0))
 
     def test_clear_batch_empties_listbox(self):
-        self.gui.add_batch_files(['C:/v/a.mp4'])
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])
         self.gui.clear_batch_queue()
         self.assertEqual(self.gui.batch_listbox.size(), 0)
         self.assertEqual(self.gui.batch_items, [])
@@ -161,8 +163,18 @@ class TestBatchQueueWidgets(_GuiTestBase):
     @patch('src.gui.filedialog.askopenfilenames')
     def test_browse_batch_files_adds_selection(self, mock_dialog):
         mock_dialog.return_value = ('C:/v/a.mkv', 'C:/v/b.mkv')
-        self.gui.browse_batch_files()
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.browse_batch_files()
         self.assertEqual(self.gui.batch_listbox.size(), 2)
+
+    def test_add_batch_files_loads_top_file_into_preview(self):
+        # Adding files also loads the first one into the input/output boxes and
+        # runs the preview, as if it had been selected directly.
+        with patch.object(self.gui, 'update_frame_preview') as mock_update:
+            self.gui.add_batch_files(['C:/v/a.mp4', 'C:/v/b.mkv'])
+        self.assertEqual(self.gui.input_path_var.get(), 'C:/v/a.mp4')
+        self.assertEqual(self.gui.output_path_var.get(), 'C:/v/a_sdr.mp4')
+        mock_update.assert_called_once()
 
 
 class TestStateAndLayout(_GuiTestBase):

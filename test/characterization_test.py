@@ -768,7 +768,7 @@ class TestBatchQueue(unittest.TestCase):
 
     def test_clear_batch_queue_empties(self):
         gui = self._gui()
-        gui.batch_items = [{'status': 'Pending'}]
+        gui.batch_items = [{'input': 'a.mkv', 'status': 'Pending'}]
         gui.clear_batch_queue()
         self.assertEqual(gui.batch_items, [])
         gui._refresh_batch_list.assert_called_once()
@@ -795,6 +795,20 @@ class TestBatchQueue(unittest.TestCase):
         self.assertIn('b.mp4', inserts[1])
         self.assertIn(HDRConverterGUI._STATUS_ICONS['Done'], inserts[1])
 
+    def test_add_files_loads_top_file_into_preview_when_input_empty(self):
+        gui = self._gui()
+        gui.input_path_var = MagicMock(); gui.input_path_var.get.return_value = ''
+        gui._load_input_file = MagicMock()
+        gui.add_batch_files(['C:/v/a.mp4', 'C:/v/b.mkv'])
+        gui._load_input_file.assert_called_once_with('C:/v/a.mp4')
+
+    def test_add_files_does_not_clobber_already_loaded_input(self):
+        gui = self._gui()
+        gui.input_path_var = MagicMock(); gui.input_path_var.get.return_value = 'already.mkv'
+        gui._load_input_file = MagicMock()
+        gui.add_batch_files(['C:/v/a.mp4'])
+        gui._load_input_file.assert_not_called()
+
     def test_multi_file_drop_adds_to_batch(self):
         gui = _bare_gui()
         gui.drop_target_registered = True
@@ -803,6 +817,72 @@ class TestBatchQueue(unittest.TestCase):
         event.data = '{C:/a.mkv} {C:/b.mkv}'
         gui.handle_file_drop(event)
         gui.add_batch_files.assert_called_once_with(['C:/a.mkv', 'C:/b.mkv'])
+
+    # --- Removing/clearing re-syncs the preview with the queue (issue 3) ---
+
+    def test_remove_shown_file_loads_new_top_into_preview(self):
+        gui = self._gui()
+        gui.input_path_var = MagicMock(); gui.input_path_var.get.return_value = 'a.mkv'
+        gui._load_input_file = MagicMock()
+        gui._unload_input_file = MagicMock()
+        gui.batch_items = [{'input': 'a.mkv'}, {'input': 'b.mkv'}]
+        gui.batch_listbox.curselection.return_value = (0,)  # remove the shown file
+        gui.remove_selected_batch_item()
+        gui._load_input_file.assert_called_once_with('b.mkv')  # new top shown
+        gui._unload_input_file.assert_not_called()
+
+    def test_remove_last_shown_file_unloads_preview(self):
+        gui = self._gui()
+        gui.input_path_var = MagicMock(); gui.input_path_var.get.return_value = 'a.mkv'
+        gui._load_input_file = MagicMock()
+        gui._unload_input_file = MagicMock()
+        gui.batch_items = [{'input': 'a.mkv'}]
+        gui.batch_listbox.curselection.return_value = (0,)
+        gui.remove_selected_batch_item()
+        gui._unload_input_file.assert_called_once()  # queue empty -> preview cleared
+        gui._load_input_file.assert_not_called()
+
+    def test_remove_other_file_leaves_preview(self):
+        gui = self._gui()
+        gui.input_path_var = MagicMock(); gui.input_path_var.get.return_value = 'a.mkv'
+        gui._load_input_file = MagicMock()
+        gui._unload_input_file = MagicMock()
+        gui.batch_items = [{'input': 'a.mkv'}, {'input': 'b.mkv'}]
+        gui.batch_listbox.curselection.return_value = (1,)  # remove b; a still shown
+        gui.remove_selected_batch_item()
+        gui._load_input_file.assert_not_called()
+        gui._unload_input_file.assert_not_called()
+
+    def test_clear_unloads_preview_when_shown_file_was_queued(self):
+        gui = self._gui()
+        gui.input_path_var = MagicMock(); gui.input_path_var.get.return_value = 'a.mkv'
+        gui._unload_input_file = MagicMock()
+        gui.batch_items = [{'input': 'a.mkv'}, {'input': 'b.mkv'}]
+        gui.clear_batch_queue()
+        gui._unload_input_file.assert_called_once()
+
+    def test_clear_leaves_manually_selected_preview(self):
+        gui = self._gui()
+        gui.input_path_var = MagicMock(); gui.input_path_var.get.return_value = 'manual.mkv'
+        gui._unload_input_file = MagicMock()
+        gui.batch_items = [{'input': 'a.mkv'}]
+        gui.clear_batch_queue()
+        gui._unload_input_file.assert_not_called()  # don't clobber a manual selection
+
+    def test_unload_clears_input_and_hides_preview(self):
+        gui = _bare_gui()
+        gui.input_path_var = MagicMock()
+        gui.output_path_var = MagicMock()
+        gui.info_label = MagicMock()
+        gui.image_frame = MagicMock()
+        gui.custom_time_var = MagicMock()
+        gui.update_frame_preview = MagicMock()
+        gui._reset_preview_cache = MagicMock()
+        gui._unload_input_file()
+        gui.input_path_var.set.assert_called_once_with('')
+        gui.output_path_var.set.assert_called_once_with('')
+        gui.image_frame.grid_remove.assert_called_once()
+        gui.update_frame_preview.assert_called_once()
 
 
 class TestBatchProcessing(unittest.TestCase):
@@ -826,6 +906,7 @@ class TestBatchProcessing(unittest.TestCase):
         gui.drop_target_registered = True
         gui.unregister_drop_target = MagicMock()
         gui.register_drop_target = MagicMock()
+        gui._load_input_file = MagicMock()  # preview follows the converting file
         return gui
 
     def _item(self, name, status='Pending'):
@@ -888,6 +969,34 @@ class TestBatchProcessing(unittest.TestCase):
         gui.convert_video()
         gui.start_batch.assert_called_once()
         mock_cm.start_conversion.assert_not_called()  # single-file path skipped
+
+    @patch('src.gui.conversion_manager')
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_start_loads_converting_file_into_preview(self, _isfile, mock_cm):
+        # The preview should switch to whichever file is currently converting.
+        gui = self._gui()
+        gui.batch_items = [self._item('a'), self._item('b')]
+        gui.start_batch()
+        gui._load_input_file.assert_called_once_with('a.mkv')
+
+    @patch('src.gui.conversion_manager')
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_advance_loads_next_file_into_preview(self, _isfile, mock_cm):
+        gui = self._gui()
+        gui.batch_items = [self._item('a', 'Converting'), self._item('b')]
+        gui._current_batch_item = gui.batch_items[0]
+        gui._on_batch_item_complete(True)
+        gui._load_input_file.assert_called_once_with('b.mkv')  # moved on to file b
+
+    @patch('src.gui.messagebox')
+    @patch('src.gui.conversion_manager')
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_finished_batch_does_not_reload_preview(self, _isfile, mock_cm, _mb):
+        gui = self._gui()
+        gui.batch_items = [self._item('a', 'Converting')]
+        gui._current_batch_item = gui.batch_items[0]
+        gui._on_batch_item_complete(True)
+        gui._load_input_file.assert_not_called()  # nothing left to preview
 
 
 class TestPreviewExtractionCache(unittest.TestCase):

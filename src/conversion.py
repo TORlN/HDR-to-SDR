@@ -17,6 +17,7 @@ class ConversionManager:
         self.cancelled = False
         self.cpu_count = multiprocessing.cpu_count()
         self.filter_options = ['Static', 'Dynamic']  # Add filter options to ConversionManager
+        self._gpu_encoder = None
 
     def start_conversion(self, input_path, output_path, gamma, use_gpu, selected_filter_index,
                          progress_var, interactable_elements, gui_instance,
@@ -81,16 +82,31 @@ class ConversionManager:
         ]
         current_platform = platform.system().lower()
 
-        # GPU acceleration setup
+        # GPU acceleration setup — dispatch on whichever encoder was detected
+        active_encoder = None
         if use_gpu:
-            if current_platform in ["windows", "linux"]:
-                cmd += [
-                    '-hwaccel', 'cuda',
-                    '-hwaccel_device', '0'
-                ]
-            else:
+            active_encoder = self._gpu_encoder
+
+            if active_encoder == 'h264_nvenc':
+                if current_platform in ["windows", "linux"]:
+                    cmd += ['-hwaccel', 'cuda', '-hwaccel_device', '0']
+                else:
+                    messagebox.showwarning("Warning", "GPU acceleration is not supported on this platform.")
+                    active_encoder = None
+            elif active_encoder == 'h264_qsv':
+                if current_platform in ["windows", "linux"]:
+                    cmd += ['-hwaccel', 'qsv']
+                else:
+                    messagebox.showwarning("Warning", "GPU acceleration is not supported on this platform.")
+                    active_encoder = None
+            elif active_encoder == 'h264_amf':
+                if current_platform not in ["windows", "linux"]:
+                    messagebox.showwarning("Warning", "GPU acceleration is not supported on this platform.")
+                    active_encoder = None
+                # AMF needs no separate hwaccel flag
+            elif active_encoder is not None:
                 messagebox.showwarning("Warning", "GPU acceleration is not supported on this platform.")
-                use_gpu = False
+                active_encoder = None
 
         # Input file
         cmd += ['-i', os.path.normpath(input_path)]
@@ -125,7 +141,7 @@ class ConversionManager:
         cmd += subtitle_map_args
 
         # Encoding settings
-        if use_gpu:
+        if active_encoder == 'h264_nvenc':
             cmd += [
                 '-c:v', 'h264_nvenc',
                 '-preset', 'p4',
@@ -136,10 +152,22 @@ class ConversionManager:
                 '-maxrate', str(int(properties['bit_rate'] * 1)),
                 '-bufsize', str(int(properties['bit_rate'] * 2))
             ]
+        elif active_encoder == 'h264_amf':
+            cmd += [
+                '-c:v', 'h264_amf',
+                '-quality', 'balanced',
+                '-b:v', str(properties['bit_rate']),
+            ]
+        elif active_encoder == 'h264_qsv':
+            cmd += [
+                '-c:v', 'h264_qsv',
+                '-global_quality', '23',
+                '-b:v', str(properties['bit_rate']),
+            ]
         else:
             cmd += [
                 '-c:v', 'libx264',
-                '-preset', 'veryfast',  # Faster CPU preset
+                '-preset', 'veryfast',
                 '-tune', 'film',
                 '-crf', '23',
                 '-b:v', str(properties['bit_rate'])
@@ -245,7 +273,7 @@ class ConversionManager:
                 gui_instance.root.after(0, lambda p=progress: progress_var.set(p))
                 gui_instance.root.after(0, gui_instance.root.update_idletasks)
 
-            if 'cuda' in decoded_line.lower() or 'nvcuda.dll' in decoded_line.lower():
+            if any(k in decoded_line.lower() for k in ('cuda', 'nvcuda.dll', 'amf', 'mfx')):
                 gpu_error_detected = True
 
         if self.process is not None:
@@ -295,7 +323,8 @@ class ConversionManager:
                 if open_after_conversion:
                     webbrowser.open(output_path)
             elif not self.cancelled:
-                error_message = '\n'.join(error_messages)
+                tail = error_messages[-50:]  # ffmpeg stderr can be thousands of progress lines; show only the tail where real errors appear
+                error_message = '\n'.join(tail)
                 logging.error(f"Conversion failed with code {self.process.returncode}: {error_message}")
                 messagebox.showerror(
                     "Error", f"Conversion failed with code {self.process.returncode}\n{error_message}")
@@ -321,51 +350,70 @@ class ConversionManager:
             if hasattr(gui_instance, 'register_drop_target'):
                 gui_instance.register_drop_target()
 
-    def is_gpu_available(self):
+    def _startupinfo(self):
+        """Return (startupinfo, creationflags) to hide console windows on Windows."""
+        if sys.platform == "win32":
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            si.wShowWindow = subprocess.SW_HIDE
+            return si, subprocess.CREATE_NO_WINDOW
+        return None, 0
+
+    def _nvidia_present(self):
+        """Return True if nvidia-smi reports a usable NVIDIA GPU."""
         try:
-            startupinfo = None
-            if sys.platform == "win32":
-                startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = subprocess.SW_HIDE
-                creationflags = subprocess.CREATE_NO_WINDOW
-            else:
-                startupinfo = None
-                creationflags = 0
-
-            result = subprocess.run(['nvidia-smi'], 
-                stdout=subprocess.PIPE, 
+            si, flags = self._startupinfo()
+            result = subprocess.run(
+                ['nvidia-smi'],
+                stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                startupinfo=startupinfo,
-                creationflags=creationflags)
-            if result.returncode != 0:
-                logging.warning("nvidia-smi not found or no NVIDIA GPU detected.")
-                return False
-            logging.debug("NVIDIA GPU detected.")
+                startupinfo=si,
+                creationflags=flags,
+            )
+            return result.returncode == 0
+        except (FileNotFoundError, OSError):
+            return False
 
-            cmd = [FFMPEG_EXECUTABLE, '-encoders']
+    def _list_encoders(self):
+        """Return lowercase stdout of 'ffmpeg -encoders', or '' on failure."""
+        try:
+            si, flags = self._startupinfo()
             process = subprocess.Popen(
-                cmd,
+                [FFMPEG_EXECUTABLE, '-encoders'],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
-                startupinfo=startupinfo,
-                creationflags=creationflags
+                startupinfo=si,
+                creationflags=flags,
             )
             stdout, _ = process.communicate()
-            if process.returncode != 0:
-                logging.error("FFmpeg failed to list encoders.")
-                return False
-            if 'h264_nvenc' not in stdout.lower():
-                logging.warning("'h264_nvenc' encoder not found in FFmpeg.")
-                return False
-            
-            logging.debug("'h264_nvenc' encoder is available in FFmpeg.")
-            return True
+            return stdout.lower() if process.returncode == 0 else ''
+        except (FileNotFoundError, OSError):
+            return ''
 
-        except FileNotFoundError:
-            logging.warning("'nvidia-smi' command not found. NVIDIA GPU may not be installed.")
-            return False
+    def detect_gpu_encoder(self):
+        """Detect best available H.264 GPU encoder; sets and returns self._gpu_encoder.
+
+        Priority: NVENC (requires confirmed NVIDIA GPU) > AMF > QSV > None.
+        """
+        encoders = self._list_encoders()
+        nvidia = self._nvidia_present()
+
+        if nvidia and 'h264_nvenc' in encoders:
+            self._gpu_encoder = 'h264_nvenc'
+        elif 'h264_amf' in encoders:
+            self._gpu_encoder = 'h264_amf'
+        elif 'h264_qsv' in encoders:
+            self._gpu_encoder = 'h264_qsv'
+        else:
+            self._gpu_encoder = None
+
+        logging.debug(f"Detected GPU encoder: {self._gpu_encoder}")
+        return self._gpu_encoder
+
+    def is_gpu_available(self):
+        try:
+            return self.detect_gpu_encoder() is not None
         except Exception as e:
             logging.error(f"Error checking GPU availability: {e}")
             return False

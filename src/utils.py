@@ -417,7 +417,9 @@ def get_video_properties(input_file):
             "duration": duration,
             "audio_codec": audio_stream.get('codec_name', '') if audio_stream else '',
             "audio_bit_rate": int(audio_stream.get('bit_rate', 0)) if audio_stream else 0,
-            "subtitle_streams": subtitle_streams
+            "subtitle_streams": subtitle_streams,
+            "color_primaries": video_stream.get('color_primaries', ''),
+            "color_transfer": video_stream.get('color_transfer', ''),
         }
         
     except (subprocess.SubprocessError, json.JSONDecodeError, ValueError) as e:

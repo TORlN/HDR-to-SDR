@@ -4,7 +4,8 @@ from tkinter import filedialog, messagebox
 from tkinter import ttk
 import sv_ttk
 from conversion import conversion_manager  # Import the conversion_manager instance
-from utils import extract_frame_with_conversion, extract_frame, TONEMAP, get_video_properties, clear_maxfall_cache  # Add get_video_properties
+from utils import extract_frame_with_conversion, extract_frame, TONEMAP, get_video_properties, clear_maxfall_cache
+from settings import load_settings, save_settings
 from PIL import Image, ImageTk
 from tkinterdnd2 import DND_FILES
 import logging
@@ -27,18 +28,19 @@ class HDRConverterGUI:
         self.root.resizable(False, False)
 
         # Variables
+        _s = load_settings()
         self.input_path_var = tk.StringVar()
         self.output_path_var = tk.StringVar()
-        self.gamma_var = tk.DoubleVar(value=1.0)
+        self.gamma_var = tk.DoubleVar(value=_s['gamma'])
         self.progress_var = tk.DoubleVar(value=0)
-        self.open_after_conversion_var = tk.BooleanVar()
-        self.display_image_var = tk.BooleanVar(value=True)
+        self.open_after_conversion_var = tk.BooleanVar(value=_s['open_after_conversion'])
+        self.display_image_var = tk.BooleanVar(value=_s['display_preview'])
         self.original_image = None  # Cache for the original frame
         self.converted_image_base = None  # Cache for the converted SDR frame
-        self.gpu_accel_var = tk.BooleanVar(value=False)
+        self.gpu_accel_var = tk.BooleanVar(value=_s['gpu_accel'])
         self.filter_options = ['Static', 'Dynamic']
-        self.filter_var = tk.StringVar(value=self.filter_options[1])  # Set default to 'Dynamic'
-        self.tonemap_var = tk.StringVar(value='Mobius')  # Set default to 'Mobius'
+        self.filter_var = tk.StringVar(value=_s['filter'])
+        self.tonemap_var = tk.StringVar(value=_s['tonemapper'])
         self.tooltip = None  # Add this line for tooltip tracking
         self.current_frame_index = 1  # Default to 1 (1/6 of the video)
         self.total_frames = 5
@@ -88,9 +90,25 @@ class HDRConverterGUI:
                 conversion_manager.cancel_conversion(
                     self, self.interactable_elements, self.cancel_button
                 )
+                self._save_current_settings()
                 self.root.destroy()
         else:
+            self._save_current_settings()
             self.root.destroy()
+
+    def _save_current_settings(self):
+        """Persist current UI settings to disk."""
+        try:
+            save_settings({
+                'gamma': self.gamma_var.get(),
+                'filter': self.filter_var.get(),
+                'tonemapper': self.tonemap_var.get(),
+                'gpu_accel': self.gpu_accel_var.get(),
+                'open_after_conversion': self.open_after_conversion_var.get(),
+                'display_preview': self.display_image_var.get(),
+            })
+        except AttributeError:
+            pass  # bare/partially-initialized instance (test contexts only)
 
     def create_widgets(self):
         """Create and arrange the widgets in the main window."""
@@ -265,9 +283,14 @@ class HDRConverterGUI:
         self.loading_frame.grid(row=1, column=0, columnspan=3)
         self.loading_frame.grid_remove()  # hidden until a preview is loading
 
-        # Error Label
+        # Info strip: shows video metadata (resolution, fps, codec, HDR/SDR) after a file is loaded
+        self.info_label = ttk.Label(self.control_frame, text='', foreground='gray')
+        self.info_label.grid(row=5, column=0, columnspan=3, sticky=tk.W, padx=(0, 10))
+        self.info_label.grid_remove()  # hidden until a file is loaded
+
+        # Error Label (row 6 so it doesn't overlap the display/tonemap row 4)
         self.error_label = ttk.Label(self.control_frame, text='', foreground='red')
-        self.error_label.grid(row=4, column=0, columnspan=3, sticky=tk.W)
+        self.error_label.grid(row=6, column=0, columnspan=3, sticky=tk.W)
 
         # Button Frame
         self.button_frame = ttk.Frame(self.image_frame)
@@ -321,7 +344,7 @@ class HDRConverterGUI:
         self.control_frame.columnconfigure(0, weight=0)
         self.control_frame.columnconfigure(1, weight=1)
         self.control_frame.columnconfigure(2, weight=0)
-        for i in range(5):
+        for i in range(7):
             self.control_frame.rowconfigure(i, weight=0)
 
         # Image Frame Grid Configuration
@@ -361,6 +384,7 @@ class HDRConverterGUI:
             self.original_image = None
             self.converted_image_base = None
             self._reset_preview_cache()
+            self._update_info_label(file_path)
             self.button_frame.grid()
             self.image_frame.grid()
             self.action_frame.grid()
@@ -380,6 +404,32 @@ class HDRConverterGUI:
         if ext.lower() == '.webm':
             return base + '.mkv'
         return output_path
+
+    @staticmethod
+    def _build_info_text(properties):
+        """Format key video metadata as a compact one-line string for the info strip."""
+        w = properties.get('width', '?')
+        h = properties.get('height', '?')
+        fps = properties.get('frame_rate', 0)
+        codec = (properties.get('codec_name') or '?').upper()
+        audio = (properties.get('audio_codec') or 'none').upper()
+        primaries = properties.get('color_primaries', '')
+        transfer = properties.get('color_transfer', '')
+        hdr_tag = 'HDR' if (primaries == 'bt2020' or transfer in ('smpte2084', 'arib-std-b67')) else 'SDR'
+        fps_str = f"{fps:.3f} fps" if fps else "? fps"
+        return f"{w}×{h}  {fps_str}  {codec}  {hdr_tag}  Audio: {audio}"
+
+    def _update_info_label(self, file_path):
+        """Probe file metadata and update the info strip below the output path."""
+        if not hasattr(self, 'info_label'):
+            return
+        props = get_video_properties(file_path)
+        if props:
+            self.info_label.config(text=self._build_info_text(props))
+            self.info_label.grid()
+        else:
+            self.info_label.config(text='')
+            self.info_label.grid_remove()
 
     def adjust_gamma(self, image, gamma):
         """Adjust gamma of a PIL.Image."""
@@ -477,6 +527,7 @@ class HDRConverterGUI:
                 self.original_image = None
                 self.converted_image_base = None
                 self._reset_preview_cache()
+                self._update_info_label(file_path)
                 self.button_frame.grid()
                 self.image_frame.grid()
                 self.action_frame.grid()
@@ -578,7 +629,7 @@ class HDRConverterGUI:
                 if not available:
                     self.gpu_accel_var.set(False)
                     messagebox.showwarning("GPU Acceleration",
-                                           "GPU acceleration is not available on this system. GPU acceleration is only supported for NVIDIA gpu's with access to h264_nvenc. Switching to CPU mode.")
+                                           "GPU acceleration is not available on this system. Supported GPUs: NVIDIA (h264_nvenc), AMD (h264_amf), Intel (h264_qsv). Switching to CPU mode.")
             except Exception as e:
                 self.gpu_accel_var.set(False)
                 logging.error(f"Error checking GPU acceleration: {e}")

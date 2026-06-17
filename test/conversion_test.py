@@ -388,6 +388,42 @@ class TestConversionManager(unittest.TestCase):
             mock_enable_ui.assert_called_once_with([])
             cancel_button.grid_remove.assert_called_once()
 
+    @patch('src.conversion.messagebox.showerror')
+    def test_handle_completion_truncates_long_error_output(self, mock_showerror):
+        """Error dialog must show only the last 50 stderr lines, not all of them.
+
+        ffmpeg emits progress lines for every decoded frame; for a long
+        conversion the full stderr can be thousands of lines. Showing all of
+        them makes the dialog unreadable -- only the tail is shown instead.
+        """
+        manager = ConversionManager()
+        manager.process = MagicMock()
+        manager.process.returncode = 1
+        manager.cancelled = False
+        spam = [f"frame={i} fps=30 time=00:00:{i:02d}.00" for i in range(190)]
+        real_errors = ["Error: something went wrong", "Error: codec not found"]
+        error_messages = spam + real_errors
+
+        mock_gui = MagicMock()
+        mock_gui.root = Tk()
+        mock_gui.root.after = MagicMock(side_effect=lambda delay, func: func())
+        cancel_button = MagicMock()
+        cancel_button.grid_remove = MagicMock()
+
+        with patch.object(manager, 'enable_ui'):
+            manager.handle_completion(
+                mock_gui, [], cancel_button, 'out.mkv', False, error_messages
+            )
+
+        call_args = mock_showerror.call_args[0]
+        shown_text = call_args[1]
+        # Strip the "Conversion failed with code X" header line
+        content_lines = shown_text.split('\n')[1:]
+        self.assertLessEqual(len(content_lines), 50,
+                             "Error dialog must show at most 50 stderr lines")
+        self.assertIn("Error: something went wrong", shown_text)
+        self.assertIn("Error: codec not found", shown_text)
+
     @patch('src.conversion.messagebox.showwarning')
     def test_verify_paths(self, mock_showwarning):
         """Test verify_paths method with various inputs."""
@@ -504,41 +540,26 @@ class TestConversionManager(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             run_ffmpeg_command(['ffmpeg', '-i', 'input.mp4', 'output.mkv'])
 
-    @patch('src.conversion.subprocess.run', return_value=MagicMock(returncode=1))
-    def test_is_gpu_available_no_gpu(self, mock_run):
-        """Test is_gpu_available when NVIDIA GPU is not available."""
+    def test_is_gpu_available_no_gpu(self):
+        """is_gpu_available returns False when detect_gpu_encoder finds nothing."""
         manager = ConversionManager()
-        self.assertFalse(manager.is_gpu_available())
-        mock_run.assert_called_once_with(
-            ['nvidia-smi'], 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE,
-            startupinfo=ANY,  
-            creationflags=ANY
-        )
-    
-    @patch('src.conversion.subprocess.run', return_value=MagicMock(returncode=0))
-    @patch('src.conversion.subprocess.Popen')
-    def test_is_gpu_available_no_encoder(self, mock_popen, mock_run):
-        manager = ConversionManager()  
-        available = manager.is_gpu_available() 
+        with patch.object(manager, 'detect_gpu_encoder', return_value=None):
+            self.assertFalse(manager.is_gpu_available())
 
-        self.assertFalse(available)
-        mock_run.assert_called_once_with(
-            ['nvidia-smi'],
-            stdout=-1,
-            stderr=-1,
-            startupinfo=ANY,
-            creationflags=ANY  
-        )
+    def test_is_gpu_available_no_encoder(self):
+        """is_gpu_available returns False when no GPU encoder is detected."""
+        manager = ConversionManager()
+        with patch.object(manager, 'detect_gpu_encoder', return_value=None):
+            self.assertFalse(manager.is_gpu_available())
 
-    @patch('src.conversion.get_maxfall')  
+    @patch('src.conversion.get_maxfall')
     @patch('src.conversion.subprocess.Popen')
     @patch('src.conversion.ConversionManager.is_gpu_available', return_value=True)
     def test_construct_ffmpeg_command_with_gpu(self, mock_popen, mock_get_maxfall, mock_is_gpu):
         """Test construct_ffmpeg_command with GPU acceleration enabled."""
         manager = ConversionManager()
-        mock_get_maxfall.return_value = 10  
+        manager._gpu_encoder = 'h264_nvenc'
+        mock_get_maxfall.return_value = 10
         properties = {
             "width": 1920,
             "height": 1080,
@@ -631,6 +652,7 @@ class TestConversionManager(unittest.TestCase):
     def test_construct_command_gpu_unsupported_platform(self, mock_warn, _plat):
         """On non-Windows/Linux, requesting GPU warns and falls back to CPU."""
         manager = ConversionManager()
+        manager._gpu_encoder = 'h264_nvenc'
         props = {
             "width": 1920, "height": 1080, "bit_rate": 4000000, "frame_rate": 30.0,
             "duration": 120.0, "audio_codec": "aac", "audio_bit_rate": 128000,
@@ -643,53 +665,29 @@ class TestConversionManager(unittest.TestCase):
         self.assertNotIn('h264_nvenc', cmd)
         self.assertNotIn('-hwaccel', cmd)
 
-    @patch('src.conversion.subprocess.Popen')
-    @patch('src.conversion.subprocess.run', return_value=MagicMock(returncode=0))
-    def test_is_gpu_available_encoder_list_fails(self, mock_run, mock_popen):
-        proc = MagicMock()
-        proc.communicate.return_value = ('', '')
-        proc.returncode = 1
-        mock_popen.return_value = proc
-        self.assertFalse(ConversionManager().is_gpu_available())
+    def test_is_gpu_available_encoder_list_fails(self):
+        """is_gpu_available returns False when encoder detection finds nothing."""
+        manager = ConversionManager()
+        with patch.object(manager, 'detect_gpu_encoder', return_value=None):
+            self.assertFalse(manager.is_gpu_available())
 
-    @patch('src.conversion.subprocess.Popen')
-    @patch('src.conversion.subprocess.run', return_value=MagicMock(returncode=0))
-    def test_is_gpu_available_nvenc_not_listed(self, mock_run, mock_popen):
-        proc = MagicMock()
-        proc.communicate.return_value = ('libx264 libx265', '')
-        proc.returncode = 0
-        mock_popen.return_value = proc
-        self.assertFalse(ConversionManager().is_gpu_available())
+    def test_is_gpu_available_nvenc_not_listed(self):
+        """is_gpu_available returns False when no supported GPU encoder is detected."""
+        manager = ConversionManager()
+        with patch.object(manager, 'detect_gpu_encoder', return_value=None):
+            self.assertFalse(manager.is_gpu_available())
 
-    @patch('src.conversion.subprocess.run', side_effect=FileNotFoundError())
-    def test_is_gpu_available_nvidia_smi_missing(self, mock_run):
-        self.assertFalse(ConversionManager().is_gpu_available())
+    def test_is_gpu_available_nvidia_smi_missing(self):
+        """is_gpu_available returns False when detect_gpu_encoder raises."""
+        manager = ConversionManager()
+        with patch.object(manager, 'detect_gpu_encoder', side_effect=FileNotFoundError()):
+            self.assertFalse(manager.is_gpu_available())
 
     def test_is_gpu_available(self):
-        """Test if GPU is available and h264_nvenc encoder exists."""
-        # Setup
+        """is_gpu_available returns True when an encoder is detected."""
         manager = ConversionManager()
-        
-        # Test with all mocks in a single context
-        with patch('src.conversion.subprocess.run') as mock_run, \
-             patch('src.conversion.subprocess.Popen') as mock_popen:
-
-            # Configure nvidia-smi success
-            mock_run.return_value = MagicMock(returncode=0)
-            
-            # Configure ffmpeg encoder check success
-            mock_process = MagicMock()
-            mock_process.communicate.return_value = ("h264_nvenc", "")
-            mock_process.returncode = 0
-            mock_popen.return_value = mock_process
-
-            # Execute
-            result = manager.is_gpu_available()
-
-            # Assert
-            self.assertTrue(result)
-            mock_run.assert_called_once()
-            mock_popen.assert_called_once()
+        with patch.object(manager, 'detect_gpu_encoder', return_value='h264_nvenc'):
+            self.assertTrue(manager.is_gpu_available())
 
     @patch('src.conversion.messagebox.showwarning')
     @patch('src.conversion.subprocess.Popen')
@@ -715,6 +713,93 @@ class TestConversionManager(unittest.TestCase):
         mock_popen.assert_not_called()  # never launched ffmpeg
         self.assertIsNone(manager.process)
         root.destroy()
+
+
+class TestDetectGpuEncoder(unittest.TestCase):
+    """detect_gpu_encoder finds the best available H.264 GPU encoder."""
+
+    def _manager_with_encoders(self, encoder_string, nvidia_present=False):
+        """Helper: patch _list_encoders and _nvidia_present, return manager."""
+        m = ConversionManager()
+        m._list_encoders = MagicMock(return_value=encoder_string)
+        m._nvidia_present = MagicMock(return_value=nvidia_present)
+        return m
+
+    def test_nvenc_returned_when_nvidia_present(self):
+        m = self._manager_with_encoders('h264_nvenc h264_amf h264_qsv', nvidia_present=True)
+        self.assertEqual(m.detect_gpu_encoder(), 'h264_nvenc')
+        self.assertEqual(m._gpu_encoder, 'h264_nvenc')
+
+    def test_amf_returned_when_nvidia_absent_but_amf_listed(self):
+        m = self._manager_with_encoders('h264_amf h264_qsv', nvidia_present=False)
+        self.assertEqual(m.detect_gpu_encoder(), 'h264_amf')
+
+    def test_qsv_returned_when_only_qsv_available(self):
+        m = self._manager_with_encoders('h264_qsv', nvidia_present=False)
+        self.assertEqual(m.detect_gpu_encoder(), 'h264_qsv')
+
+    def test_none_returned_when_no_gpu_encoders(self):
+        m = self._manager_with_encoders('libx264 libx265', nvidia_present=False)
+        self.assertIsNone(m.detect_gpu_encoder())
+        self.assertIsNone(m._gpu_encoder)
+
+    def test_nvenc_not_chosen_without_nvidia_gpu(self):
+        """Even if h264_nvenc is in ffmpeg, skip it when nvidia-smi says no GPU."""
+        m = self._manager_with_encoders('h264_nvenc h264_amf', nvidia_present=False)
+        self.assertEqual(m.detect_gpu_encoder(), 'h264_amf')
+
+    def test_is_gpu_available_delegates_to_detect(self):
+        m = ConversionManager()
+        with patch.object(m, 'detect_gpu_encoder', return_value='h264_amf') as mock_detect:
+            self.assertTrue(m.is_gpu_available())
+            mock_detect.assert_called_once()
+
+    def test_is_gpu_available_false_when_detect_returns_none(self):
+        m = ConversionManager()
+        with patch.object(m, 'detect_gpu_encoder', return_value=None):
+            self.assertFalse(m.is_gpu_available())
+
+
+class TestGpuEncoderCommandConstruction(unittest.TestCase):
+    """construct_ffmpeg_command uses the detected GPU encoder type correctly."""
+
+    _BASE_PROPS = {
+        "width": 1920, "height": 1080, "bit_rate": 4000000,
+        "frame_rate": 30.0, "audio_codec": "aac", "audio_bit_rate": 128000,
+        "subtitle_streams": [],
+    }
+
+    def _cmd(self, encoder, props=None):
+        m = ConversionManager()
+        m._gpu_encoder = encoder
+        return m.construct_ffmpeg_command(
+            'in.mp4', 'out.mkv', 1.0, props or self._BASE_PROPS,
+            use_gpu=True, selected_filter_index=0, tonemapper='reinhard'
+        )
+
+    def test_amf_encoder_used_and_no_hwaccel(self):
+        cmd = self._cmd('h264_amf')
+        self.assertIn('h264_amf', cmd)
+        self.assertNotIn('-hwaccel', cmd)
+        self.assertNotIn('h264_nvenc', cmd)
+
+    def test_qsv_encoder_used_with_qsv_hwaccel(self):
+        cmd = self._cmd('h264_qsv')
+        self.assertIn('h264_qsv', cmd)
+        self.assertIn('-hwaccel', cmd)
+        self.assertIn('qsv', cmd)
+        self.assertNotIn('cuda', cmd)
+
+    def test_nvenc_encoder_used_with_cuda_hwaccel(self):
+        m = ConversionManager()
+        m._gpu_encoder = 'h264_nvenc'
+        cmd = m.construct_ffmpeg_command(
+            'in.mp4', 'out.mkv', 1.0, self._BASE_PROPS,
+            use_gpu=True, selected_filter_index=0, tonemapper='reinhard'
+        )
+        self.assertIn('h264_nvenc', cmd)
+        self.assertIn('cuda', cmd)
+        self.assertIn('-hwaccel', cmd)
 
 
 class TestContainerStreamArgs(unittest.TestCase):

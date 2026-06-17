@@ -53,7 +53,9 @@ class TestGetVideoProperties(unittest.TestCase):
             "audio_codec": "aac",
             "audio_bit_rate": 128000,
             "duration": 600.0,
-            "subtitle_streams": []  # Added this line
+            "subtitle_streams": [],
+            "color_primaries": "",
+            "color_transfer": "",
         }
 
         properties = get_video_properties(input_file)
@@ -112,7 +114,9 @@ class TestGetVideoProperties(unittest.TestCase):
                     "codec_name": "srt",
                     "index": 2
                 }
-            ]
+            ],
+            "color_primaries": "",
+            "color_transfer": "",
         }
         self.assertEqual(properties, expected_properties)
 
@@ -306,6 +310,42 @@ class TestPreviewScaling(unittest.TestCase):
                                       width=960, height=540)
         vf = mock_run.call_args[0][0][mock_run.call_args[0][0].index('-vf') + 1]
         self.assertIn('scale=960:540', vf)
+
+
+class TestGetVideoPropertiesColorFields(unittest.TestCase):
+    """get_video_properties must return HDR color metadata when present."""
+
+    @patch('src.utils.subprocess.Popen')
+    def test_color_primaries_and_transfer_returned(self, mock_popen):
+        proc = mock_popen.return_value
+        proc.returncode = 0
+        proc.communicate.return_value = (json.dumps({
+            "streams": [{
+                "codec_type": "video", "width": 3840, "height": 2160,
+                "codec_name": "hevc", "avg_frame_rate": "24000/1001",
+                "bit_rate": "20000000",
+                "color_primaries": "bt2020",
+                "color_transfer": "smpte2084",
+            }],
+            "format": {"duration": "5400.0"},
+        }).encode(), b'')
+        props = get_video_properties('hdr.mkv')
+        self.assertEqual(props['color_primaries'], 'bt2020')
+        self.assertEqual(props['color_transfer'], 'smpte2084')
+
+    @patch('src.utils.subprocess.Popen')
+    def test_color_fields_default_empty_when_absent(self, mock_popen):
+        proc = mock_popen.return_value
+        proc.returncode = 0
+        proc.communicate.return_value = (json.dumps({
+            "streams": [{"codec_type": "video", "width": 1920, "height": 1080,
+                         "codec_name": "h264", "avg_frame_rate": "30/1",
+                         "bit_rate": "4000000"}],
+            "format": {"duration": "60.0"},
+        }).encode(), b'')
+        props = get_video_properties('sdr.mp4')
+        self.assertEqual(props.get('color_primaries'), '')
+        self.assertEqual(props.get('color_transfer'), '')
 
 
 class TestGetVideoPropertiesErrors(unittest.TestCase):

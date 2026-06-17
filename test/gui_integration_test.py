@@ -24,6 +24,7 @@ from tkinterdnd2 import TkinterDnD
 
 from src.gui import HDRConverterGUI, DEFAULT_MIN_SIZE
 from src.utils import TONEMAP
+from src.settings import DEFAULTS
 
 
 def _tk_available():
@@ -43,6 +44,12 @@ _SKIP = "no Tk display available (need a desktop session or xvfb)"
 @unittest.skipUnless(_TK_OK, _SKIP)
 class _GuiTestBase(unittest.TestCase):
     def setUp(self):
+        # Isolate tests from any on-disk settings file so default-value assertions
+        # are deterministic regardless of what the user has saved.
+        self._load_patch = patch('src.gui.load_settings', return_value=dict(DEFAULTS))
+        self._save_patch = patch('src.gui.save_settings')
+        self._load_patch.start()
+        self._save_patch.start()
         self.root = TkinterDnD.Tk()
         self.root.withdraw()
         self.gui = HDRConverterGUI(self.root)
@@ -53,6 +60,8 @@ class _GuiTestBase(unittest.TestCase):
                 self.root.destroy()
         except tk.TclError:
             pass
+        self._load_patch.stop()
+        self._save_patch.stop()
 
 
 class TestConstruction(_GuiTestBase):
@@ -304,6 +313,81 @@ class TestUserActions(_GuiTestBase):
             self.gui.on_gamma_change()
         mock_update.assert_not_called()
         self.assertTrue(self.gui.converted_image_label.cget('image'))
+
+
+class TestInfoLabel(_GuiTestBase):
+    """HDR metadata info strip shown below the output path once a file is loaded."""
+
+    def test_info_label_exists(self):
+        self.assertIsInstance(self.gui.info_label, ttk.Label)
+
+    def test_info_label_hidden_before_file_load(self):
+        self.assertEqual(self.gui.info_label.grid_info(), {})
+
+    @patch('src.gui.get_video_properties')
+    @patch('src.gui.filedialog.askopenfilename')
+    def test_info_label_shown_after_file_select(self, mock_dialog, mock_props):
+        mock_dialog.return_value = 'movie.mkv'
+        mock_props.return_value = {
+            'width': 3840, 'height': 2160, 'frame_rate': 23.976,
+            'codec_name': 'hevc', 'audio_codec': 'truehd',
+            'color_primaries': 'bt2020', 'color_transfer': 'smpte2084',
+        }
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.select_file()
+        self.assertNotEqual(self.gui.info_label.grid_info(), {})
+        self.assertIn('3840', self.gui.info_label.cget('text'))
+        self.assertIn('HDR', self.gui.info_label.cget('text'))
+
+    @patch('src.gui.get_video_properties', return_value=None)
+    @patch('src.gui.filedialog.askopenfilename')
+    def test_info_label_hidden_when_props_unavailable(self, mock_dialog, _mock_props):
+        mock_dialog.return_value = 'movie.mkv'
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.select_file()
+        self.assertEqual(self.gui.info_label.grid_info(), {})
+
+
+class TestBuildInfoText(unittest.TestCase):
+    """_build_info_text formats properties into a human-readable one-liner."""
+
+    def test_hdr_bt2020_smpte2084_tagged_hdr(self):
+        props = {'width': 3840, 'height': 2160, 'frame_rate': 23.976,
+                 'codec_name': 'hevc', 'audio_codec': 'truehd',
+                 'color_primaries': 'bt2020', 'color_transfer': 'smpte2084'}
+        text = HDRConverterGUI._build_info_text(props)
+        self.assertIn('HDR', text)
+
+    def test_hlg_arib_std_b67_tagged_hdr(self):
+        props = {'width': 1920, 'height': 1080, 'frame_rate': 50.0,
+                 'codec_name': 'hevc', 'audio_codec': 'aac',
+                 'color_primaries': 'bt2020', 'color_transfer': 'arib-std-b67'}
+        text = HDRConverterGUI._build_info_text(props)
+        self.assertIn('HDR', text)
+
+    def test_bt709_tagged_sdr(self):
+        props = {'width': 1920, 'height': 1080, 'frame_rate': 30.0,
+                 'codec_name': 'h264', 'audio_codec': 'aac',
+                 'color_primaries': 'bt709', 'color_transfer': 'bt709'}
+        text = HDRConverterGUI._build_info_text(props)
+        self.assertIn('SDR', text)
+
+    def test_no_color_info_tagged_sdr(self):
+        props = {'width': 1920, 'height': 1080, 'frame_rate': 30.0,
+                 'codec_name': 'h264', 'audio_codec': 'aac',
+                 'color_primaries': '', 'color_transfer': ''}
+        text = HDRConverterGUI._build_info_text(props)
+        self.assertIn('SDR', text)
+
+    def test_includes_resolution_fps_codec_audio(self):
+        props = {'width': 1920, 'height': 1080, 'frame_rate': 29.970,
+                 'codec_name': 'h264', 'audio_codec': 'aac',
+                 'color_primaries': '', 'color_transfer': ''}
+        text = HDRConverterGUI._build_info_text(props)
+        self.assertIn('1920', text)
+        self.assertIn('1080', text)
+        self.assertIn('H264', text)
+        self.assertIn('AAC', text)
 
 
 class TestDropTargetAndClose(_GuiTestBase):

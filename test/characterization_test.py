@@ -30,6 +30,33 @@ def _bare_gui():
     """An HDRConverterGUI with __init__ bypassed (no live Tk root needed)."""
     return object.__new__(HDRConverterGUI)
 
+
+class _FakeScale:
+    """Minimal stand-in for ttk.Scale that tracks its range and value, so a
+    test can read the knob's fractional position (where it sits on the track)."""
+
+    def __init__(self, frm, to, value):
+        self._from, self._to, self._value = float(frm), float(to), float(value)
+
+    def configure(self, **kw):
+        if 'from_' in kw:
+            self._from = float(kw['from_'])
+        if 'to' in kw:
+            self._to = float(kw['to'])
+
+    def cget(self, key):
+        return {'from': self._from, 'to': self._to}[key]
+
+    def get(self):
+        return self._value
+
+    def set(self, value):
+        self._value = float(value)
+
+    def fraction(self):
+        """The knob's position on the track, 0.0 (left) .. 1.0 (right)."""
+        return (self._value - self._from) / (self._to - self._from)
+
 # A minimal valid 1x1 PNG, reused from the existing util tests.
 VALID_PNG = (
     b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01'
@@ -592,6 +619,10 @@ class TestQualityRange(unittest.TestCase):
         gui = _bare_gui()
         gui.gpu_accel_var = MagicMock(); gui.gpu_accel_var.get.return_value = gpu
         gui.quality_slider = MagicMock()
+        # _apply_quality_range reads the slider's current range/value to preserve
+        # the knob's position; start from the CPU range with a mid value.
+        gui.quality_slider.cget.side_effect = lambda k: {'from': 28.0, 'to': 17.0}[k]
+        gui.quality_slider.get.return_value = 23.0
         gui.quality_var = MagicMock()
         return gui
 
@@ -610,9 +641,29 @@ class TestQualityRange(unittest.TestCase):
 
     def test_value_is_clamped_into_the_active_range(self):
         gui = self._gui(gpu=False)        # CPU range 17..28
-        gui.quality_var.get.return_value = 14   # below CPU minimum
+        gui.quality_slider.get.return_value = 14   # below CPU minimum (better than best)
         gui._apply_quality_range()
         gui.quality_var.set.assert_called_once_with(17)
+
+    def test_knob_position_held_across_gpu_toggle(self):
+        # The same value sits at different spots in the CRF vs CQ ranges, so
+        # re-ranging on toggle must remap to keep the knob from visibly sliding.
+        gui = _bare_gui()
+        store = {'v': 23}
+        gui.quality_var = MagicMock()
+        gui.quality_var.get.side_effect = lambda: store['v']
+        gui.quality_var.set.side_effect = lambda x: store.__setitem__('v', x)
+        gui.gpu_accel_var = MagicMock(); gui.gpu_accel_var.get.return_value = False
+        gui.quality_slider = _FakeScale(28, 17, 23)  # CPU range, knob at 23
+
+        frac_cpu = gui.quality_slider.fraction()
+        gui.gpu_accel_var.get.return_value = True     # check GPU acceleration
+        gui._apply_quality_range()
+        self.assertAlmostEqual(frac_cpu, gui.quality_slider.fraction(), places=2)
+
+        gui.gpu_accel_var.get.return_value = False     # uncheck it again
+        gui._apply_quality_range()
+        self.assertAlmostEqual(frac_cpu, gui.quality_slider.fraction(), places=2)
 
 
 class TestTimestampParsing(unittest.TestCase):
@@ -1496,6 +1547,49 @@ class TestGammaSliderJump(unittest.TestCase):
         gui._gamma_slider_jump(event)
 
         self.assertAlmostEqual(gui.gamma_slider.set.call_args[0][0], 3.0, places=4)
+
+
+class TestQualitySliderJump(unittest.TestCase):
+    """Clicking the quality trough snaps the knob to the nearest whole step at
+    the cursor, instead of the default page-jump that slides on click-and-hold."""
+
+    def _slider(self, element, width=200, frm=28, to=17):
+        slider = MagicMock()
+        slider.identify.return_value = element
+        slider.winfo_width.return_value = width
+        slider.cget.side_effect = lambda k: {'from': frm, 'to': to}[k]
+        return slider
+
+    def test_trough_click_snaps_to_nearest_step(self):
+        gui = _bare_gui()
+        gui.quality_slider = self._slider('Horizontal.Scale.trough')
+        event = MagicMock(); event.x = 40  # 20% across width 200
+
+        result = gui._quality_slider_jump(event)
+
+        value = gui.quality_slider.set.call_args[0][0]
+        self.assertEqual(value, round(28 + 0.2 * (17 - 28)))  # 25.8 -> 26
+        self.assertEqual(value, int(value))                   # snapped to a whole step
+        self.assertEqual(result, 'break')                     # suppress the page-jump
+
+    def test_click_on_knob_falls_through_to_drag(self):
+        gui = _bare_gui()
+        gui.quality_slider = self._slider('Horizontal.Scale.slider')
+        event = MagicMock(); event.x = 40
+
+        result = gui._quality_slider_jump(event)
+
+        gui.quality_slider.set.assert_not_called()  # let the native drag handle it
+        self.assertIsNone(result)
+
+    def test_click_is_clamped_within_range(self):
+        gui = _bare_gui()
+        gui.quality_slider = self._slider('trough')
+        event = MagicMock(); event.x = 500  # past the right edge -> best end
+
+        gui._quality_slider_jump(event)
+
+        self.assertEqual(gui.quality_slider.set.call_args[0][0], 17)
 
 
 class TestPreviewLoadingIndicator(unittest.TestCase):

@@ -263,6 +263,9 @@ class HDRConverterGUI:
         )
         self.quality_slider.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 8))
         self.quality_slider.set(self.quality_var.get())
+        # Snap the knob to a trough click (see _jump_slider_to_click), matching
+        # the gamma slider instead of ttk's slide-to-end page-jump.
+        self.quality_slider.bind('<Button-1>', self._quality_slider_jump)
         self.quality_value_label = ttk.Label(quality_frame, textvariable=self.quality_var, width=3)
         self.quality_value_label.grid(row=0, column=2, sticky=tk.W)
         ttk.Label(quality_frame, text="Smaller File  ◀──▶  Better Quality",
@@ -531,13 +534,28 @@ class HDRConverterGUI:
     _CQ_RANGE = (30, 15)
 
     def _apply_quality_range(self):
-        """Set the Quality slider's range for the current CPU/GPU mode and clamp."""
+        """Set the Quality slider's range for the current CPU/GPU mode.
+
+        CPU uses CRF (28..17) and GPU uses CQ (30..15) -- different numeric
+        scales, so the *same* value lands at a different spot on the track. To
+        avoid the knob visibly sliding when GPU is toggled, preserve its
+        fractional position and remap the underlying CRF/CQ number to the new
+        range (the displayed value barely moves, the knob doesn't).
+        """
         worst, best = self._CQ_RANGE if self.gpu_accel_var.get() else self._CRF_RANGE
+        old_from = float(self.quality_slider.cget('from'))
+        old_to = float(self.quality_slider.cget('to'))
+        # The slider's float value is the true knob position (quality_var is the
+        # rounded display copy); use it so repeated toggles don't drift.
+        current = float(self.quality_slider.get())
+        if old_to != old_from:
+            fraction = min(max((current - old_from) / (old_to - old_from), 0.0), 1.0)
+        else:
+            fraction = 0.0
+        new_value = worst + fraction * (best - worst)
         self.quality_slider.configure(from_=worst, to=best)
-        lo, hi = min(worst, best), max(worst, best)
-        clamped = max(lo, min(hi, self.quality_var.get()))
-        self.quality_var.set(clamped)
-        self.quality_slider.set(clamped)  # keep the knob in sync with the clamp
+        self.quality_slider.set(new_value)          # exact position -> no jump
+        self.quality_var.set(int(round(new_value)))  # rounded CRF/CQ for display
 
     def _on_quality_change(self, value):
         """Snap the Quality slider to whole CRF/CQ steps (the scale emits floats)."""
@@ -1217,17 +1235,18 @@ class HDRConverterGUI:
         self.converted_image_label.config(image=converted_photo)
         self.converted_image_label.image = converted_photo
 
-    def _gamma_slider_jump(self, event):
-        """Move the gamma knob straight to a trough click instead of nudging it.
+    def _jump_slider_to_click(self, slider, event, snap=False):
+        """Move a ttk.Scale's knob straight to a trough click instead of nudging.
 
         ttk.Scale's default behavior when you click the trough (the bar, not the
-        knob) is to step the value by a fixed page increment toward the click --
-        so the knob never lands where you clicked. Intercept trough clicks and set
-        the value from the click position so the knob jumps under the cursor.
-        ``Scale.set`` fires the slider's ``command`` (on_gamma_change), so the
-        preview refreshes. Clicks on the knob itself fall through to native drag.
+        knob) is to step the value by a fixed page increment toward the click and
+        keep stepping while held -- so the knob slides to the end rather than
+        landing where you clicked. Intercept trough clicks and set the value from
+        the click position so the knob jumps under the cursor; ``snap`` rounds to
+        whole steps (the quality slider). ``Scale.set`` fires the slider's
+        ``command`` so dependent state refreshes. Clicks on the knob itself fall
+        through to native drag.
         """
-        slider = self.gamma_slider
         if 'slider' in slider.identify(event.x, event.y):
             return  # clicking the knob: let the default drag handle it
         width = slider.winfo_width()
@@ -1236,8 +1255,19 @@ class HDRConverterGUI:
         fraction = min(max(event.x / width, 0.0), 1.0)
         low = float(slider.cget('from'))
         high = float(slider.cget('to'))
-        slider.set(low + fraction * (high - low))
+        value = low + fraction * (high - low)
+        if snap:
+            value = round(value)
+        slider.set(value)
         return 'break'  # suppress the default page-jump
+
+    def _gamma_slider_jump(self, event):
+        """Jump the gamma knob to a trough click (continuous, no snapping)."""
+        return self._jump_slider_to_click(self.gamma_slider, event)
+
+    def _quality_slider_jump(self, event):
+        """Snap the quality knob to the nearest whole CRF/CQ step at a click."""
+        return self._jump_slider_to_click(self.quality_slider, event, snap=True)
 
     def _show_preview_loading(self):
         """Show the loading spinner and hide the preview until frames are ready."""

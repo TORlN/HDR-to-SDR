@@ -176,7 +176,9 @@ class TestHDRConverterGUI(TestCase):
         self.assertEqual(convert_call[1]['filter_index'], 0)
         self.assertEqual(convert_call[1]['tonemapper'], 'mobius')
 
-        # Render the extracted frames (main-thread Tk work).
+        # Render the extracted frames (main-thread Tk work). Past the first
+        # reveal so it uses the live-geometry path (mocked frame -> native size).
+        self.gui._window_auto_fitted = True
         self.gui._render_preview_images(original, converted, time_position)
 
         # Verify adjust_gamma is called with correct gamma value

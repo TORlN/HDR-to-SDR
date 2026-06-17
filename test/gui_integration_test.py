@@ -68,7 +68,13 @@ class TestConstruction(_GuiTestBase):
 
     def test_window_title_and_minsize(self):
         self.assertEqual(self.root.title(), "HDR to SDR Converter")
-        self.assertEqual(tuple(self.root.minsize()), DEFAULT_MIN_SIZE)
+        # Min size is computed from the controls (issue 3) so they can't be
+        # clipped: at least the default floor, and wide enough for the controls.
+        min_w, min_h = self.root.minsize()
+        self.assertEqual((min_w, min_h), self.gui._min_window_size)
+        self.assertGreaterEqual(min_w, DEFAULT_MIN_SIZE[0])
+        self.assertGreaterEqual(min_h, DEFAULT_MIN_SIZE[1])
+        self.assertGreaterEqual(min_w, self.gui.control_frame.winfo_reqwidth())
 
     def test_variable_defaults(self):
         self.assertEqual(self.gui.gamma_var.get(), 1.0)
@@ -112,6 +118,14 @@ class TestConstruction(_GuiTestBase):
         self.assertIsInstance(self.gui.custom_seek_button, ttk.Button)
         # Both live inside the frame-button container so they hide/reveal with it.
         self.assertEqual(self.gui.custom_time_entry.winfo_parent(),
+                         str(self.gui.button_container))
+
+    def test_custom_seek_has_explanatory_caption(self):
+        # Issue 2: the bare "Go" button needs a hint about what it does. A caption
+        # above the entry explains the custom-seek field and its time format.
+        self.assertIsInstance(self.gui.custom_seek_label, ttk.Label)
+        self.assertTrue(self.gui.custom_seek_label.cget('text').strip())
+        self.assertEqual(self.gui.custom_seek_label.winfo_parent(),
                          str(self.gui.button_container))
 
     def test_entries_bound_to_path_variables(self):
@@ -236,7 +250,7 @@ class TestStateAndLayout(_GuiTestBase):
         self.gui.clear_preview()
         self.assertIsNone(self.gui.original_image)
         self.assertIsNone(self.gui.converted_image_base)
-        self.assertEqual(tuple(self.root.minsize()), DEFAULT_MIN_SIZE)
+        self.assertEqual(tuple(self.root.minsize()), self.gui._min_window_size)
         self.assertEqual(self.gui.original_image_label.cget('image'), '')
         self.assertEqual(self.gui.converted_image_label.cget('image'), '')
 
@@ -309,7 +323,7 @@ class TestUserActions(_GuiTestBase):
         self.gui.display_image_var.set(False)
         self.gui.input_path_var.set('')
         self.gui.update_frame_preview()  # must not call ffmpeg or raise
-        self.assertEqual(tuple(self.root.minsize()), DEFAULT_MIN_SIZE)
+        self.assertEqual(tuple(self.root.minsize()), self.gui._min_window_size)
         self.assertEqual(self.gui.button_container.grid_info(), {})
 
     def test_custom_seek_sets_position_and_previews(self):

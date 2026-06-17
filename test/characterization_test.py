@@ -485,6 +485,8 @@ class TestPreviewWorkerThreadRender(unittest.TestCase):
         gui.adjust_window_size = MagicMock()
         gui._hide_preview_loading = MagicMock()
         gui._reveal_preview = MagicMock()
+        # Past the first reveal -> live-geometry path; no image_frame -> native size.
+        gui._window_auto_fitted = True
 
         gui._render_preview_images(mock_img, mock_img, time_position=12.0)
 
@@ -1550,6 +1552,109 @@ class TestResponsivePreview(unittest.TestCase):
         gui._rescale_preview_to_window()
         gui._render_preview_at_size.assert_called_once_with((320, 180))
         self.assertIsNone(gui._resize_job)
+
+    def test_initial_preview_size_is_generous(self):
+        # Issue 1: the first preview should open noticeably larger than the
+        # minimum pane, so freshly added files aren't tiny thumbnails.
+        from src.gui import INITIAL_PANE_SIZE, _MIN_PANE_W
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui.root.winfo_screenwidth.return_value = 3840  # plenty of room
+        self.assertEqual(gui._initial_preview_size(), INITIAL_PANE_SIZE)
+        self.assertGreater(INITIAL_PANE_SIZE[0], _MIN_PANE_W)
+
+    def test_initial_preview_size_capped_to_screen(self):
+        from src.gui import INITIAL_PANE_SIZE
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui.root.winfo_screenwidth.return_value = 800  # narrow screen
+        w, h = gui._initial_preview_size()
+        self.assertLess(w, INITIAL_PANE_SIZE[0])  # capped down so two panes fit
+        self.assertEqual(h, round(w * PREVIEW_SIZE[1] / PREVIEW_SIZE[0]))  # 16:9
+
+    def test_initial_preview_size_defaults_without_real_screen(self):
+        from src.gui import INITIAL_PANE_SIZE
+        gui = _bare_gui()
+        gui.root = MagicMock()  # winfo_screenwidth returns a MagicMock, not int
+        self.assertEqual(gui._initial_preview_size(), INITIAL_PANE_SIZE)
+
+    def test_first_reveal_renders_at_initial_size(self):
+        gui = _bare_gui()
+        gui._window_auto_fitted = False
+        gui._initial_preview_size = MagicMock(return_value=(640, 360))
+        gui._preview_target_size = MagicMock(return_value=(200, 113))
+        gui._render_preview_at_size = MagicMock()
+        gui._hide_preview_loading = MagicMock()
+        gui._reveal_preview = MagicMock()
+        gui.adjust_window_size = MagicMock()
+        gui._render_preview_images(MagicMock(), MagicMock(), time_position=5.0)
+        gui._render_preview_at_size.assert_called_once_with((640, 360))
+        gui._preview_target_size.assert_not_called()
+
+    def test_later_reveal_renders_at_target_size(self):
+        gui = _bare_gui()
+        gui._window_auto_fitted = True
+        gui._initial_preview_size = MagicMock()
+        gui._preview_target_size = MagicMock(return_value=(200, 113))
+        gui._render_preview_at_size = MagicMock()
+        gui._hide_preview_loading = MagicMock()
+        gui._reveal_preview = MagicMock()
+        gui.adjust_window_size = MagicMock()
+        gui._render_preview_images(MagicMock(), MagicMock(), time_position=5.0)
+        gui._render_preview_at_size.assert_called_once_with((200, 113))
+        gui._initial_preview_size.assert_not_called()
+
+
+class TestMinWindowSize(unittest.TestCase):
+    """Min window size is derived from the controls so they can't be clipped (issue 3)."""
+
+    @staticmethod
+    def _frame(w, h):
+        f = MagicMock()
+        f.winfo_reqwidth.return_value = w
+        f.winfo_reqheight.return_value = h
+        return f
+
+    def test_compute_min_from_chrome(self):
+        from src.gui import _MIN_SIZE_MARGIN
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui.control_frame = self._frame(700, 200)
+        gui.batch_frame = self._frame(500, 120)
+        gui.action_frame = self._frame(400, 60)
+        w, h = gui._compute_min_window_size()
+        # width = widest chrome frame, height = the three stacked (+ margin)
+        self.assertEqual(w, 700 + _MIN_SIZE_MARGIN[0])
+        self.assertEqual(h, 200 + 120 + 60 + _MIN_SIZE_MARGIN[1])
+
+    def test_compute_min_floors_at_default(self):
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui.control_frame = self._frame(100, 30)
+        gui.batch_frame = self._frame(80, 20)
+        gui.action_frame = self._frame(60, 10)
+        self.assertEqual(gui._compute_min_window_size(), DEFAULT_MIN_SIZE)
+
+    def test_compute_min_falls_back_on_mocked_geometry(self):
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui.control_frame = MagicMock()  # winfo_reqwidth -> MagicMock, not int
+        gui.batch_frame = MagicMock()
+        gui.action_frame = MagicMock()
+        self.assertEqual(gui._compute_min_window_size(), DEFAULT_MIN_SIZE)
+
+    def test_apply_min_uses_computed_size(self):
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui._min_window_size = (777, 321)
+        gui._apply_min_window_size()
+        gui.root.minsize.assert_called_once_with(777, 321)
+
+    def test_apply_min_defaults_before_layout(self):
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui._apply_min_window_size()
+        gui.root.minsize.assert_called_once_with(*DEFAULT_MIN_SIZE)
 
 
 class TestGuiLifecycle(unittest.TestCase):

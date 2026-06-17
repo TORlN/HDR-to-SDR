@@ -14,10 +14,12 @@ import re
 
 DEFAULT_MIN_SIZE = (550, 150)
 PREVIEW_SIZE = (960, 540)       # native (max) on-screen size of each preview pane
+INITIAL_PANE_SIZE = (640, 360)  # comfortable per-pane size on the first preview reveal
 _MIN_PANE_W = 240               # don't shrink a preview pane narrower than this
 _RESIZE_DEBOUNCE_MS = 60        # coalesce a burst of resize events into one rescale
 _PREVIEW_WIDTH_RESERVE = 160    # frame-button column + inter-pane padding (per row)
 _PREVIEW_HEIGHT_RESERVE = 130   # titles + frame-button row + progress bar + padding
+_MIN_SIZE_MARGIN = (16, 16)     # buffer added to the computed min size so nothing clips
 
 class HDRConverterGUI:
     """
@@ -72,6 +74,12 @@ class HDRConverterGUI:
         # Create widgets and configure layout
         self.create_widgets()
         self.configure_grid()
+
+        # Derive the minimum window size from the controls so the user can never
+        # drag the window small enough to clip them (the preview pane shrinks to
+        # take up the slack -- see _on_window_configure).
+        self._min_window_size = self._compute_min_window_size()
+        self._apply_min_window_size()
 
         # Bind events
         self.root.drop_target_register(DND_FILES)
@@ -323,14 +331,19 @@ class HDRConverterGUI:
 
         # Custom seek: type an exact HH:MM:SS (or MM:SS / SS) below the numbered
         # buttons to preview any moment. Lives in button_container so it hides and
-        # reveals together with the frame buttons during loading.
+        # reveals together with the frame buttons during loading. A small caption
+        # above the entry explains what the bare "Go" button does and the format.
+        self.custom_seek_label = ttk.Label(
+            self.button_container, text="Jump to time\n(HH:MM:SS)",
+            foreground='gray', justify=tk.CENTER)
+        self.custom_seek_label.grid(row=self.total_frames, column=0, pady=(10, 0))
         self.custom_time_entry = ttk.Entry(
             self.button_container, textvariable=self.custom_time_var, width=8)
-        self.custom_time_entry.grid(row=self.total_frames, column=0, pady=(10, 2))
+        self.custom_time_entry.grid(row=self.total_frames + 1, column=0, pady=(2, 2))
         self.custom_time_entry.bind('<Return>', self.on_custom_seek)
         self.custom_seek_button = ttk.Button(
             self.button_container, text="Go", width=4, command=self.on_custom_seek)
-        self.custom_seek_button.grid(row=self.total_frames + 1, column=0, pady=(0, 5))
+        self.custom_seek_button.grid(row=self.total_frames + 2, column=0, pady=(0, 5))
 
         # Loading indicator shown over the image area while a preview frame is
         # being extracted (the titles, frame buttons and images stay hidden until
@@ -676,7 +689,36 @@ class HDRConverterGUI:
         self.original_image = None
         self.converted_image_base = None
         self._converted_preview_base = None
-        self.root.minsize(*DEFAULT_MIN_SIZE)
+        self._apply_min_window_size()
+
+    def _compute_min_window_size(self):
+        """Smallest window that keeps every control visible (the preview may shrink).
+
+        Derived from the chrome that must never be clipped -- the controls, the
+        batch queue and the action buttons -- but deliberately *excludes* the
+        preview pane, which is free to rescale down to nothing as the window
+        shrinks (see :meth:`_on_window_configure`). Width is the widest chrome
+        frame; height is the three stacked frames. Falls back to
+        ``DEFAULT_MIN_SIZE`` on bare/mocked instances where widget geometry isn't
+        real, and never returns less than that floor.
+        """
+        try:
+            self.root.update_idletasks()
+            frames = (self.control_frame, self.batch_frame, self.action_frame)
+            widths = [f.winfo_reqwidth() for f in frames]
+            heights = [f.winfo_reqheight() for f in frames]
+        except Exception:
+            return DEFAULT_MIN_SIZE
+        if not all(isinstance(v, int) for v in widths + heights):
+            return DEFAULT_MIN_SIZE  # mocked geometry -> use the floor
+        margin_w, margin_h = _MIN_SIZE_MARGIN
+        min_w = max(widths) + margin_w
+        min_h = sum(heights) + margin_h
+        return (max(min_w, DEFAULT_MIN_SIZE[0]), max(min_h, DEFAULT_MIN_SIZE[1]))
+
+    def _apply_min_window_size(self):
+        """Apply the computed minimum window size (``DEFAULT_MIN_SIZE`` pre-layout)."""
+        self.root.minsize(*getattr(self, '_min_window_size', DEFAULT_MIN_SIZE))
 
     def adjust_window_size(self):
         """Fit the window to the previews on first reveal; keep minsize small.
@@ -687,7 +729,7 @@ class HDRConverterGUI:
         once, on the first preview, so re-rendering a later frame never yanks a
         window the user has since resized.
         """
-        self.root.minsize(*DEFAULT_MIN_SIZE)
+        self._apply_min_window_size()
         if getattr(self, '_window_auto_fitted', False):
             return
 
@@ -729,6 +771,28 @@ class HDRConverterGUI:
         avail_w = (frame_w - _PREVIEW_WIDTH_RESERVE) / 2  # two panes share the width
         avail_h = frame_h - _PREVIEW_HEIGHT_RESERVE if frame_h > 1 else 0
         return self._fit_preview_pane(avail_w, avail_h)
+
+    def _initial_preview_size(self):
+        """Per-pane size for the very first preview, before the window auto-fits.
+
+        On first load the image frame is still only as wide as the controls
+        above it, so deriving the pane size from its live geometry would render a
+        cramped thumbnail and then shrink-wrap the window down to match. Use a
+        comfortable default instead, capped so two panes plus the chrome still
+        fit on screen. After the first auto-fit, resizing uses the live geometry
+        (:meth:`_preview_target_size`) so the user stays in control.
+        """
+        pane_w, pane_h = INITIAL_PANE_SIZE
+        try:
+            screen_w = self.root.winfo_screenwidth()
+        except Exception:
+            return (pane_w, pane_h)
+        if not isinstance(screen_w, int):
+            return (pane_w, pane_h)  # mocked geometry -> use the default
+        max_pane_w = (screen_w - 100 - _PREVIEW_WIDTH_RESERVE) // 2
+        if 0 < max_pane_w < pane_w:
+            return self._fit_preview_pane(max_pane_w, 0)  # cap to fit the screen
+        return (pane_w, pane_h)
 
     def _render_preview_at_size(self, size):
         """(Re)render both panes at ``size``; SDR pane keeps the live gamma.
@@ -1313,11 +1377,17 @@ class HDRConverterGUI:
         self.last_time_position = time_position
         self.converted_image_base = converted_image_base
 
-        # Render both panes at the size that fits the current window (responsive:
-        # shrinks with the window instead of a fixed 960x540). This also re-caches
-        # the display-sized SDR base so a later gamma change only re-runs the
-        # cheap PIL gamma pass -- no ffmpeg, no full-res resize.
-        self._render_preview_at_size(self._preview_target_size())
+        # Render both panes at the right size (responsive: shrinks with the
+        # window instead of a fixed 960x540). The first preview uses a generous
+        # default (then the window auto-fits to it); later previews/resizes use
+        # the live window geometry. This also re-caches the display-sized SDR
+        # base so a later gamma change only re-runs the cheap PIL gamma pass --
+        # no ffmpeg, no full-res resize.
+        if getattr(self, '_window_auto_fitted', False):
+            size = self._preview_target_size()
+        else:
+            size = self._initial_preview_size()
+        self._render_preview_at_size(size)
 
         self._reveal_preview()  # show titles, frame buttons and the images
         self.adjust_window_size()  # Ensure window size is adjusted after displaying images

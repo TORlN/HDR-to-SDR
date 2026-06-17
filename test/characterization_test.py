@@ -981,6 +981,18 @@ class TestBatchProcessing(unittest.TestCase):
 
     @patch('src.gui.conversion_manager')
     @patch('src.gui.os.path.isfile', return_value=True)
+    def test_start_does_not_reload_already_previewed_file(self, _isfile, mock_cm):
+        # The top file was already loaded when added; starting the batch must not
+        # re-render it (no spinner flash on the file already on screen).
+        gui = self._gui()
+        gui.input_path_var = MagicMock(); gui.input_path_var.get.return_value = 'a.mkv'
+        gui.batch_items = [self._item('a'), self._item('b')]
+        gui.start_batch()
+        gui._load_input_file.assert_not_called()
+        mock_cm.start_conversion.assert_called_once()  # conversion still starts
+
+    @patch('src.gui.conversion_manager')
+    @patch('src.gui.os.path.isfile', return_value=True)
     def test_advance_loads_next_file_into_preview(self, _isfile, mock_cm):
         gui = self._gui()
         gui.batch_items = [self._item('a', 'Converting'), self._item('b')]

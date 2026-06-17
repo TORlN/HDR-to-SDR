@@ -907,8 +907,11 @@ class HDRConverterGUI:
         self._refresh_batch_list()
         self.progress_var.set(0)
         # Switch the preview to the file now being converted, as if it had been
-        # selected, so the frames track the queue's progress.
-        self._load_input_file(item['input'])
+        # selected, so the frames track the queue's progress -- but skip the
+        # reload (and its spinner) when that file is already the one on screen.
+        current = self.input_path_var.get() if hasattr(self, 'input_path_var') else None
+        if current != item['input']:
+            self._load_input_file(item['input'])
 
         output_path = os.path.normpath(item['output'])
         gamma = self.gamma_var.get()

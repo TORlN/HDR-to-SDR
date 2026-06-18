@@ -1,0 +1,31 @@
+{
+  // Production code (src/) is held to a clean bar: 0 errors, enforced here and in CI.
+  // src/ has no __init__.py (implicit namespace package). Tests import it as
+  // `src.gui` while the src modules import each other bare (`from utils import ...`),
+  // so both the project root and src/ must be on the import path.
+  "include": ["src", "test"],
+  "exclude": ["**/.venv", "**/__pycache__", "build", "dist"],
+  "venvPath": ".",
+  "venv": ".venv",
+  "typeCheckingMode": "standard",
+  "extraPaths": [".", "src"],
+
+  "executionEnvironments": [
+    {
+      // Tests legitimately do things static typing can't express: monkeypatching
+      // methods (gui._method = lambda ...), poking private attrs on bare
+      // object.__new__ instances, and subscripting the dict|None / str|None that
+      // mocked helpers return when the test knows the value is non-None. These
+      // rules are noise in test/ only -- src/ keeps them on.
+      "root": "test",
+      "extraPaths": [".", "src"],
+      "reportAttributeAccessIssue": "none",
+      "reportArgumentType": "none",
+      "reportCallIssue": "none",
+      "reportOptionalSubscript": "none",
+      "reportOptionalMemberAccess": "none",
+      "reportOptionalIterable": "none",
+      "reportTypedDictNotRequiredAccess": "none"
+    }
+  ]
+}

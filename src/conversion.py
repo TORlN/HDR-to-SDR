@@ -268,6 +268,8 @@ class ConversionManager:
         error_messages = []
         gpu_error_detected = False
 
+        if self.process is None or self.process.stderr is None:
+            return
         for line in self.process.stderr:
             if self.process is None:
                 return
@@ -286,7 +288,8 @@ class ConversionManager:
 
         if self.process is not None:
             self.process.wait()
-            if self.process.returncode != 0 and self.use_gpu and gpu_error_detected and not self.cancelled:
+            returncode = self.process.returncode
+            if returncode != 0 and self.use_gpu and gpu_error_detected and not self.cancelled:
                 logging.warning("GPU acceleration failed. Retrying with CPU encoding.")
                 # The retry touches Tk (gpu checkbox, dialog, UI state) and must run
                 # on the main thread, not this worker thread.
@@ -326,20 +329,23 @@ class ConversionManager:
     def handle_completion(self, gui_instance, interactable_elements, cancel_button,
                           output_path, open_after_conversion, error_messages):
         def _handle():
+            # Snapshot the exit code once (the process may be None on a bare/mock
+            # instance); None is treated as "not success" everywhere below.
+            returncode = self.process.returncode if self.process is not None else None
             on_complete = getattr(self, '_on_complete', None)
             if on_complete is not None:
                 # Batch/queue mode: no per-file dialog and the UI stays disabled
                 # between files. The callback marks status and advances the queue
                 # (the final summary + UI re-enable happen when the queue drains).
-                success = bool(self.process and self.process.returncode == 0)
+                success = returncode == 0
                 if not success and not self.cancelled:
                     tail = '\n'.join(error_messages[-50:])
                     logging.error(f"Batch item failed with code "
-                                  f"{self.process.returncode}: {tail}")
+                                  f"{returncode}: {tail}")
                 on_complete(success)
                 return
 
-            if self.process and self.process.returncode == 0:
+            if returncode == 0:
                 logging.info("Conversion completed successfully.")
                 messagebox.showinfo(
                     "Success", f"Conversion complete! Output saved to: {output_path}")
@@ -348,9 +354,9 @@ class ConversionManager:
             elif not self.cancelled:
                 tail = error_messages[-50:]  # ffmpeg stderr can be thousands of progress lines; show only the tail where real errors appear
                 error_message = '\n'.join(tail)
-                logging.error(f"Conversion failed with code {self.process.returncode}: {error_message}")
+                logging.error(f"Conversion failed with code {returncode}: {error_message}")
                 messagebox.showerror(
-                    "Error", f"Conversion failed with code {self.process.returncode}\n{error_message}")
+                    "Error", f"Conversion failed with code {returncode}\n{error_message}")
 
             self.enable_ui(interactable_elements)
             cancel_button.grid_remove()

@@ -143,29 +143,29 @@ class HDRConverterGUI:
         """Create and arrange the widgets in the main window."""
         # Control Frame
         self.control_frame = ttk.Frame(self.root, padding="10")
-        self.control_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N))
+        self.control_frame.grid(row=0, column=0, sticky=tk.W + tk.E + tk.N)
 
         # Input File Widgets
         ttk.Label(self.control_frame, text="Input File:").grid(row=0, column=0, sticky=tk.W)
         self.input_entry = ttk.Entry(self.control_frame, textvariable=self.input_path_var, width=40)
-        self.input_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 10))
+        self.input_entry.grid(row=0, column=1, sticky=tk.W + tk.E, padx=(10, 10))
         self.browse_button = ttk.Button(
             self.control_frame,
             text="Browse",
             command=self.select_file
         )
-        self.browse_button.grid(row=0, column=2, sticky=(tk.W, tk.E), padx=(5, 0))
+        self.browse_button.grid(row=0, column=2, sticky=tk.W + tk.E, padx=(5, 0))
 
         # Output File Widgets
         ttk.Label(self.control_frame, text="Output File:").grid(row=1, column=0, sticky=tk.W)
         self.output_entry = ttk.Entry(self.control_frame, textvariable=self.output_path_var, width=40)
-        self.output_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=(10, 10))
+        self.output_entry.grid(row=1, column=1, sticky=tk.W + tk.E, padx=(10, 10))
         # Output container dropdown: an explicit MP4/MKV/MOV choice (col 2).
         self.format_combobox = ttk.Combobox(
             self.control_frame, textvariable=self.format_var,
             values=self._OUTPUT_FORMATS, state='readonly', width=6
         )
-        self.format_combobox.grid(row=1, column=2, sticky=(tk.W, tk.E), padx=(5, 0))
+        self.format_combobox.grid(row=1, column=2, sticky=tk.W + tk.E, padx=(5, 0))
         self.format_combobox.bind('<<ComboboxSelected>>', self._on_format_change)
 
         # Gamma Adjustment Widgets
@@ -179,11 +179,11 @@ class HDRConverterGUI:
             length=200,
             command=self.on_gamma_change
         )
-        self.gamma_slider.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=(10, 10))
+        self.gamma_slider.grid(row=2, column=1, sticky=tk.W + tk.E, padx=(10, 10))
         # Make a click on the trough jump the knob to the click (see _gamma_slider_jump).
         self.gamma_slider.bind('<Button-1>', self._gamma_slider_jump)
         self.gamma_entry = ttk.Entry(self.control_frame, textvariable=self.gamma_var, width=5)
-        self.gamma_entry.grid(row=2, column=2, sticky=(tk.W, tk.E), padx=(5, 0))
+        self.gamma_entry.grid(row=2, column=2, sticky=tk.W + tk.E, padx=(5, 0))
         self.gamma_entry.bind('<Return>', self.on_gamma_change)
 
         # GPU Acceleration Checkbox
@@ -276,13 +276,13 @@ class HDRConverterGUI:
         # GPU (CQ 15-30) mode. Driven by a command that snaps to whole steps (the
         # scale emits floats); the value label and range are kept in sync.
         quality_frame = ttk.Frame(self.control_frame)
-        quality_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(5, 0))
+        quality_frame.grid(row=5, column=0, columnspan=3, sticky=tk.W + tk.E, pady=(5, 0))
         ttk.Label(quality_frame, text="Quality:").grid(row=0, column=0, sticky=tk.W)
         self.quality_slider = ttk.Scale(
             quality_frame, from_=self._CRF_RANGE[0], to=self._CRF_RANGE[1],
             orient=tk.HORIZONTAL, length=200, command=self._on_quality_change
         )
-        self.quality_slider.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 8))
+        self.quality_slider.grid(row=0, column=1, sticky=tk.W + tk.E, padx=(10, 8))
         self.quality_slider.set(self.quality_var.get())
         # Snap the knob to a trough click (see _jump_slider_to_click), matching
         # the gamma slider instead of ttk's slide-to-end page-jump.
@@ -295,7 +295,7 @@ class HDRConverterGUI:
 
         # Image Frame for Displaying Images
         self.image_frame = ttk.Frame(self.root, padding="10")
-        self.image_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.image_frame.grid(row=1, column=0, sticky=tk.W + tk.E + tk.N + tk.S)
         self.image_frame.grid_remove()
 
         # Image Titles
@@ -311,12 +311,12 @@ class HDRConverterGUI:
 
         # Image Labels
         self.original_image_label = ttk.Label(self.image_frame)
-        self.original_image_label.grid(row=1, column=0, columnspan=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(10, 10))
+        self.original_image_label.grid(row=1, column=0, columnspan=1, sticky=tk.W + tk.E + tk.N + tk.S, padx=(10, 10))
         self.converted_image_label = ttk.Label(self.image_frame)
-        self.converted_image_label.grid(row=1, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(10, 0))
+        self.converted_image_label.grid(row=1, column=1, sticky=tk.W + tk.E + tk.N + tk.S, padx=(10, 0))
 
         self.button_container = ttk.Frame(self.image_frame)  # New container frame
-        self.button_container.grid(row=1, column=2, sticky=(tk.N), padx=(5, 10))
+        self.button_container.grid(row=1, column=2, sticky=tk.N, padx=(5, 10))
         self.button_container.grid_remove()  # Initially hide the button container
         
         self.frame_buttons = []  # List to store frame buttons
@@ -402,12 +402,12 @@ class HDRConverterGUI:
 
         # Progress Bar
         self.progress_bar = ttk.Progressbar(self.image_frame, variable=self.progress_var, maximum=100)
-        self.progress_bar.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E))
+        self.progress_bar.grid(row=3, column=0, columnspan=3, sticky=tk.W + tk.E)
 
         # Batch Queue panel: add several files and convert them one after another.
         # Always visible so files can be queued before selecting a single preview.
         self.batch_frame = ttk.LabelFrame(self.root, text="Batch Queue", padding="10")
-        self.batch_frame.grid(row=2, column=0, padx=10, pady=(0, 5), sticky=(tk.W, tk.E))
+        self.batch_frame.grid(row=2, column=0, padx=10, pady=(0, 5), sticky=tk.W + tk.E)
         self.batch_frame.columnconfigure(0, weight=1)
 
         batch_buttons = ttk.Frame(self.batch_frame)
@@ -429,10 +429,10 @@ class HDRConverterGUI:
         # A taller list that fills the panel vertically, so a queue of several
         # files is visible at a glance and the scrollbar spans the whole list.
         self.batch_listbox = tk.Listbox(self.batch_frame, height=8, activestyle='none')
-        self.batch_listbox.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.batch_listbox.grid(row=2, column=0, sticky=tk.W + tk.E + tk.N + tk.S)
         batch_scroll = ttk.Scrollbar(
             self.batch_frame, orient=tk.VERTICAL, command=self.batch_listbox.yview)
-        batch_scroll.grid(row=2, column=1, sticky=(tk.N, tk.S))
+        batch_scroll.grid(row=2, column=1, sticky=tk.N + tk.S)
         self.batch_frame.rowconfigure(2, weight=1)
         self.batch_listbox.config(yscrollcommand=batch_scroll.set)
         self.batch_listbox.bind('<<ListboxSelect>>', self.on_batch_item_select)
@@ -800,21 +800,34 @@ class HDRConverterGUI:
             return self._fit_preview_pane(max_pane_w, 0)  # cap to fit the screen
         return (pane_w, pane_h)
 
+    @staticmethod
+    def _keep_image_ref(label, photo):
+        """Pin a PhotoImage to its label so Tk doesn't garbage-collect it.
+
+        Tkinter keeps only a weak reference to a displayed image, so the photo
+        must be held somewhere or it vanishes. Stashing it on the widget via
+        setattr keeps the standard idiom (``label.image = photo``) without
+        tripping the type checker, which doesn't know widgets accept arbitrary
+        attributes.
+        """
+        setattr(label, 'image', photo)
+
     def _render_preview_at_size(self, size):
         """(Re)render both panes at ``size``; SDR pane keeps the live gamma.
 
         Resizes from the cached PREVIEW_SIZE bases (``original_image`` and
         ``converted_image_base``) -- a couple of PIL resizes, no ffmpeg.
         """
-        if getattr(self, 'original_image', None) is None:
+        original = getattr(self, 'original_image', None)
+        if original is None:
             return  # nothing extracted yet
         self._preview_render_size = size
-        original_resized = self.original_image.resize(size, Image.LANCZOS)
+        original_resized = original.resize(size, Image.Resampling.LANCZOS)
         original_photo = ImageTk.PhotoImage(original_resized)
         self.original_image_label.config(image=original_photo)
-        self.original_image_label.image = original_photo
+        self._keep_image_ref(self.original_image_label, original_photo)
         if self.converted_image_base is not None:
-            self._converted_preview_base = self.converted_image_base.resize(size, Image.LANCZOS)
+            self._converted_preview_base = self.converted_image_base.resize(size, Image.Resampling.LANCZOS)
             self._apply_gamma_to_preview()
 
     def _on_window_configure(self, event=None):
@@ -848,27 +861,27 @@ class HDRConverterGUI:
     def resize_images(self, max_width, max_height):
         """Resize images to fit within the specified maximum width and height."""
         if self.original_image:
-            original_image_resized = self.original_image.resize((max_width // 2, max_height // 2), Image.LANCZOS)
+            original_image_resized = self.original_image.resize((max_width // 2, max_height // 2), Image.Resampling.LANCZOS)
             original_photo = ImageTk.PhotoImage(original_image_resized)
             self.original_image_label.config(image=original_photo)
-            self.original_image_label.image = original_photo
+            self._keep_image_ref(self.original_image_label, original_photo)
 
         if self.converted_image_base:
             gamma = self.gamma_var.get()
             adjusted_converted_image = self.adjust_gamma(self.converted_image_base, gamma)
-            converted_image_resized = adjusted_converted_image.resize((max_width // 2, max_height // 2), Image.LANCZOS)
+            converted_image_resized = adjusted_converted_image.resize((max_width // 2, max_height // 2), Image.Resampling.LANCZOS)
             converted_photo = ImageTk.PhotoImage(converted_image_resized)
             self.converted_image_label.config(image=converted_photo)
-            self.converted_image_label.image = converted_photo
+            self._keep_image_ref(self.converted_image_label, converted_photo)
 
     def arrange_widgets(self, image_frame):
         """Arrange the widgets in the appropriate frames."""
         if image_frame:
             self.button_frame.grid(row=2, column=0, columnspan=3, pady=(5, 0), sticky=tk.N)
-            self.progress_bar.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E))
+            self.progress_bar.grid(row=3, column=0, columnspan=3, sticky=tk.W + tk.E)
         else:
             self.button_frame.grid(row=5, column=0, columnspan=3, pady=(5, 0), sticky=tk.N)
-            self.progress_bar.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E))
+            self.progress_bar.grid(row=6, column=0, columnspan=3, sticky=tk.W + tk.E)
         self.open_after_conversion_checkbutton.grid(row=1, column=0, padx=(5, 5), sticky=tk.N)
         self.convert_button.grid(row=1, column=1, padx=(5, 5), pady=(0, 10), sticky=tk.N)
         self.cancel_button.grid_remove()  # Ensure cancel button is hidden
@@ -1410,7 +1423,7 @@ class HDRConverterGUI:
         adjusted = self.adjust_gamma(base, self.gamma_var.get())
         converted_photo = ImageTk.PhotoImage(adjusted)
         self.converted_image_label.config(image=converted_photo)
-        self.converted_image_label.image = converted_photo
+        self._keep_image_ref(self.converted_image_label, converted_photo)
 
     def _jump_slider_to_click(self, slider, event, snap=False):
         """Move a ttk.Scale's knob straight to a trough click instead of nudging.

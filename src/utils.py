@@ -68,7 +68,7 @@ def setup_logging():
 def get_executable_path(filename):
     """Helper function to get the correct path for bundled executables"""
     try:
-        base_path = sys._MEIPASS if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+        base_path = getattr(sys, '_MEIPASS') if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
         if sys.platform != 'win32' and filename.endswith('.exe'):
             filename = filename[:-4]
         
@@ -94,7 +94,7 @@ def verify_ffmpeg_files():
     global FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE
     try:
         if getattr(sys, 'frozen', False):
-            base_path = sys._MEIPASS
+            base_path = getattr(sys, '_MEIPASS')
             logging.debug(f"Verifying FFmpeg files in bundled environment: {base_path}")
         else:
             base_path = os.path.dirname(os.path.abspath(__file__))
@@ -129,17 +129,19 @@ def initialize_ffmpeg():
         FFMPEG_EXECUTABLE = found_files['ffmpeg.exe']
         FFPROBE_EXECUTABLE = found_files['ffprobe.exe']
 
-        # Configure ffmpeg-python
-        ffmpeg._ffmpeg_binary = FFMPEG_EXECUTABLE
-        ffmpeg._ffprobe_binary = FFPROBE_EXECUTABLE
-        
+        # Configure ffmpeg-python. These are private, undeclared module
+        # attributes, so set/read them via setattr/getattr to keep static type
+        # checkers from flagging them as unknown attributes of the module.
+        setattr(ffmpeg, '_ffmpeg_binary', FFMPEG_EXECUTABLE)
+        setattr(ffmpeg, '_ffprobe_binary', FFPROBE_EXECUTABLE)
+
         # Set environment variables
         os.environ['FFMPEG_BINARY'] = FFMPEG_EXECUTABLE
         os.environ['FFPROBE_BINARY'] = FFPROBE_EXECUTABLE
 
         # Add diagnostic logging
-        logging.debug(f"Configured ffmpeg binary: {ffmpeg._ffmpeg_binary}")
-        logging.debug(f"Configured ffprobe binary: {ffmpeg._ffprobe_binary}")
+        logging.debug(f"Configured ffmpeg binary: {getattr(ffmpeg, '_ffmpeg_binary', None)}")
+        logging.debug(f"Configured ffprobe binary: {getattr(ffmpeg, '_ffprobe_binary', None)}")
 
     except Exception as e:
         # Surfacing the error is the caller's job (the GUI shows it on startup);
@@ -267,7 +269,8 @@ def _compute_maxfall(video_path):
     return 100  # Default value if MAXFALL is not found
 
 def extract_frame_with_conversion(video_path, gamma, filter_index, tonemapper='reinhard',
-                                  time_position=None, width='iw', height='ih'):
+                                  time_position=None, width: 'int | str' = 'iw',
+                                  height: 'int | str' = 'ih'):
     """
     Extracts a frame from the video and applies tonemapping conversion.
     Args:
@@ -316,7 +319,8 @@ def extract_frame_with_conversion(video_path, gamma, filter_index, tonemapper='r
         logging.error(f"Failed to extract and convert frame: {e}")
         raise RuntimeError("Failed to extract and convert frame.")
 
-def extract_frame(video_path, time_position=None, width=None, height=None):
+def extract_frame(video_path, time_position=None, width: 'int | None' = None,
+                  height: 'int | None' = None):
     """
     Extracts a frame from the video.
     Args:

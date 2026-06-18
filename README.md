@@ -18,7 +18,7 @@ This is a desktop GUI application to convert HDR videos to SDR using FFmpeg. The
 - **Quality Control**: A single Quality slider (CRF 17–28 on CPU, CQ 15–30 on GPU) trades file size against quality.
 - **Output Container**: Explicitly choose the output container (MP4 / MKV / MOV); it defaults to match the input. Audio and subtitles are stream-copied when the container allows, and transcoded or dropped only when it can't hold them (e.g. TrueHD audio or PGS subtitles into MP4).
 - **Video Info Strip**: After a file loads, a one-line summary shows resolution, frame rate, codec, HDR/SDR, and audio codec.
-- **GPU Acceleration**: Use NVIDIA, AMD, or Intel GPUs for faster conversion (`h264_nvenc` / `h264_amf` / `h264_qsv`) when available, with automatic fallback to CPU encoding if the GPU path fails.
+- **GPU Acceleration**: When enabled, conversions run the HDR→SDR tonemapping on the GPU via libplacebo (Vulkan) and encode with the detected hardware encoder (`h264_nvenc` / `h264_amf` / `h264_qsv`). Because tonemapping — not encoding — is the real bottleneck, moving it to the GPU can roughly halve conversion time on capable hardware. Falls back automatically to CPU tonemapping when Vulkan/libplacebo isn't available, and to CPU encoding if the GPU encoder fails.
 - **Batch Conversion Queue**: Add multiple files (via "Add Files" or by dropping several at once) and convert them sequentially. The queue shows a per-file status (pending / converting / done / failed), lets you click an entry to preview it, remove or clear entries, and reports a summary when it finishes.
 - **Monitor & Cancel**: A progress bar tracks the active conversion, and a Cancel button stops it cleanly.
 - **Open Output File**: Optionally open the output automatically when the conversion completes.
@@ -29,7 +29,7 @@ This is a desktop GUI application to convert HDR videos to SDR using FFmpeg. The
 
 - Python 3.10 or newer (tested on 3.10–3.13)
 - FFmpeg (`ffmpeg` and `ffprobe` on your PATH, or bundled alongside the app)
-- GPU acceleration is optional and supported on NVIDIA (`h264_nvenc`), AMD (`h264_amf`), and Intel (`h264_qsv`) hardware.
+- GPU acceleration is optional. GPU tonemapping needs an ffmpeg build with libplacebo (Vulkan); GPU encoding is supported on NVIDIA (`h264_nvenc`), AMD (`h264_amf`), and Intel (`h264_qsv`) hardware. The app degrades gracefully to CPU when either is unavailable.
 
 ## Installation
 
@@ -73,7 +73,7 @@ python src/main.pyw
 
 ## Testing
 
-The project is covered by a unit/integration test suite (currently 318 tests) run on CI against Python 3.10–3.13.
+The project is covered by a unit/integration test suite (currently 331 tests) run on CI against Python 3.10–3.13.
 
 Run the suite:
 ```sh

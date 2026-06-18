@@ -1089,6 +1089,14 @@ class HDRConverterGUI:
         """Begin converting the queued files one after another."""
         if not self.batch_items:
             return False
+        # If the queue was already fully processed (nothing left Pending), a
+        # fresh Convert click means "run it again" -- requeue every item so the
+        # same batch re-runs (e.g. to compare CPU vs GPU). Otherwise we'd jump
+        # straight to the completion summary without converting anything.
+        if not any(it['status'] == 'Pending' for it in self.batch_items):
+            for it in self.batch_items:
+                it['status'] = 'Pending'
+            self._refresh_batch_list()
         # Mirror the single-file convert path: free the drop target and reveal
         # the cancel button (start_conversion disables the rest of the UI).
         if self.drop_target_registered:
@@ -1180,12 +1188,12 @@ class HDRConverterGUI:
         if self.gpu_accel_var.get():
             try:
                 logging.debug("Checking GPU acceleration availability.")
-                available = conversion_manager.is_gpu_available()
+                available = conversion_manager.is_gpu_acceleration_available()
                 logging.debug(f"GPU available: {available}")
                 if not available:
                     self.gpu_accel_var.set(False)
                     messagebox.showwarning("GPU Acceleration",
-                                           "GPU acceleration is not available on this system. Supported GPUs: NVIDIA (h264_nvenc), AMD (h264_amf), Intel (h264_qsv). Switching to CPU mode.")
+                                           "GPU acceleration is not available on this system. It needs either a supported hardware encoder (NVIDIA h264_nvenc, AMD h264_amf, Intel h264_qsv) or GPU tonemapping (libplacebo/Vulkan). Switching to CPU mode.")
             except Exception as e:
                 self.gpu_accel_var.set(False)
                 logging.error(f"Error checking GPU acceleration: {e}")

@@ -12,7 +12,7 @@ from src.utils import get_video_properties
 from tkinter import Tk, DoubleVar  # Added DoubleVar import
 from tkinter import ttk
 from PIL import Image
-from src.utils import FFMPEG_FILTER
+from src.utils import FFMPEG_FILTER, FFMPEG_CONVERT_FILTER
 from src.utils import FFMPEG_EXECUTABLE  # Import FFMPEG_EXECUTABLE
 
 def run_ffmpeg_command(command):
@@ -26,6 +26,13 @@ def run_ffmpeg_command(command):
     return output.decode()
 
 class TestConversionManager(unittest.TestCase):
+
+    def setUp(self):
+        # These tests assert the CPU / GPU-encoder command shapes, so pin the
+        # libplacebo probe off (the GPU tonemap path has its own tests below).
+        patcher = patch('src.conversion.vulkan_libplacebo_available', return_value=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     @patch('src.conversion.get_video_properties')
     @patch('src.conversion.subprocess.Popen')
@@ -227,18 +234,16 @@ class TestConversionManager(unittest.TestCase):
         selected_filter_index = 0  # Add selected_filter_index
         tonemapper = 'reinhard'  # Add tonemapper parameter
         
-        expected_filter = FFMPEG_FILTER[selected_filter_index].format(
-            gamma=gamma, 
-            width=properties["width"], 
-            height=properties["height"],
+        expected_filter = FFMPEG_CONVERT_FILTER[selected_filter_index].format(
+            gamma=gamma,
             tonemapper=tonemapper
         )
         cmd = manager.construct_ffmpeg_command(
-            input_path, 
-            output_path, 
-            gamma, 
-            properties, 
-            False,  # use_gpu 
+            input_path,
+            output_path,
+            gamma,
+            properties,
+            False,  # use_gpu
             selected_filter_index,
             tonemapper=tonemapper
         )
@@ -253,7 +258,6 @@ class TestConversionManager(unittest.TestCase):
             '-preset', 'veryfast',  # Changed from 'fast' to 'veryfast'
             '-tune', 'film',        # Added '-tune' option
             '-crf', '23',           # Added '-crf' option
-            '-b:v', str(properties['bit_rate']),
             '-r', str(properties['frame_rate']),
             '-pix_fmt', 'yuv420p',  # Added pix_fmt and yuv420p
             '-strict', '-2',
@@ -298,10 +302,8 @@ class TestConversionManager(unittest.TestCase):
             tonemapper=tonemapper
         )
 
-        expected_filter = FFMPEG_FILTER[1].format(
-            gamma=2.2, 
-            width=1920, 
-            height=1080, 
+        expected_filter = FFMPEG_CONVERT_FILTER[1].format(
+            gamma=2.2,
             npl=10,
             tonemapper=tonemapper
         )
@@ -316,7 +318,6 @@ class TestConversionManager(unittest.TestCase):
             '-preset', 'veryfast',
             '-tune', 'film',
             '-crf', '23',
-            '-b:v', '4000000',
             '-r', '30.0',
             '-pix_fmt', 'yuv420p',
             '-strict', '-2',
@@ -616,10 +617,8 @@ class TestConversionManager(unittest.TestCase):
         selected_filter_index = 0  
         tonemapper = 'reinhard'  # Add tonemapper parameter
 
-        expected_filter = FFMPEG_FILTER[selected_filter_index].format(
-            gamma=gamma, 
-            width=properties["width"], 
-            height=properties["height"],
+        expected_filter = FFMPEG_CONVERT_FILTER[selected_filter_index].format(
+            gamma=gamma,
             tonemapper=tonemapper
         )
         cmd = manager.construct_ffmpeg_command(input_path, output_path, gamma, properties, use_gpu, selected_filter_index)
@@ -634,7 +633,6 @@ class TestConversionManager(unittest.TestCase):
             '-preset', 'veryfast',
             '-tune', 'film',
             '-crf', '23',
-            '-b:v', '4000000',
             '-r', '30.0',
             '-pix_fmt', 'yuv420p',
             '-strict', '-2',
@@ -735,6 +733,27 @@ class TestConversionManager(unittest.TestCase):
         manager = ConversionManager()
         with patch.object(manager, 'detect_gpu_encoder', return_value='h264_nvenc'):
             self.assertTrue(manager.is_gpu_available())
+
+    def test_gpu_acceleration_available_with_encoder_only(self):
+        """A hardware encoder alone enables the GPU toggle."""
+        manager = ConversionManager()
+        with patch.object(manager, 'is_gpu_available', return_value=True), \
+             patch('src.conversion.vulkan_libplacebo_available', return_value=False):
+            self.assertTrue(manager.is_gpu_acceleration_available())
+
+    def test_gpu_acceleration_available_with_libplacebo_only(self):
+        """GPU tonemapping (libplacebo) alone enables the toggle, even with no
+        hardware encoder -- the decoupled case."""
+        manager = ConversionManager()
+        with patch.object(manager, 'is_gpu_available', return_value=False), \
+             patch('src.conversion.vulkan_libplacebo_available', return_value=True):
+            self.assertTrue(manager.is_gpu_acceleration_available())
+
+    def test_gpu_acceleration_unavailable_when_neither(self):
+        manager = ConversionManager()
+        with patch.object(manager, 'is_gpu_available', return_value=False), \
+             patch('src.conversion.vulkan_libplacebo_available', return_value=False):
+            self.assertFalse(manager.is_gpu_acceleration_available())
 
     @patch('src.conversion.messagebox.showwarning')
     @patch('src.conversion.subprocess.Popen')
@@ -869,6 +888,13 @@ class TestDetectGpuEncoder(unittest.TestCase):
 class TestGpuEncoderCommandConstruction(unittest.TestCase):
     """construct_ffmpeg_command uses the detected GPU encoder type correctly."""
 
+    def setUp(self):
+        # These assert the GPU-encoder decode-hwaccel shapes; the libplacebo
+        # tonemap path (which drops decode hwaccel) is covered separately.
+        patcher = patch('src.conversion.vulkan_libplacebo_available', return_value=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     _BASE_PROPS = {
         "width": 1920, "height": 1080, "bit_rate": 4000000,
         "frame_rate": 30.0, "audio_codec": "aac", "audio_bit_rate": 128000,
@@ -951,6 +977,71 @@ class TestContainerStreamArgs(unittest.TestCase):
         for path in ('out.m4v', 'out.MOV'):
             _, audio, _ = self.manager._container_stream_args(path, props)
             self.assertEqual(audio, ['-c:a', 'aac', '-b:a', '192k'])
+
+
+class TestLibplaceboCommandConstruction(unittest.TestCase):
+    """The GPU tonemap path: libplacebo replaces the CPU zscale/tonemap chain."""
+
+    _PROPS = {
+        "width": 2560, "height": 1440, "bit_rate": 8000000,
+        "frame_rate": 60.0, "audio_codec": "aac", "audio_bit_rate": 128000,
+        "duration": 60.0, "subtitle_streams": [],
+    }
+
+    @patch('src.conversion.vulkan_libplacebo_available', return_value=True)
+    @patch('src.conversion.get_maxfall')
+    def test_libplacebo_path_used_when_gpu_and_available(self, mock_maxfall, _avail):
+        m = ConversionManager()
+        m._gpu_encoder = 'h264_nvenc'
+        cmd = m.construct_ffmpeg_command(
+            'in.mp4', 'out.mp4', 2.2, self._PROPS,
+            use_gpu=True, selected_filter_index=1, tonemapper='Hable',
+        )
+        joined = ' '.join(cmd)
+        # A Vulkan device is created and libplacebo does the tonemap.
+        self.assertIn('-init_hw_device', cmd)
+        self.assertIn('vulkan=vk:0', cmd)
+        self.assertIn('libplacebo', joined)
+        self.assertIn('tonemapping=hable', joined)   # tonemapper lowercased
+        self.assertIn('peak_detect=1', joined)        # Dynamic -> peak detection
+        self.assertIn('eq=gamma=2.2', joined)         # gamma preserved on CPU
+        # Decode hwaccel is dropped (the Vulkan filter owns the frames)...
+        self.assertNotIn('cuda', cmd)
+        # ...and the MAXFALL probe is skipped entirely (peak_detect replaces it).
+        mock_maxfall.assert_not_called()
+        # The GPU encoder is still selected for output.
+        self.assertEqual(cmd[cmd.index('-c:v') + 1], 'h264_nvenc')
+
+    @patch('src.conversion.vulkan_libplacebo_available', return_value=True)
+    def test_static_uses_peak_detect_zero(self, _avail):
+        m = ConversionManager()
+        m._gpu_encoder = 'h264_nvenc'
+        cmd = ' '.join(m.construct_ffmpeg_command(
+            'in.mp4', 'out.mp4', 1.0, self._PROPS,
+            use_gpu=True, selected_filter_index=0, tonemapper='reinhard'))
+        self.assertIn('peak_detect=0', cmd)
+        self.assertIn('tonemapping=reinhard', cmd)
+
+    @patch('src.conversion.vulkan_libplacebo_available', return_value=False)
+    def test_cpu_path_when_probe_false(self, _avail):
+        m = ConversionManager()
+        m._gpu_encoder = 'h264_nvenc'
+        cmd = ' '.join(m.construct_ffmpeg_command(
+            'in.mp4', 'out.mp4', 1.0, self._PROPS,
+            use_gpu=True, selected_filter_index=0, tonemapper='reinhard'))
+        self.assertNotIn('libplacebo', cmd)
+        self.assertIn('zscale', cmd)  # CPU tonemap chain
+
+    @patch('src.conversion.vulkan_libplacebo_available', return_value=True)
+    def test_cpu_path_when_gpu_toggle_off(self, _avail):
+        # GPU toggle off => CPU path even if libplacebo is available.
+        m = ConversionManager()
+        cmd = ' '.join(m.construct_ffmpeg_command(
+            'in.mp4', 'out.mp4', 1.0, self._PROPS,
+            use_gpu=False, selected_filter_index=0, tonemapper='reinhard'))
+        self.assertNotIn('libplacebo', cmd)
+        self.assertIn('zscale', cmd)
+        self.assertIn('libx264', cmd)
 
 
 if __name__ == '__main__':

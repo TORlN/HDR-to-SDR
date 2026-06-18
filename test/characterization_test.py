@@ -513,7 +513,7 @@ class TestGuiInteractions(unittest.TestCase):
         gui = _bare_gui()
         gui.gpu_accel_var = MagicMock()
         gui.gpu_accel_var.get.return_value = True
-        mock_cm.is_gpu_available.return_value = False
+        mock_cm.is_gpu_acceleration_available.return_value = False
 
         gui.check_gpu_acceleration()
 
@@ -526,7 +526,7 @@ class TestGuiInteractions(unittest.TestCase):
         gui = _bare_gui()
         gui.gpu_accel_var = MagicMock()
         gui.gpu_accel_var.get.return_value = True
-        mock_cm.is_gpu_available.return_value = True
+        mock_cm.is_gpu_acceleration_available.return_value = True
 
         gui.check_gpu_acceleration()
 
@@ -1010,6 +1010,30 @@ class TestBatchProcessing(unittest.TestCase):
 
     @patch('src.gui.conversion_manager')
     @patch('src.gui.os.path.isfile', return_value=True)
+    def test_start_batch_requeues_a_fully_processed_queue(self, _isfile, mock_cm):
+        # Re-running a queue whose items are all Done/Failed must requeue them and
+        # actually convert again -- not jump straight to the completion summary.
+        gui = self._gui()
+        gui.batch_items = [self._item('a', 'Done'), self._item('b', 'Failed')]
+        gui.start_batch()
+        self.assertEqual(gui.batch_items[0]['status'], 'Converting')
+        self.assertEqual(gui.batch_items[1]['status'], 'Pending')
+        mock_cm.start_conversion.assert_called_once()
+
+    @patch('src.gui.conversion_manager')
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_start_batch_keeps_done_items_when_pending_remain(self, _isfile, mock_cm):
+        # A partially-run queue (some Done, some Pending) must resume the pending
+        # work without re-running the items already finished.
+        gui = self._gui()
+        gui.batch_items = [self._item('a', 'Done'), self._item('b', 'Pending')]
+        gui.start_batch()
+        self.assertEqual(gui.batch_items[0]['status'], 'Done')       # untouched
+        self.assertEqual(gui.batch_items[1]['status'], 'Converting')
+        mock_cm.start_conversion.assert_called_once()
+
+    @patch('src.gui.conversion_manager')
+    @patch('src.gui.os.path.isfile', return_value=True)
     def test_complete_advances_to_next_item(self, _isfile, mock_cm):
         gui = self._gui()
         gui.batch_items = [self._item('a', 'Converting'), self._item('b')]
@@ -1383,7 +1407,7 @@ class TestGuiErrorAndResizePaths(unittest.TestCase):
         gui = _bare_gui()
         gui.gpu_accel_var = MagicMock()
         gui.gpu_accel_var.get.return_value = True
-        mock_cm.is_gpu_available.side_effect = RuntimeError('nope')
+        mock_cm.is_gpu_acceleration_available.side_effect = RuntimeError('nope')
         gui.check_gpu_acceleration()
         gui.gpu_accel_var.set.assert_called_once_with(False)
         mock_mb.showerror.assert_called_once()

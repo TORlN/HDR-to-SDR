@@ -11,10 +11,26 @@ import shutil
 # Constants and initialization
 LOGGING_ENABLED = False
 TONEMAP = ["Reinhard", "Mobius", "Hable"]
+# Preview filter chains. These keep a trailing scale={width}:{height} because the
+# preview pipeline downscales the extracted frame to a thumbnail. Index 0 = Static,
+# 1 = Dynamic.
 FFMPEG_FILTER = [
     'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap={tonemapper},eq=gamma={gamma},scale={width}:{height}',
     'zscale=t=linear:npl={npl},tonemap={tonemapper},zscale=t=bt709:m=bt709:r=tv:p=bt709,eq=gamma={gamma},scale={width}:{height}'
 ]
+
+# Conversion filter chains (CPU path). Identical to the preview chains minus the
+# trailing scale: a full conversion always keeps the source resolution, so
+# scale={w}:{h} (to the source's own size) was a per-frame swscale no-op.
+FFMPEG_CONVERT_FILTER = [
+    'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap={tonemapper},eq=gamma={gamma}',
+    'zscale=t=linear:npl={npl},tonemap={tonemapper},zscale=t=bt709:m=bt709:r=tv:p=bt709,eq=gamma={gamma}'
+]
+
+# Flags that create the Vulkan device libplacebo runs on. Prepended to the ffmpeg
+# command (before -i) when the GPU tonemap path is active.
+VULKAN_DEVICE_ARGS = ['-init_hw_device', 'vulkan=vk:0', '-filter_hw_device', 'vk']
+
 FFMPEG_EXECUTABLE = None
 FFPROBE_EXECUTABLE = None
 
@@ -267,6 +283,82 @@ def _compute_maxfall(video_path):
                 if (max_fall):
                     return float(max_fall)
     return 100  # Default value if MAXFALL is not found
+
+def build_libplacebo_filter(filter_index, gamma, tonemapper, width='iw', height='ih'):
+    """Build the GPU tonemapping filter chain (HDR->SDR) using libplacebo.
+
+    libplacebo does the same HDR->SDR tonemap as the CPU ``tonemap`` filter, but
+    on the GPU (Vulkan) -- offloading the single-threaded tonemap step that
+    dominates a CPU conversion. The user's tonemapper (reinhard/mobius/hable)
+    maps 1:1 to libplacebo's ``tonemapping`` option.
+
+    Static (``filter_index`` 0) uses a fixed curve; Dynamic (1) enables
+    libplacebo's per-scene ``peak_detect`` -- a better stand-in for the old
+    npl=MAXFALL approach, and it skips the MAXFALL ffprobe entirely. Frames are
+    uploaded as p010, tonemapped to nv12, downloaded, and ``eq=gamma`` is applied
+    on the CPU afterwards so gamma matches the CPU path exactly.
+    """
+    peak = 1 if filter_index == 1 else 0
+    tm = tonemapper.lower()
+    return (
+        f'format=p010,hwupload,'
+        f'libplacebo=w={width}:h={height}:tonemapping={tm}:'
+        f'colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:'
+        f'peak_detect={peak}:format=nv12,'
+        f'hwdownload,format=nv12,eq=gamma={gamma}'
+    )
+
+# Cached result of the Vulkan/libplacebo capability probe: None = not yet probed.
+_libplacebo_available = None
+
+def reset_libplacebo_probe():
+    """Forget the cached probe result (used by tests)."""
+    global _libplacebo_available
+    _libplacebo_available = None
+
+def vulkan_libplacebo_available():
+    """Return True if this ffmpeg can tonemap on the GPU via Vulkan + libplacebo.
+
+    Probes once and caches the result. The probe runs the real filter chain on a
+    tiny synthetic frame, so a success genuinely proves the path works on this
+    machine; on any failure we fall back to the CPU tonemap path.
+    """
+    global _libplacebo_available
+    if _libplacebo_available is not None:
+        return _libplacebo_available
+
+    if not FFMPEG_EXECUTABLE:
+        _libplacebo_available = False
+        return False
+
+    if sys.platform == "win32":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        creationflags = subprocess.CREATE_NO_WINDOW
+    else:
+        startupinfo = None
+        creationflags = 0
+
+    cmd = [
+        FFMPEG_EXECUTABLE, '-loglevel', 'error',
+        '-init_hw_device', 'vulkan=vk:0', '-filter_hw_device', 'vk',
+        '-f', 'lavfi', '-i', 'color=c=black:s=64x64,format=p010',
+        '-vf', 'hwupload,libplacebo=tonemapping=clip:format=nv12,hwdownload,format=nv12',
+        '-frames:v', '1', '-f', 'null', '-',
+    ]
+    try:
+        result = subprocess.run(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            startupinfo=startupinfo, creationflags=creationflags,
+        )
+        _libplacebo_available = (result.returncode == 0)
+    except (FileNotFoundError, OSError) as e:
+        logging.debug(f"libplacebo probe failed to run: {e}")
+        _libplacebo_available = False
+
+    logging.debug(f"Vulkan/libplacebo available: {_libplacebo_available}")
+    return _libplacebo_available
 
 def extract_frame_with_conversion(video_path, gamma, filter_index, tonemapper='reinhard',
                                   time_position=None, width: 'int | str' = 'iw',

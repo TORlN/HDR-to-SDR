@@ -381,7 +381,7 @@ class TestUserActions(_GuiTestBase):
     @patch('src.gui.messagebox')
     @patch('src.gui.conversion_manager')
     def test_gpu_toggle_unavailable_resets_and_warns(self, mock_cm, mock_mb):
-        mock_cm.is_gpu_available.return_value = False
+        mock_cm.is_gpu_acceleration_available.return_value = False
         self.gui.gpu_accel_var.set(True)
         self.gui.check_gpu_acceleration()
         self.assertFalse(self.gui.gpu_accel_var.get())

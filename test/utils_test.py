@@ -3,6 +3,7 @@ from unittest.mock import patch, MagicMock, ANY
 from src.utils import (
     get_video_properties, run_ffmpeg_command, extract_frame,
     extract_frame_with_conversion, get_executable_path, initialize_ffmpeg,
+    build_libplacebo_filter, vulkan_libplacebo_available, reset_libplacebo_probe,
 )
 import subprocess
 from PIL import Image  # Added import
@@ -410,6 +411,69 @@ class TestInitializeFfmpeg(unittest.TestCase):
         # messagebox was removed from utils; failure must propagate, not pop a UI.
         with self.assertRaises(RuntimeError):
             initialize_ffmpeg()
+
+
+class TestBuildLibplaceboFilter(unittest.TestCase):
+    """The libplacebo (GPU) tonemap filter builder."""
+
+    def test_static_disables_peak_detection(self):
+        f = build_libplacebo_filter(0, 2.2, 'reinhard')
+        self.assertIn('libplacebo=', f)
+        self.assertIn('tonemapping=reinhard', f)
+        self.assertIn('peak_detect=0', f)
+        self.assertIn('eq=gamma=2.2', f)
+        # Default keeps source resolution (no resize on a full conversion).
+        self.assertIn('w=iw:h=ih', f)
+
+    def test_dynamic_enables_peak_detection(self):
+        f = build_libplacebo_filter(1, 1.0, 'mobius')
+        self.assertIn('peak_detect=1', f)
+        self.assertIn('tonemapping=mobius', f)
+
+    def test_tonemapper_is_lowercased(self):
+        self.assertIn('tonemapping=hable', build_libplacebo_filter(0, 1.0, 'Hable'))
+
+    def test_explicit_size_passed_to_libplacebo(self):
+        f = build_libplacebo_filter(0, 1.0, 'reinhard', width=960, height=540)
+        self.assertIn('w=960:h=540', f)
+
+
+class TestVulkanLibplaceboProbe(unittest.TestCase):
+    """The cached Vulkan/libplacebo capability probe."""
+
+    def setUp(self):
+        reset_libplacebo_probe()
+        self.addCleanup(reset_libplacebo_probe)
+
+    @patch('src.utils.FFMPEG_EXECUTABLE', None)
+    def test_false_without_ffmpeg(self):
+        self.assertFalse(vulkan_libplacebo_available())
+
+    @patch('src.utils.FFMPEG_EXECUTABLE', 'ffmpeg')
+    @patch('src.utils.subprocess.run')
+    def test_true_when_probe_succeeds(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0)
+        self.assertTrue(vulkan_libplacebo_available())
+        mock_run.assert_called_once()
+
+    @patch('src.utils.FFMPEG_EXECUTABLE', 'ffmpeg')
+    @patch('src.utils.subprocess.run')
+    def test_false_when_probe_fails(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=1)
+        self.assertFalse(vulkan_libplacebo_available())
+
+    @patch('src.utils.FFMPEG_EXECUTABLE', 'ffmpeg')
+    @patch('src.utils.subprocess.run', side_effect=OSError('boom'))
+    def test_false_when_probe_raises(self, _run):
+        self.assertFalse(vulkan_libplacebo_available())
+
+    @patch('src.utils.FFMPEG_EXECUTABLE', 'ffmpeg')
+    @patch('src.utils.subprocess.run')
+    def test_result_is_cached(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0)
+        vulkan_libplacebo_available()
+        vulkan_libplacebo_available()
+        mock_run.assert_called_once()  # probed once, then cached
 
 
 if __name__ == '__main__':

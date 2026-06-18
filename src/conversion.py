@@ -6,7 +6,10 @@ import multiprocessing
 import re
 import logging
 from tkinter import messagebox
-from utils import get_video_properties, FFMPEG_FILTER, FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE, get_maxfall
+from utils import (get_video_properties, FFMPEG_FILTER, FFMPEG_CONVERT_FILTER,
+                   FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE, get_maxfall,
+                   VULKAN_DEVICE_ARGS, build_libplacebo_filter,
+                   vulkan_libplacebo_available)
 from tkinterdnd2 import DND_FILES
 import sys
 import platform  # Add this import at the top
@@ -87,6 +90,12 @@ class ConversionManager:
         ]
         current_platform = platform.system().lower()
 
+        # GPU tonemapping (libplacebo/Vulkan) is the big win: it offloads the
+        # single-threaded CPU tonemap that otherwise bottlenecks the whole
+        # pipeline. Gated on the same "GPU acceleration" toggle plus a one-time
+        # capability probe; falls back to the CPU tonemap chain when unavailable.
+        use_libplacebo = use_gpu and vulkan_libplacebo_available()
+
         # GPU acceleration setup — dispatch on whichever encoder was detected
         active_encoder = None
         if use_gpu:
@@ -94,13 +103,17 @@ class ConversionManager:
 
             if active_encoder == 'h264_nvenc':
                 if current_platform in ["windows", "linux"]:
-                    cmd += ['-hwaccel', 'cuda', '-hwaccel_device', '0']
+                    # Skip the cuda decode hwaccel when libplacebo owns the
+                    # frames: the Vulkan filter graph can't ingest cuda surfaces.
+                    if not use_libplacebo:
+                        cmd += ['-hwaccel', 'cuda', '-hwaccel_device', '0']
                 else:
                     messagebox.showwarning("Warning", "GPU acceleration is not supported on this platform.")
                     active_encoder = None
             elif active_encoder == 'h264_qsv':
                 if current_platform in ["windows", "linux"]:
-                    cmd += ['-hwaccel', 'qsv']
+                    if not use_libplacebo:
+                        cmd += ['-hwaccel', 'qsv']
                 else:
                     messagebox.showwarning("Warning", "GPU acceleration is not supported on this platform.")
                     active_encoder = None
@@ -113,30 +126,32 @@ class ConversionManager:
                 messagebox.showwarning("Warning", "GPU acceleration is not supported on this platform.")
                 active_encoder = None
 
+        # The Vulkan device libplacebo runs on must be created before the input.
+        if use_libplacebo:
+            cmd += VULKAN_DEVICE_ARGS
+
         # Input file
         cmd += ['-i', os.path.normpath(input_path)]
 
         # The filter must be applied before mapping streams
         tonemapper = tonemapper.lower()
-        if selected_filter_index == 1:
+        if use_libplacebo:
+            # GPU tonemap; Dynamic uses libplacebo peak detection, which both
+            # replaces and skips the MAXFALL probe the CPU Dynamic path needs.
+            filter_str = build_libplacebo_filter(selected_filter_index, gamma, tonemapper)
+        elif selected_filter_index == 1:
             maxfall = get_maxfall(input_path)
-            filter_str = FFMPEG_FILTER[selected_filter_index].format(
-                gamma=gamma, width=properties["width"], height=properties["height"],
-                npl=maxfall, tonemapper=tonemapper
+            filter_str = FFMPEG_CONVERT_FILTER[selected_filter_index].format(
+                gamma=gamma, npl=maxfall, tonemapper=tonemapper
             )
-            cmd += [
-                '-filter_complex', f'[0:v:0]{filter_str}[vout]',
-                '-map', '[vout]'  # Map the filtered video output
-            ]
         else:
-            filter_str = FFMPEG_FILTER[selected_filter_index].format(
-                gamma=gamma, width=properties["width"], height=properties["height"],
-                tonemapper=tonemapper
+            filter_str = FFMPEG_CONVERT_FILTER[selected_filter_index].format(
+                gamma=gamma, tonemapper=tonemapper
             )
-            cmd += [
-                '-filter_complex', f'[0:v:0]{filter_str}[vout]',
-                '-map', '[vout]'  # Map the filtered video output
-            ]
+        cmd += [
+            '-filter_complex', f'[0:v:0]{filter_str}[vout]',
+            '-map', '[vout]'  # Map the filtered video output
+        ]
 
         # Map remaining streams. Audio is always mapped; subtitle mapping depends
         # on the output container (see _container_stream_args).
@@ -173,12 +188,13 @@ class ConversionManager:
                 '-b:v', str(properties['bit_rate']),
             ]
         else:
+            # No -b:v here: libx264 in CRF (constant-quality) mode ignores a
+            # target bitrate, so it was dead weight.
             cmd += [
                 '-c:v', 'libx264',
                 '-preset', 'veryfast',
                 '-tune', 'film',
                 '-crf', quality,
-                '-b:v', str(properties['bit_rate'])
             ]
 
         # Common settings
@@ -446,5 +462,13 @@ class ConversionManager:
         except Exception as e:
             logging.error(f"Error checking GPU availability: {e}")
             return False
+
+    def is_gpu_acceleration_available(self):
+        """True if any GPU acceleration is usable: a hardware H.264 encoder
+        (nvenc/amf/qsv) and/or GPU tonemapping via libplacebo. Either one alone
+        makes the GPU toggle worthwhile -- a machine with Vulkan/libplacebo but
+        no hardware encoder still gets the (bigger) tonemapping speedup -- so the
+        toggle is gated on the union, not on the encoder alone."""
+        return self.is_gpu_available() or vulkan_libplacebo_available()
 
 conversion_manager = ConversionManager()

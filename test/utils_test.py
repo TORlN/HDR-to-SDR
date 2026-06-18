@@ -1,9 +1,12 @@
+import sys
+import threading
 import unittest
 from unittest.mock import patch, MagicMock, ANY
 from src.utils import (
     get_video_properties, run_ffmpeg_command, extract_frame,
     extract_frame_with_conversion, get_executable_path, initialize_ffmpeg,
     build_libplacebo_filter, vulkan_libplacebo_available, reset_libplacebo_probe,
+    get_maxfall, verify_ffmpeg_files,
 )
 import subprocess
 from PIL import Image  # Added import
@@ -474,6 +477,168 @@ class TestVulkanLibplaceboProbe(unittest.TestCase):
         vulkan_libplacebo_available()
         vulkan_libplacebo_available()
         mock_run.assert_called_once()  # probed once, then cached
+
+
+# ---------------------------------------------------------------------------
+# Issue #1 — Concurrency: _MAXFALL_CACHE must be guarded by a lock
+# ---------------------------------------------------------------------------
+
+class TestMaxfallConcurrency(unittest.TestCase):
+    """get_maxfall must call _compute_maxfall exactly once under concurrent cache misses.
+
+    Without a threading.Lock, two threads that both see the cache miss can both
+    call _compute_maxfall before either one writes the result back — spawning two
+    ffprobe processes for the same file.  The test below is RED today and will
+    turn GREEN once a lock serialises the read-check-write sequence.
+    """
+
+    def setUp(self):
+        import src.utils as _u
+        self._cache = _u._MAXFALL_CACHE
+        self._cache.clear()
+        self.addCleanup(self._cache.clear)
+
+    def test_concurrent_calls_compute_once(self):
+        """Four threads racing on an uncached path must spawn only one ffprobe process."""
+        call_count: list[int] = []
+        start = threading.Barrier(4)
+
+        def slow_compute(path: str) -> float:
+            # time.sleep releases the GIL, giving other threads a chance to pass
+            # the cache-miss check before the first thread writes the result back.
+            import time
+            time.sleep(0.05)
+            call_count.append(1)
+            return 400.0
+
+        results: list[float] = []
+
+        def worker() -> None:
+            start.wait()  # all four threads hit the cache check simultaneously
+            results.append(get_maxfall('/fake/concurrent/video.mkv'))
+
+        with patch('src.utils._compute_maxfall', side_effect=slow_compute):
+            threads = [threading.Thread(target=worker) for _ in range(4)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=5)
+
+        self.assertEqual(len(results), 4, "all callers must receive a return value")
+        self.assertTrue(
+            all(r == 400.0 for r in results),
+            "all callers must receive the same cached value",
+        )
+        self.assertEqual(
+            len(call_count), 1,
+            f"_compute_maxfall was called {len(call_count)} time(s); expected exactly 1 "
+            "(a threading.Lock must prevent duplicate ffprobe launches)",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Issue #3 — Portability: verify_ffmpeg_files must use platform-agnostic keys
+# ---------------------------------------------------------------------------
+
+class TestVerifyFfmpegFilesPortability(unittest.TestCase):
+    """verify_ffmpeg_files must use extension-free keys ('ffmpeg', not 'ffmpeg.exe').
+
+    The current implementation hard-codes Windows-specific names as dict keys and
+    as the lookup arguments passed to get_executable_path.  Both assertions below
+    are RED today and will turn GREEN once the keys are stripped of the .exe suffix.
+    """
+
+    @patch('src.utils.get_executable_path', return_value='/usr/local/bin/ffmpeg')
+    def test_returned_keys_contain_no_exe_suffix(self, _exec: MagicMock) -> None:
+        import src.utils as _u
+        orig = (_u.FFMPEG_EXECUTABLE, _u.FFPROBE_EXECUTABLE)
+        try:
+            result = _u.verify_ffmpeg_files()
+        finally:
+            _u.FFMPEG_EXECUTABLE, _u.FFPROBE_EXECUTABLE = orig
+
+        for key in result:
+            self.assertFalse(
+                key.endswith('.exe'),
+                f"Key '{key}' must not carry a Windows-specific .exe suffix",
+            )
+        self.assertIn('ffmpeg',  result, "result dict must expose a 'ffmpeg' key")
+        self.assertIn('ffprobe', result, "result dict must expose a 'ffprobe' key")
+
+    @patch('src.utils.get_executable_path', return_value='/usr/bin/ffmpeg')
+    def test_get_executable_path_not_called_with_exe_suffixes(self, mock_exec: MagicMock) -> None:
+        import src.utils as _u
+        orig = (_u.FFMPEG_EXECUTABLE, _u.FFPROBE_EXECUTABLE)
+        try:
+            _u.verify_ffmpeg_files()
+        finally:
+            _u.FFMPEG_EXECUTABLE, _u.FFPROBE_EXECUTABLE = orig
+
+        for call in mock_exec.call_args_list:
+            name: str = call[0][0]
+            self.assertFalse(
+                name.endswith('.exe'),
+                f"get_executable_path received Windows-specific name '{name}'; "
+                "suffixes must be appended dynamically, not baked into the key",
+            )
+
+
+# ---------------------------------------------------------------------------
+# Issue #4 — DRY: STARTUPINFO behavioral regression guards
+# ---------------------------------------------------------------------------
+
+class TestStartupinfoConsistency(unittest.TestCase):
+    """Regression guards for the STARTUPINFO deduplication refactor (issue #4).
+
+    These tests are already GREEN and must remain GREEN after the duplicate
+    STARTUPINFO blocks in run_ffmpeg_command / _compute_maxfall / get_video_properties
+    / vulkan_libplacebo_available are consolidated into a shared helper.
+    """
+
+    @patch('src.utils.subprocess.Popen')
+    def test_run_ffmpeg_command_hides_console_on_windows(self, mock_popen: MagicMock) -> None:
+        """run_ffmpeg_command must pass a STARTUPINFO on Windows (hide console)."""
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = (b'ok', b'')
+        mock_proc.returncode = 0
+        mock_popen.return_value = mock_proc
+
+        run_ffmpeg_command(['ffmpeg', '-version'])
+
+        kwargs = mock_popen.call_args[1]
+        if sys.platform == 'win32':
+            self.assertIsNotNone(
+                kwargs.get('startupinfo'),
+                "Windows: startupinfo must be set to suppress the console window",
+            )
+        else:
+            self.assertIsNone(
+                kwargs.get('startupinfo'),
+                "Non-Windows: startupinfo must be None",
+            )
+
+    @patch('src.utils.subprocess.check_output', return_value=b'{"frames": []}')
+    def test_compute_maxfall_hides_console_on_windows(self, mock_check: MagicMock) -> None:
+        """_compute_maxfall must pass a STARTUPINFO on Windows (hide console)."""
+        import src.utils as _u
+        _u._MAXFALL_CACHE.clear()
+        try:
+            _u._compute_maxfall('/fake/video.mkv')
+        except Exception:
+            pass  # JSON parse / no MAXFALL — irrelevant to this test
+
+        kwargs = mock_check.call_args[1]
+        if sys.platform == 'win32':
+            self.assertIsNotNone(
+                kwargs.get('startupinfo'),
+                "Windows: startupinfo must be set in _compute_maxfall",
+            )
+        else:
+            self.assertIsNone(
+                kwargs.get('startupinfo'),
+                "Non-Windows: startupinfo must be None in _compute_maxfall",
+            )
+        _u._MAXFALL_CACHE.clear()
 
 
 if __name__ == '__main__':

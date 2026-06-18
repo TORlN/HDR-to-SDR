@@ -7,6 +7,7 @@ import logging
 import sys
 import json
 import shutil
+import threading
 
 # Constants and initialization
 LOGGING_ENABLED = False
@@ -85,20 +86,22 @@ def get_executable_path(filename):
     """Helper function to get the correct path for bundled executables"""
     try:
         base_path = getattr(sys, '_MEIPASS') if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
-        if sys.platform != 'win32' and filename.endswith('.exe'):
-            filename = filename[:-4]
-        
-        executable = os.path.normpath(os.path.join(base_path, filename))
-        logging.debug(f"Looking for {filename} at: {executable}")
-        
+        # Derive a platform-agnostic base name, then add the correct suffix for disk
+        # access.  Callers may pass either 'ffmpeg' or 'ffmpeg.exe' — both work.
+        base = filename[:-4] if filename.endswith('.exe') else filename
+        disk_name = base + '.exe' if sys.platform == 'win32' else base
+
+        executable = os.path.normpath(os.path.join(base_path, disk_name))
+        logging.debug(f"Looking for {disk_name} at: {executable}")
+
         if not os.path.exists(executable):
-            system_exec = shutil.which(filename)
+            system_exec = shutil.which(disk_name)
             if system_exec:
                 executable = system_exec
-                logging.debug(f"Found {filename} in system PATH: {executable}")
+                logging.debug(f"Found {disk_name} in system PATH: {executable}")
             else:
-                raise FileNotFoundError(f"{filename} not found in bundle or system PATH")
-        
+                raise FileNotFoundError(f"{base} not found in bundle or system PATH")
+
         return executable
 
     except Exception as e:
@@ -116,20 +119,20 @@ def verify_ffmpeg_files():
             base_path = os.path.dirname(os.path.abspath(__file__))
             logging.debug(f"Verifying FFmpeg files in normal environment: {base_path}")
         
-        files_to_check = ['ffmpeg.exe', 'ffprobe.exe', 'ffplay.exe']
+        files_to_check = ['ffmpeg', 'ffprobe', 'ffplay']
         found_files = {}
-        
-        for file in files_to_check:
+
+        for name in files_to_check:
             try:
-                path = get_executable_path(file)
-                found_files[file] = path
-                logging.info(f"Found {file} at: {path}")
+                path = get_executable_path(name)
+                found_files[name] = path
+                logging.info(f"Found {name} at: {path}")
             except FileNotFoundError as e:
-                logging.error(f"Could not find {file}: {str(e)}")
+                logging.error(f"Could not find {name}: {str(e)}")
                 raise
 
-        FFMPEG_EXECUTABLE = found_files['ffmpeg.exe']
-        FFPROBE_EXECUTABLE = found_files['ffprobe.exe']
+        FFMPEG_EXECUTABLE = found_files['ffmpeg']
+        FFPROBE_EXECUTABLE = found_files['ffprobe']
 
         return found_files
 
@@ -142,8 +145,8 @@ def initialize_ffmpeg():
     global FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE
     try:
         found_files = verify_ffmpeg_files()
-        FFMPEG_EXECUTABLE = found_files['ffmpeg.exe']
-        FFPROBE_EXECUTABLE = found_files['ffprobe.exe']
+        FFMPEG_EXECUTABLE = found_files['ffmpeg']
+        FFPROBE_EXECUTABLE = found_files['ffprobe']
 
         # Configure ffmpeg-python. These are private, undeclared module
         # attributes, so set/read them via setattr/getattr to keep static type
@@ -175,17 +178,21 @@ except Exception:
     # it to the user on startup (see HDRConverterGUI.__init__).
     logging.error("ffmpeg could not be initialized at import time", exc_info=True)
 
+
+def _startupinfo():
+    """Return (startupinfo, creationflags) that suppress the console window on Windows."""
+    if sys.platform == "win32":
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = subprocess.SW_HIDE
+        return si, subprocess.CREATE_NO_WINDOW
+    return None, 0
+
+
 # Rest of your existing functions...
 def run_ffmpeg_command(cmd):
     """Run an FFmpeg command with proper path handling"""
-    if sys.platform == "win32":
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
-        creationflags = subprocess.CREATE_NO_WINDOW
-    else:
-        startupinfo = None
-        creationflags = 0
+    startupinfo, creationflags = _startupinfo()
     
     # Replace the ffmpeg command with the bundled/system executable path
     cmd[0] = FFMPEG_EXECUTABLE
@@ -222,27 +229,39 @@ def run_ffmpeg_command(cmd):
 # MAXFALL is static mastering-display metadata, identical for every call on a
 # given file, yet probing it costs ~0.5-1.2s (ffprobe decodes ~1s of frames).
 # Memoize per path so it is paid once per video instead of once per preview.
-_MAXFALL_CACHE = {}
+_MAXFALL_CACHE: dict[str, float] = {}
+_MAXFALL_CACHE_LOCK = threading.Lock()
 
 
 def clear_maxfall_cache():
     """Drop memoized MAXFALL values (call when loading a new/replaced file)."""
-    _MAXFALL_CACHE.clear()
+    with _MAXFALL_CACHE_LOCK:
+        _MAXFALL_CACHE.clear()
 
 
 def get_maxfall(video_path):
-    """
-    Extract MAXFALL from video metadata using ffprobe (memoized per path).
+    """Extract MAXFALL from video metadata using ffprobe (memoized per path).
+
+    Thread-safe: the background pre-warm thread and the preview thread can call
+    this concurrently.  A double-checked lock ensures _compute_maxfall is invoked
+    exactly once per path even when multiple callers race on a cache miss.
+
     Args:
         video_path (str): Path to the video file.
     Returns:
         float: The MAXFALL value.
     """
+    # Fast path — no lock needed once the entry is present.
     if video_path in _MAXFALL_CACHE:
         return _MAXFALL_CACHE[video_path]
-    value = _compute_maxfall(video_path)
-    _MAXFALL_CACHE[video_path] = value
-    return value
+    with _MAXFALL_CACHE_LOCK:
+        # Re-check inside the lock: another thread may have computed and stored
+        # the value between the unlocked check above and the lock acquisition.
+        if video_path in _MAXFALL_CACHE:
+            return _MAXFALL_CACHE[video_path]
+        value = _compute_maxfall(video_path)
+        _MAXFALL_CACHE[video_path] = value
+        return value
 
 
 def _compute_maxfall(video_path):
@@ -256,15 +275,8 @@ def _compute_maxfall(video_path):
         '-print_format', 'json',
         video_path
     ]
-    
-    if sys.platform == "win32":
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
-        creationflags = subprocess.CREATE_NO_WINDOW
-    else:
-        startupinfo = None
-        creationflags = 0
+
+    startupinfo, creationflags = _startupinfo()
 
     out = subprocess.check_output(
         cmd,
@@ -331,14 +343,7 @@ def vulkan_libplacebo_available():
         _libplacebo_available = False
         return False
 
-    if sys.platform == "win32":
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
-        creationflags = subprocess.CREATE_NO_WINDOW
-    else:
-        startupinfo = None
-        creationflags = 0
+    startupinfo, creationflags = _startupinfo()
 
     cmd = [
         FFMPEG_EXECUTABLE, '-loglevel', 'error',
@@ -446,14 +451,7 @@ def extract_frame(video_path, time_position=None, width: 'int | None' = None,
         raise RuntimeError("Failed to extract frame.")
 
 def get_video_properties(input_file):
-    if sys.platform == "win32":
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
-        creationflags = subprocess.CREATE_NO_WINDOW
-    else:
-        startupinfo = None
-        creationflags = 0
+    startupinfo, creationflags = _startupinfo()
 
     command = [
         FFPROBE_EXECUTABLE,

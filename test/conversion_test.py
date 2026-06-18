@@ -1044,6 +1044,100 @@ class TestLibplaceboCommandConstruction(unittest.TestCase):
         self.assertIn('libx264', cmd)
 
 
+# ---------------------------------------------------------------------------
+# Issue #2 — Concurrency: stable process reference in monitor_progress
+# ---------------------------------------------------------------------------
+
+class TestMonitorProgressCancellationRace(unittest.TestCase):
+    """monitor_progress must not raise AttributeError when self.process is cleared.
+
+    cancel_conversion sets self.process = None on the main thread.  The worker
+    thread running monitor_progress can observe this at two moments:
+
+    (a) mid-iteration  — handled today by the 'if self.process is None: return'
+        guard inside the for-loop body.  This case is already GREEN.
+
+    (b) between the loop ending and self.process.wait() / self.process.returncode
+        being read — NOT protected today.  self.process.wait() executes, then
+        self.process is None, so self.process.returncode raises AttributeError.
+        This case is RED today and turns GREEN once a stable local reference
+        (proc = self.process) is captured at worker-thread entry.
+    """
+
+    def _make_gui(self) -> MagicMock:
+        gui = MagicMock()
+        # Leave root.after as a plain MagicMock so _handle callbacks are recorded
+        # but never executed — we only care that monitor_progress itself doesn't crash.
+        return gui
+
+    def test_process_nulled_between_loop_end_and_wait(self) -> None:
+        """Race (b): AttributeError must not occur when self.process is cleared
+        inside .wait() before returncode is read.
+
+        RED today  — self.process.returncode follows self.process.wait() without
+                     re-checking; if wait() clears the reference, the next line crashes.
+        GREEN after fix — a local `proc = self.process` reference outlives the clear.
+        """
+        manager = ConversionManager()
+        manager.cancelled = False
+        manager.use_gpu = False
+
+        class RacyProcess:
+            """Process whose .wait() mimics cancel_conversion clearing the reference."""
+            stderr = iter([])  # empty → the for-loop exits immediately
+            returncode = 0
+
+            def wait(inner_self) -> None:
+                # Simulate the main thread running cancel_conversion concurrently:
+                # the shared attribute is yanked right after the loop but before
+                # returncode is read.
+                manager.process = None
+
+        manager.process = RacyProcess()
+
+        try:
+            manager.monitor_progress(
+                MagicMock(), 10.0, self._make_gui(), [],
+                MagicMock(), 'out.mkv', False, 2.2,
+            )
+        except AttributeError as exc:
+            self.fail(
+                f"monitor_progress raised AttributeError when self.process was "
+                f"cleared inside .wait() before returncode was read: {exc}"
+            )
+
+    def test_process_nulled_mid_iteration_does_not_crash(self) -> None:
+        """Race (a): clearing self.process between two yielded stderr lines must
+        not crash (already GREEN — the existing in-loop None-guard covers this).
+
+        Included here as an isolation regression test so any future refactor that
+        removes or moves the guard becomes immediately visible.
+        """
+        manager = ConversionManager()
+        manager.cancelled = False
+        manager.use_gpu = False
+
+        def make_stderr():  # type: ignore[return]
+            yield 'frame=1 fps=30 time=00:00:01.00\n'
+            manager.process = None  # concurrent cancel clears the reference mid-stream
+
+        mock_proc = MagicMock()
+        mock_proc.stderr = make_stderr()
+        mock_proc.returncode = 0
+        manager.process = mock_proc
+
+        try:
+            manager.monitor_progress(
+                MagicMock(), 10.0, self._make_gui(), [],
+                MagicMock(), 'out.mkv', False, 2.2,
+            )
+        except AttributeError as exc:
+            self.fail(
+                f"monitor_progress raised AttributeError when self.process was "
+                f"cleared mid-iteration: {exc}"
+            )
+
+
 if __name__ == '__main__':
     unittest.main()
 

@@ -256,13 +256,7 @@ class ConversionManager:
 
     def start_ffmpeg_process(self, cmd):
         """Start the FFmpeg process without showing a console window."""
-        startupinfo = None
-        creationflags = 0
-        if sys.platform == "win32":
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = subprocess.SW_HIDE
-            creationflags = subprocess.CREATE_NO_WINDOW
+        startupinfo, creationflags = self._startupinfo()
 
         process = subprocess.Popen(
             cmd,
@@ -284,11 +278,16 @@ class ConversionManager:
         error_messages = []
         gpu_error_detected = False
 
-        if self.process is None or self.process.stderr is None:
+        # Capture a stable local reference at thread-entry time.  cancel_conversion
+        # on the main thread can set self.process = None concurrently; using `proc`
+        # throughout this function prevents AttributeError if that happens between
+        # the loop ending and proc.returncode being read.
+        proc = self.process
+        if proc is None or proc.stderr is None:
             return
-        for line in self.process.stderr:
-            if self.process is None:
-                return
+        for line in proc.stderr:
+            if self.cancelled:
+                break
             decoded_line = line.strip()
             logging.debug(decoded_line)
             error_messages.append(decoded_line)
@@ -302,9 +301,9 @@ class ConversionManager:
             if any(k in decoded_line.lower() for k in ('cuda', 'nvcuda.dll', 'amf', 'mfx')):
                 gpu_error_detected = True
 
-        if self.process is not None:
-            self.process.wait()
-            returncode = self.process.returncode
+        if proc is not None:
+            proc.wait()
+            returncode = proc.returncode
             if returncode != 0 and self.use_gpu and gpu_error_detected and not self.cancelled:
                 logging.warning("GPU acceleration failed. Retrying with CPU encoding.")
                 # The retry touches Tk (gpu checkbox, dialog, UI state) and must run

@@ -77,13 +77,13 @@ The project is covered by a unit/integration test suite (currently 331 tests) ru
 
 Run the suite:
 ```sh
-python -m unittest discover -s test -p '*_test.py'
+python -m unittest discover -s test -p '*_test.py' -t .
 ```
 
 Run it with coverage (configuration lives in `.coveragerc`; CI enforces a 90% floor):
 ```sh
 pip install coverage
-python -m coverage run -m unittest discover -s test -p '*_test.py'
+python -m coverage run -m unittest discover -s test -p '*_test.py' -t .
 python -m coverage report
 ```
 

@@ -159,19 +159,50 @@ class TestLicenseCheck(unittest.TestCase):
         payload = {
             'key': 'SOME-KEY',
             'fingerprint': get_hardware_fingerprint(),
-            'validated_at': int(time.time()) - 3600,
+            'validated_at': int(time.time()) - 3600,  # 1 hour ago — within 30-day cooldown
         }
         with patch('src.licensing.load_license_token', return_value=payload), \
              patch('urllib.request.urlopen', side_effect=urllib.error.URLError('offline')):
             result = check_license()
         self.assertTrue(result)
 
-    def test_valid_token_refreshed_when_online(self):
-        """When the server responds OK, the local token timestamp is updated."""
+    def test_recent_token_skips_api_call(self):
+        """Token validated within 30 days must not make any API call."""
         payload = {
             'key': 'SOME-KEY',
             'fingerprint': get_hardware_fingerprint(),
-            'validated_at': int(time.time()) - 3600,
+            'validated_at': int(time.time()) - 3600,  # 1 hour ago
+        }
+        with patch('src.licensing.load_license_token', return_value=payload), \
+             patch('urllib.request.urlopen') as mock_net:
+            result = check_license()
+        self.assertTrue(result)
+        mock_net.assert_not_called()
+
+    def test_stale_token_triggers_api_refresh(self):
+        """Token older than 30 days must attempt an API refresh."""
+        payload = {
+            'key': 'SOME-KEY',
+            'fingerprint': get_hardware_fingerprint(),
+            'validated_at': int(time.time()) - 31 * 24 * 3600,  # 31 days ago
+        }
+        api_resp = {'meta': {'valid': True, 'detail': 'is valid', 'code': 'VALID'}}
+        with tempfile.TemporaryDirectory() as tmp:
+            lic_file = os.path.join(tmp, 'license.dat')
+            with patch('src.licensing.load_license_token', return_value=payload), \
+                 patch('urllib.request.urlopen', return_value=_urlopen_mock(api_resp)) as mock_net, \
+                 patch('src.licensing.LICENSE_FILE', lic_file), \
+                 patch('src.licensing.SETTINGS_DIR', tmp):
+                result = check_license()
+        self.assertTrue(result)
+        mock_net.assert_called_once()
+
+    def test_valid_token_refreshed_when_online(self):
+        """When the server responds OK on a stale token, the local token timestamp is updated."""
+        payload = {
+            'key': 'SOME-KEY',
+            'fingerprint': get_hardware_fingerprint(),
+            'validated_at': int(time.time()) - 31 * 24 * 3600,  # 31 days ago — past cooldown
         }
         api_resp = {'meta': {'valid': True, 'detail': 'is valid', 'code': 'VALID'}}
         with tempfile.TemporaryDirectory() as tmp:
@@ -188,7 +219,7 @@ class TestLicenseCheck(unittest.TestCase):
         payload = {
             'key': 'REVOKED-KEY',
             'fingerprint': get_hardware_fingerprint(),
-            'validated_at': int(time.time()) - 3600,
+            'validated_at': int(time.time()) - 31 * 24 * 3600,  # 31 days ago — past cooldown
         }
         api_resp = {'meta': {'valid': False, 'detail': 'is suspended', 'code': 'SUSPENDED'}}
         with tempfile.TemporaryDirectory() as tmp:

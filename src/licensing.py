@@ -46,6 +46,7 @@ _API_ENDPOINT = os.environ.get(
     f'https://api.keygen.sh/v1/accounts/{_ACCOUNT_ID}/licenses/actions/validate-key',
 )
 _API_TIMEOUT = 10  # seconds
+_REFRESH_COOLDOWN = 30 * 24 * 3600  # only re-validate against Keygen every 30 days
 
 _lock = threading.Lock()
 
@@ -321,8 +322,12 @@ def check_license() -> bool:
     if payload is None:
         return False
 
-    # Token exists and is machine-locked — let the user in immediately.
-    # Attempt a background refresh to catch revocations, but never block.
+    # Within the 30-day cooldown — trust the HMAC token, skip network call.
+    age = int(time.time()) - payload.get('validated_at', 0)
+    if age < _REFRESH_COOLDOWN:
+        return True
+
+    # Token is stale — refresh against Keygen to catch revocations.
     try:
         fingerprint = get_hardware_fingerprint()
         response = _call_api(payload['key'], fingerprint)

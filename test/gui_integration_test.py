@@ -240,6 +240,38 @@ class TestBatchQueueWidgets(_GuiTestBase):
         self.assertEqual(self.gui.output_path_var.get(), 'C:/v/a_sdr.mp4')
         mock_update.assert_called_once()
 
+    def test_batch_skips_item_when_output_already_exists(self):
+        """_start_next_batch_item must not silently overwrite an existing output
+        file. When the output path already exists the item is marked Failed and
+        start_conversion is never called."""
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])
+        item = self.gui.batch_items[0]
+
+        with patch('src.gui.os.path.isfile', return_value=True), \
+             patch('src.gui.os.path.exists', return_value=True), \
+             patch('src.gui.conversion_manager.start_conversion') as mock_conv, \
+             patch.object(self.gui, '_load_input_file'), \
+             patch.object(self.gui, '_finish_batch'):
+            self.gui._start_next_batch_item()
+
+        mock_conv.assert_not_called()
+        self.assertIn(item['status'], ('Failed', 'Skipped'))
+
+    def test_batch_proceeds_when_output_does_not_exist(self):
+        """When the output does not exist, _start_next_batch_item should start
+        the conversion normally."""
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])
+
+        with patch('src.gui.os.path.isfile', return_value=True), \
+             patch('src.gui.os.path.exists', return_value=False), \
+             patch('src.gui.conversion_manager.start_conversion') as mock_conv, \
+             patch.object(self.gui, '_load_input_file'):
+            self.gui._start_next_batch_item()
+
+        mock_conv.assert_called_once()
+
 
 class TestStateAndLayout(_GuiTestBase):
 

@@ -1118,6 +1118,13 @@ class HDRConverterGUI:
             self._refresh_batch_list()
             return self._start_next_batch_item()  # skip to the next file
 
+        output_path = os.path.normpath(item['output'])
+        if os.path.exists(output_path):
+            logging.warning(f"Batch output already exists, skipping: {output_path}")
+            item['status'] = 'Failed'
+            self._refresh_batch_list()
+            return self._start_next_batch_item()  # skip to the next file
+
         item['status'] = 'Converting'
         self._current_batch_item = item
         self._refresh_batch_list()
@@ -1128,8 +1135,6 @@ class HDRConverterGUI:
         current = self.input_path_var.get() if hasattr(self, 'input_path_var') else None
         if current != item['input']:
             self._load_input_file(item['input'])
-
-        output_path = os.path.normpath(item['output'])
         gamma = self.gamma_var.get()
         use_gpu = self.gpu_accel_var.get()
         selected_filter_index = self.filter_options.index(self.filter_var.get())

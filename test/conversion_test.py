@@ -933,6 +933,38 @@ class TestGpuEncoderCommandConstruction(unittest.TestCase):
         self.assertIn('cuda', cmd)
         self.assertIn('-hwaccel', cmd)
 
+    def test_nvenc_zero_bitrate_uses_fallback(self):
+        """bit_rate=0 from MKV containers must not produce -b:v 0 / -maxrate 0 /
+        -bufsize 0 — those args make nvenc behave unpredictably. A sensible
+        fallback bitrate must be substituted."""
+        cmd = self._cmd('h264_nvenc', props={**self._BASE_PROPS, 'bit_rate': 0})
+        bv_val = cmd[cmd.index('-b:v') + 1]
+        maxrate_val = cmd[cmd.index('-maxrate') + 1]
+        bufsize_val = cmd[cmd.index('-bufsize') + 1]
+        self.assertNotEqual(bv_val, '0')
+        self.assertNotEqual(maxrate_val, '0')
+        self.assertNotEqual(bufsize_val, '0')
+
+    def test_qsv_zero_bitrate_uses_fallback(self):
+        """Same zero-bitrate guard applies to h264_qsv."""
+        cmd = self._cmd('h264_qsv', props={**self._BASE_PROPS, 'bit_rate': 0})
+        bv_val = cmd[cmd.index('-b:v') + 1]
+        self.assertNotEqual(bv_val, '0')
+
+    def test_gpu_encoder_auto_detected_when_not_yet_probed(self):
+        """construct_ffmpeg_command must call detect_gpu_encoder when use_gpu=True
+        but _gpu_encoder is still None — the case when GPU was enabled in saved
+        settings and the user converts without ever toggling the checkbox."""
+        m = ConversionManager()
+        # _gpu_encoder starts None (fresh __init__, settings loaded with gpu_accel=True)
+        self.assertIsNone(m._gpu_encoder)
+        with patch.object(m, 'detect_gpu_encoder', return_value='h264_nvenc') as mock_detect:
+            cmd = m.construct_ffmpeg_command(
+                'in.mp4', 'out.mkv', 1.0, self._BASE_PROPS,
+                use_gpu=True, selected_filter_index=0, tonemapper='reinhard')
+        mock_detect.assert_called_once()
+        self.assertIn('h264_nvenc', cmd)
+
 
 class TestContainerStreamArgs(unittest.TestCase):
     """Container-aware audio/subtitle handling in construct_ffmpeg_command."""

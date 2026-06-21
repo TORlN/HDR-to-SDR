@@ -119,7 +119,7 @@ def verify_ffmpeg_files():
             base_path = os.path.dirname(os.path.abspath(__file__))
             logging.debug(f"Verifying FFmpeg files in normal environment: {base_path}")
         
-        files_to_check = ['ffmpeg', 'ffprobe', 'ffplay']
+        files_to_check = ['ffmpeg', 'ffprobe']
         found_files = {}
 
         for name in files_to_check:

@@ -99,6 +99,8 @@ class ConversionManager:
         # GPU acceleration setup — dispatch on whichever encoder was detected
         active_encoder = None
         if use_gpu:
+            if self._gpu_encoder is None:
+                self._gpu_encoder = self.detect_gpu_encoder()
             active_encoder = self._gpu_encoder
 
             if active_encoder == 'h264_nvenc':
@@ -164,15 +166,18 @@ class ConversionManager:
         # libx264, CQ/global_quality/QP for the GPU encoders (lower = better).
         quality = str(quality)
         if active_encoder == 'h264_nvenc':
+            # MKV containers often report bit_rate=0; fall back to 8 Mbps so
+            # nvenc doesn't receive -b:v 0 / -maxrate 0 / -bufsize 0.
+            _bv = properties['bit_rate'] or 8_000_000
             cmd += [
                 '-c:v', 'h264_nvenc',
                 '-preset', 'p4',
                 '-tune', 'hq',
                 '-rc', 'vbr',
                 '-cq', quality,
-                '-b:v', str(properties['bit_rate']),
-                '-maxrate', str(int(properties['bit_rate'] * 1)),
-                '-bufsize', str(int(properties['bit_rate'] * 2))
+                '-b:v', str(_bv),
+                '-maxrate', str(_bv),
+                '-bufsize', str(_bv * 2)
             ]
         elif active_encoder == 'h264_amf':
             cmd += [
@@ -182,10 +187,11 @@ class ConversionManager:
                 '-qp_i', quality, '-qp_p', quality, '-qp_b', quality,
             ]
         elif active_encoder == 'h264_qsv':
+            _bv = properties['bit_rate'] or 8_000_000
             cmd += [
                 '-c:v', 'h264_qsv',
                 '-global_quality', quality,
-                '-b:v', str(properties['bit_rate']),
+                '-b:v', str(_bv),
             ]
         else:
             # No -b:v here: libx264 in CRF (constant-quality) mode ignores a

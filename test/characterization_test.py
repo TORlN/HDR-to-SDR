@@ -1976,5 +1976,370 @@ class TestPreviewLoadingIndicator(unittest.TestCase):
         gui._hide_preview_loading.assert_called_once()
 
 
+# ── Coverage gap fill-ins ──────────────────────────────────────────────────────
+
+class TestBuildInfoText(unittest.TestCase):
+    """_build_info_text formats video metadata into a compact one-liner."""
+
+    def test_hdr_label_from_bt2020_primaries(self):
+        text = HDRConverterGUI._build_info_text({
+            'width': 3840, 'height': 2160, 'frame_rate': 23.976,
+            'codec_name': 'hevc', 'audio_codec': 'dts',
+            'color_primaries': 'bt2020', 'color_transfer': '',
+        })
+        self.assertIn('HDR', text)
+        self.assertIn('3840×2160', text)
+        self.assertIn('HEVC', text)
+
+    def test_hdr_label_from_smpte2084_transfer(self):
+        text = HDRConverterGUI._build_info_text({
+            'width': 1920, 'height': 1080, 'frame_rate': 24.0,
+            'codec_name': 'hevc', 'audio_codec': 'aac',
+            'color_primaries': '', 'color_transfer': 'smpte2084',
+        })
+        self.assertIn('HDR', text)
+
+    def test_sdr_label_for_standard_primaries(self):
+        text = HDRConverterGUI._build_info_text({
+            'width': 1920, 'height': 1080, 'frame_rate': 30.0,
+            'codec_name': 'h264', 'audio_codec': 'aac',
+            'color_primaries': 'bt709', 'color_transfer': 'bt709',
+        })
+        self.assertIn('SDR', text)
+
+    def test_missing_fields_show_question_marks(self):
+        text = HDRConverterGUI._build_info_text({})
+        self.assertIn('?×?', text)
+        self.assertIn('? fps', text)
+
+
+class TestUpdateInfoLabel(unittest.TestCase):
+    """_update_info_label reads metadata and updates the info strip."""
+
+    def test_shows_text_when_props_available(self):
+        gui = _bare_gui()
+        gui.info_label = MagicMock()
+        props = {
+            'width': 1920, 'height': 1080, 'frame_rate': 24.0,
+            'codec_name': 'hevc', 'audio_codec': 'aac',
+            'color_primaries': 'bt2020', 'color_transfer': '',
+        }
+        with patch('src.gui.get_video_properties', return_value=props):
+            gui._update_info_label('clip.mkv')
+        gui.info_label.config.assert_called_once()
+        gui.info_label.grid.assert_called_once()
+
+    def test_hides_label_when_probe_fails(self):
+        gui = _bare_gui()
+        gui.info_label = MagicMock()
+        with patch('src.gui.get_video_properties', return_value=None):
+            gui._update_info_label('bad.mkv')
+        gui.info_label.grid_remove.assert_called_once()
+
+
+class TestHandleFileDropGuards(unittest.TestCase):
+    """handle_file_drop early-exit conditions."""
+
+    def test_ignores_drop_when_not_registered(self):
+        gui = _bare_gui()
+        gui.drop_target_registered = False
+        event = MagicMock(); event.data = '{C:/a.mkv}'
+        gui.handle_file_drop(event)  # must not raise
+
+    def test_ignores_empty_data(self):
+        gui = _bare_gui()
+        gui.drop_target_registered = True
+        event = MagicMock(); event.data = ''
+        gui.handle_file_drop(event)  # no paths → no-op
+
+    def test_multi_drop_unlicensed_shows_pro_prompt(self):
+        gui = _bare_gui()
+        gui.drop_target_registered = True
+        gui._licensed = False
+        event = MagicMock(); event.data = 'C:/a.mkv C:/b.mkv'
+        with patch('src.gui.messagebox.showinfo') as mock_info:
+            gui.handle_file_drop(event)
+        mock_info.assert_called_once()
+        self.assertIn('Pro', mock_info.call_args[0][1])
+
+
+class TestApplyLicenseStateUnlicensed(unittest.TestCase):
+    """_apply_license_state(False) disables Pro widgets and forces MP4."""
+
+    def _gui(self, output_path=''):
+        gui = _bare_gui()
+        gui.gpu_accel_var = MagicMock()
+        gui.gpu_accel_checkbutton = MagicMock()
+        gui.quality_slider = MagicMock()
+        gui._apply_quality_range = MagicMock()
+        gui.format_var = MagicMock()
+        gui.format_combobox = MagicMock()
+        gui.output_path_var = MagicMock()
+        gui.output_path_var.get.return_value = output_path
+        gui._output_path_with_format = MagicMock(return_value='out_sdr.mp4')
+        gui.custom_time_entry = MagicMock()
+        gui.custom_seek_button = MagicMock()
+        gui.add_files_button = MagicMock()
+        gui.remove_batch_button = MagicMock()
+        gui.clear_batch_button = MagicMock()
+        gui._rebuild_interactable_elements = MagicMock()
+        gui._pro_banner = MagicMock()
+        return gui
+
+    def test_disables_gpu_and_reapplies_quality_range(self):
+        gui = self._gui()
+        gui._apply_license_state(False)
+        gui.gpu_accel_var.set.assert_called_once_with(False)
+        gui._apply_quality_range.assert_called_once()
+
+    def test_resets_format_to_mp4(self):
+        gui = self._gui()
+        gui._apply_license_state(False)
+        gui.format_var.set.assert_called_with('MP4')
+
+    def test_rewrites_output_path_when_set(self):
+        gui = self._gui(output_path='C:/foo/clip_sdr.mkv')
+        gui._apply_license_state(False)
+        gui.output_path_var.set.assert_called_once()
+
+    def test_shows_pro_banner(self):
+        gui = self._gui()
+        gui._apply_license_state(False)
+        gui._pro_banner.grid.assert_called_once()
+
+
+class TestArrangeWidgets(unittest.TestCase):
+    """arrange_widgets places the buttons and progress bar correctly."""
+
+    def _gui(self):
+        gui = _bare_gui()
+        gui.button_frame = MagicMock()
+        gui.progress_bar = MagicMock()
+        gui.open_after_conversion_checkbutton = MagicMock()
+        gui.convert_button = MagicMock()
+        gui.cancel_button = MagicMock()
+        return gui
+
+    def test_image_frame_true_uses_row_2(self):
+        gui = self._gui()
+        gui.arrange_widgets(image_frame=True)
+        self.assertEqual(gui.button_frame.grid.call_args.kwargs['row'], 2)
+        gui.cancel_button.grid_remove.assert_called_once()
+
+    def test_image_frame_false_uses_row_5(self):
+        gui = self._gui()
+        gui.arrange_widgets(image_frame=False)
+        self.assertEqual(gui.button_frame.grid.call_args.kwargs['row'], 5)
+
+
+class TestUpdateFramePreviewElseBranch(unittest.TestCase):
+    """update_frame_preview clears the screen when display is off or no input."""
+
+    def _gui(self, display=False, input_path=''):
+        gui = _bare_gui()
+        gui.display_image_var = MagicMock()
+        gui.display_image_var.get.return_value = display
+        gui.input_path_var = MagicMock()
+        gui.input_path_var.get.return_value = input_path
+        gui.clear_preview = MagicMock()
+        gui._hide_preview_loading = MagicMock()
+        gui._show_preview_loading = MagicMock()
+        gui.original_title_label = MagicMock()
+        gui.converted_title_label = MagicMock()
+        gui.button_container = MagicMock()
+        gui.arrange_widgets = MagicMock()
+        gui.filter_combobox = MagicMock()
+        gui.tonemap_combobox = MagicMock()
+        return gui
+
+    def test_display_off_clears_preview(self):
+        gui = self._gui(display=False, input_path='clip.mkv')
+        gui.update_frame_preview()
+        gui.clear_preview.assert_called_once()
+        gui.arrange_widgets.assert_called_once_with(image_frame=False)
+
+    def test_empty_input_path_clears_preview(self):
+        gui = self._gui(display=True, input_path='')
+        gui.update_frame_preview()
+        gui.clear_preview.assert_called_once()
+
+    def test_display_frames_exception_calls_handle_preview_error(self):
+        gui = self._gui(display=True, input_path='clip.mkv')
+        gui.error_label = MagicMock()
+        gui.display_frames = MagicMock(side_effect=RuntimeError('ffmpeg died'))
+        gui.handle_preview_error = MagicMock()
+        gui.update_frame_preview()
+        gui.handle_preview_error.assert_called_once()
+
+
+class TestResizeImages(unittest.TestCase):
+    """resize_images scales both preview panes from cached full-res images."""
+
+    def test_both_panes_scaled(self):
+        gui = _bare_gui()
+        gui.original_image = Image.new('RGB', (1920, 1080), (100, 120, 140))
+        gui.converted_image_base = Image.new('RGB', (1920, 1080), (80, 100, 120))
+        gui.gamma_var = MagicMock(); gui.gamma_var.get.return_value = 1.0
+        gui.adjust_gamma = lambda img, g: img
+        gui.original_image_label = MagicMock()
+        gui.converted_image_label = MagicMock()
+        with patch('src.gui.ImageTk.PhotoImage'):
+            gui.resize_images(400, 300)
+        gui.original_image_label.config.assert_called_once()
+        gui.converted_image_label.config.assert_called_once()
+
+
+class TestMiscCoverageGaps(unittest.TestCase):
+    """Small individual line gaps."""
+
+    def test_on_quality_change_snaps_float_to_int(self):
+        gui = _bare_gui()
+        gui.quality_var = MagicMock()
+        gui._on_quality_change('22.7')
+        gui.quality_var.set.assert_called_once_with(22)
+
+    def test_hide_tooltip_destroys_existing_tooltip(self):
+        gui = _bare_gui()
+        mock_tip = MagicMock()
+        gui.tooltip = mock_tip
+        gui.hide_tooltip()
+        mock_tip.destroy.assert_called_once()
+        self.assertIsNone(gui.tooltip)
+
+    def test_min_window_size_fallback_on_exception(self):
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui.root.update_idletasks.side_effect = RuntimeError('no display')
+        result = gui._compute_min_window_size()
+        self.assertEqual(result, DEFAULT_MIN_SIZE)
+
+    def test_on_format_change_rewrites_extension(self):
+        gui = _bare_gui()
+        gui.output_path_var = MagicMock()
+        gui.output_path_var.get.return_value = 'C:/foo/bar_sdr.mkv'
+        gui.format_var = MagicMock(); gui.format_var.get.return_value = 'MP4'
+        gui._output_path_with_format = MagicMock(return_value='C:/foo/bar_sdr.mp4')
+        gui.format_combobox = MagicMock()
+        gui._on_format_change()
+        gui.output_path_var.set.assert_called_once_with('C:/foo/bar_sdr.mp4')
+        gui.format_combobox.selection_clear.assert_called_once()
+
+    def test_start_batch_returns_false_when_queue_empty(self):
+        gui = _bare_gui()
+        gui.batch_items = []
+        self.assertFalse(gui.start_batch())
+
+    def test_refresh_batch_list_no_op_without_listbox(self):
+        gui = _bare_gui()
+        gui._refresh_batch_list()  # must not raise
+
+    def test_on_batch_item_select_no_op_without_listbox(self):
+        gui = _bare_gui()
+        gui.on_batch_item_select()  # must not raise
+
+    def test_jump_slider_to_click_zero_width_is_no_op(self):
+        gui = _bare_gui()
+        slider = MagicMock()
+        slider.identify.return_value = 'trough'  # not the knob
+        slider.winfo_width.return_value = 0
+        event = MagicMock(); event.x = 50
+        gui._jump_slider_to_click(slider, event)
+        slider.set.assert_not_called()
+
+
+class TestUtilsStartupinfoNonWindows(unittest.TestCase):
+    """_startupinfo returns (None, 0) on non-Windows."""
+
+    def test_non_windows_returns_none_zero(self):
+        from src.utils import _startupinfo
+        with patch('sys.platform', 'linux'):
+            si, flags = _startupinfo()
+        self.assertIsNone(si)
+        self.assertEqual(flags, 0)
+
+
+class TestExtractFrameErrorPaths(unittest.TestCase):
+    """extract_frame handles missing properties and bad image output."""
+
+    @patch('src.utils.get_video_properties', return_value=None)
+    def test_raises_value_error_when_properties_missing(self, _):
+        from src.utils import extract_frame
+        with self.assertRaises(ValueError):
+            extract_frame('nonexistent.mp4')
+
+    @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
+    @patch('src.utils.run_ffmpeg_command', return_value=b'not-an-image')
+    def test_raises_runtime_error_on_bad_image_bytes(self, _run, _props):
+        from src.utils import extract_frame
+        with self.assertRaises(RuntimeError):
+            extract_frame('clip.mp4')
+
+
+class TestExtractAndConvertFrameErrorPaths(unittest.TestCase):
+    """extract_frame_with_conversion handles missing properties and bad output."""
+
+    @patch('src.utils.get_video_properties', return_value=None)
+    def test_raises_value_error_when_properties_missing(self, _):
+        from src.utils import extract_frame_with_conversion
+        with self.assertRaises(ValueError):
+            extract_frame_with_conversion('none.mp4', gamma=1.0, filter_index=0)
+
+    @patch('src.utils.get_maxfall', return_value=100.0)
+    @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
+    @patch('src.utils.run_ffmpeg_command', return_value=b'not-an-image')
+    def test_raises_runtime_error_on_bad_image_bytes(self, _run, _props, _mf):
+        from src.utils import extract_frame_with_conversion
+        with self.assertRaises(RuntimeError):
+            extract_frame_with_conversion('clip.mp4', gamma=1.0, filter_index=1)
+
+
+class TestConversionManagerInternals(unittest.TestCase):
+    """Private helpers on ConversionManager that were uncovered."""
+
+    def test_startupinfo_non_windows(self):
+        m = ConversionManager()
+        with patch('sys.platform', 'linux'):
+            si, flags = m._startupinfo()
+        self.assertIsNone(si)
+        self.assertEqual(flags, 0)
+
+    def test_monitor_progress_returns_early_when_proc_is_none(self):
+        m = ConversionManager()
+        m.process = None
+        m.cancelled = False
+        m.monitor_progress(
+            MagicMock(), duration=90.0, gui_instance=MagicMock(),
+            interactable_elements=[], cancel_button=MagicMock(),
+            output_path='out.mkv', open_after_conversion=False, gamma=1.0,
+        )
+
+    def test_nvidia_present_true_when_smi_exits_zero(self):
+        m = ConversionManager()
+        with patch('subprocess.run') as mock_run, \
+             patch.object(m, '_startupinfo', return_value=(None, 0)):
+            mock_run.return_value = MagicMock(returncode=0)
+            self.assertTrue(m._nvidia_present())
+
+    def test_nvidia_present_false_when_smi_not_found(self):
+        m = ConversionManager()
+        with patch('subprocess.run', side_effect=FileNotFoundError):
+            self.assertFalse(m._nvidia_present())
+
+    def test_list_encoders_returns_empty_on_os_error(self):
+        m = ConversionManager()
+        with patch('subprocess.Popen', side_effect=OSError):
+            self.assertEqual(m._list_encoders(), '')
+
+    def test_list_encoders_returns_lowercase_stdout(self):
+        m = ConversionManager()
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = ('H264_NVENC H264_AMF\n', '')
+        mock_proc.returncode = 0
+        with patch('subprocess.Popen', return_value=mock_proc), \
+             patch.object(m, '_startupinfo', return_value=(None, 0)):
+            result = m._list_encoders()
+        self.assertIn('h264_nvenc', result)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -14,7 +14,6 @@ sys.path.insert(0, _ROOT)
 sys.path.insert(0, _SRC)  # needed so src/licensing.py can do: from settings import ...
 
 from src.licensing import (
-    GRACE_PERIOD_SECONDS,
     DeviceLimitError,
     InvalidKeyError,
     LicenseError,
@@ -100,51 +99,59 @@ class TestLicenseActivation(unittest.TestCase):
             mock_net.assert_not_called()
 
 
-# ── Offline grace period ───────────────────────────────────────────────────────
+# ── Online/offline behaviour ───────────────────────────────────────────────────
 
-class TestOfflineGracePeriod(unittest.TestCase):
+class TestLicenseCheck(unittest.TestCase):
 
-    def test_offline_grace_period_valid(self):
-        """Token validated 1 hour ago is within the grace window — no network call."""
-        fresh_payload = {
+    def test_valid_token_accepted_offline(self):
+        """A hardware-bound token is accepted even when the server is unreachable."""
+        payload = {
             'key': 'SOME-KEY',
             'fingerprint': get_hardware_fingerprint(),
-            'validated_at': int(time.time()) - 3600,  # 1 hour ago
+            'validated_at': int(time.time()) - 3600,
         }
-        with patch('src.licensing.load_license_token', return_value=fresh_payload), \
-             patch('urllib.request.urlopen') as mock_net:
-            result = check_license()
-        self.assertTrue(result)
-        mock_net.assert_not_called()
-
-    def test_offline_grace_period_expired(self):
-        """Token older than 72 hours with no network access must return False."""
-        old_payload = {
-            'key': 'SOME-KEY',
-            'fingerprint': get_hardware_fingerprint(),
-            'validated_at': int(time.time()) - (GRACE_PERIOD_SECONDS + 3600),  # 73 h ago
-        }
-        with patch('src.licensing.load_license_token', return_value=old_payload), \
+        with patch('src.licensing.load_license_token', return_value=payload), \
              patch('urllib.request.urlopen', side_effect=urllib.error.URLError('offline')):
             result = check_license()
-        self.assertFalse(result)
+        self.assertTrue(result)
 
-    def test_expired_token_refreshed_when_api_succeeds(self):
-        """Token older than 72 hours is renewed if the API call succeeds."""
-        old_payload = {
+    def test_valid_token_refreshed_when_online(self):
+        """When the server responds OK, the local token timestamp is updated."""
+        payload = {
             'key': 'SOME-KEY',
             'fingerprint': get_hardware_fingerprint(),
-            'validated_at': int(time.time()) - (GRACE_PERIOD_SECONDS + 3600),
+            'validated_at': int(time.time()) - 3600,
         }
         api_resp = {'meta': {'valid': True, 'detail': 'is valid', 'code': 'VALID'}}
         with tempfile.TemporaryDirectory() as tmp:
             lic_file = os.path.join(tmp, 'license.dat')
-            with patch('src.licensing.load_license_token', return_value=old_payload), \
+            with patch('src.licensing.load_license_token', return_value=payload), \
                  patch('urllib.request.urlopen', return_value=_urlopen_mock(api_resp)), \
                  patch('src.licensing.LICENSE_FILE', lic_file), \
                  patch('src.licensing.SETTINGS_DIR', tmp):
                 result = check_license()
         self.assertTrue(result)
+
+    def test_revoked_key_removes_token_and_returns_false(self):
+        """When the server explicitly rejects the key, the local token is deleted."""
+        payload = {
+            'key': 'REVOKED-KEY',
+            'fingerprint': get_hardware_fingerprint(),
+            'validated_at': int(time.time()) - 3600,
+        }
+        api_resp = {'meta': {'valid': False, 'detail': 'is suspended', 'code': 'SUSPENDED'}}
+        with tempfile.TemporaryDirectory() as tmp:
+            lic_file = os.path.join(tmp, 'license.dat')
+            # Write a real token file so the delete path is exercised.
+            with patch('src.licensing.LICENSE_FILE', lic_file), \
+                 patch('src.licensing.SETTINGS_DIR', tmp):
+                save_license_token('REVOKED-KEY')
+            with patch('src.licensing.load_license_token', return_value=payload), \
+                 patch('urllib.request.urlopen', return_value=_urlopen_mock(api_resp)), \
+                 patch('src.licensing.LICENSE_FILE', lic_file):
+                result = check_license()
+        self.assertFalse(result)
+        self.assertFalse(os.path.exists(lic_file))
 
     def test_missing_token_returns_false(self):
         """No local token means unlicensed — must return False."""

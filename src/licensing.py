@@ -32,13 +32,15 @@ logger = logging.getLogger(__name__)
 
 # ── Storage ────────────────────────────────────────────────────────────────────
 LICENSE_FILE = os.path.join(SETTINGS_DIR, 'license.dat')
-GRACE_PERIOD_SECONDS = 72 * 3600  # 72 hours
 
 # ── API ────────────────────────────────────────────────────────────────────────
-# Override via env var for staging / different licensing providers.
+# Override via env vars for staging / different licensing providers.
+_ACCOUNT_ID  = os.environ.get('KEYGEN_ACCOUNT_ID',  'nelsontorin1')
+_PRODUCT_ID  = os.environ.get('KEYGEN_PRODUCT_ID',  '3a9972ee-1054-4020-82f4-1496b8fa2d4c')
+_POLICY_ID   = os.environ.get('KEYGEN_POLICY_ID',   '601a4ea7-03bf-4563-a773-eb2cc81660d0')
 _API_ENDPOINT = os.environ.get(
     'LICENSE_API_ENDPOINT',
-    'https://api.keygen.sh/v1/accounts/YOUR_ACCOUNT_ID/licenses/actions/validate-key',
+    f'https://api.keygen.sh/v1/accounts/{_ACCOUNT_ID}/licenses/actions/validate-key',
 )
 _API_TIMEOUT = 10  # seconds
 
@@ -165,15 +167,22 @@ def _call_api(key: str, fingerprint: str) -> dict:  # type: ignore[type-arg]
     For Keygen.sh, 4xx responses carry a JSON body with meta.valid = false;
     we parse those the same as 2xx so _parse_api_response handles them uniformly.
     """
-    body = json.dumps(
-        {'meta': {'key': key, 'scope': {'fingerprint': fingerprint}}}
-    ).encode('utf-8')
+    body = json.dumps({
+        'meta': {
+            'key': key,
+            'scope': {
+                'product':     _PRODUCT_ID,
+                'policy':      _POLICY_ID,
+                'fingerprint': fingerprint,
+            },
+        },
+    }).encode('utf-8')
     req = urllib.request.Request(
         _API_ENDPOINT,
         data=body,
         headers={
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
+            'Content-Type': 'application/vnd.api+json',
+            'Accept':       'application/vnd.api+json',
         },
         method='POST',
     )
@@ -223,14 +232,14 @@ def activate_license(key: str) -> None:
 
 
 def check_license() -> bool:
-    """Return True when a valid license is confirmed.
+    """Return True when a valid hardware-bound token exists.
 
-    Fast path: a local token validated within the last 72 hours is accepted
-    without a network call.
+    A paid user is never blocked by network failures — the token is accepted
+    as long as it is present, HMAC-valid, and bound to this machine.
 
-    Slow path: if the token is older than 72 hours, re-validates online.
-    On network failure the grace period is considered expired and False is
-    returned, forcing the user to re-enter their key.
+    When online, silently refreshes the token timestamp so the local record
+    stays current.  Only returns False when the key has been explicitly
+    revoked/invalidated by the server (not merely unreachable).
     """
     with _lock:
         payload = load_license_token()
@@ -238,21 +247,22 @@ def check_license() -> bool:
     if payload is None:
         return False
 
-    age = time.time() - float(payload.get('validated_at', 0))
-    if age <= GRACE_PERIOD_SECONDS:
-        return True
-
-    # Grace period exceeded — require a fresh API check.
+    # Token exists and is machine-locked — let the user in immediately.
+    # Attempt a background refresh to catch revocations, but never block.
     try:
         fingerprint = get_hardware_fingerprint()
         response = _call_api(payload['key'], fingerprint)
         _parse_api_response(response)
         save_license_token(payload['key'])
-        return True
     except NetworkError:
-        logger.warning(
-            "License grace period expired and licensing server is unreachable"
-        )
-        return False
+        pass  # offline — trust the local token
     except LicenseError:
+        # Key explicitly revoked or invalid — remove local token.
+        with _lock:
+            try:
+                os.remove(LICENSE_FILE)
+            except OSError:
+                pass
         return False
+
+    return True

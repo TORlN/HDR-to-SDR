@@ -85,7 +85,11 @@ def setup_logging():
 def get_executable_path(filename):
     """Helper function to get the correct path for bundled executables"""
     try:
-        base_path = getattr(sys, '_MEIPASS') if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+        if getattr(sys, 'frozen', False):
+            # PyInstaller sets _MEIPASS; Nuitka does not — use __file__ instead.
+            base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+        else:
+            base_path = os.path.dirname(os.path.abspath(__file__))
         # Derive a platform-agnostic base name, then add the correct suffix for disk
         # access.  Callers may pass either 'ffmpeg' or 'ffmpeg.exe' — both work.
         base = filename[:-4] if filename.endswith('.exe') else filename
@@ -113,7 +117,7 @@ def verify_ffmpeg_files():
     global FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE
     try:
         if getattr(sys, 'frozen', False):
-            base_path = getattr(sys, '_MEIPASS')
+            base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
             logging.debug(f"Verifying FFmpeg files in bundled environment: {base_path}")
         else:
             base_path = os.path.dirname(os.path.abspath(__file__))

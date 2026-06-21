@@ -6,11 +6,91 @@ from dark_theme import apply_dark_theme
 from conversion import conversion_manager  # Import the conversion_manager instance
 from utils import extract_frame_with_conversion, extract_frame, TONEMAP, get_video_properties, clear_maxfall_cache
 from settings import load_settings, save_settings
+from licensing import activate_license, InvalidKeyError, DeviceLimitError, NetworkError, LicenseError
 from PIL import Image, ImageTk
 from tkinterdnd2 import DND_FILES
 import logging
 import threading
 import re
+
+# ── License dialog ─────────────────────────────────────────────────────────────
+_BG       = '#1e1e1e'
+_FG       = '#ffffff'
+_ENTRY_BG = '#2d2d2d'
+_ACCENT   = '#0078d4'
+_ERROR_FG = '#ff6b6b'
+_FONT      = ('Segoe UI', 10)
+_FONT_BOLD = ('Segoe UI', 13, 'bold')
+_FONT_SM   = ('Segoe UI', 9)
+
+
+class _LicenseDialog(tk.Toplevel):
+    """Dark-themed modal for entering a Pro license key."""
+
+    def __init__(self, master: tk.Misc) -> None:
+        super().__init__(master)
+        self.configure(bg=_BG)
+        self.title('Activate HDR to SDR Converter')
+        self.resizable(False, False)
+        self.protocol('WM_DELETE_WINDOW', self._on_close)
+        self._activated = False
+        self._build_ui()
+        self.update_idletasks()
+        w, h = 460, 230
+        x = (self.winfo_screenwidth() - w) // 2
+        y = (self.winfo_screenheight() - h) // 2
+        self.geometry(f'{w}x{h}+{x}+{y}')
+        self.grab_set()
+        self.focus_set()
+
+    def _build_ui(self) -> None:
+        tk.Label(self, text='Activate HDR to SDR Converter',
+                 bg=_BG, fg=_FG, font=_FONT_BOLD).pack(pady=(28, 4))
+        tk.Label(self, text='Enter your license key to unlock Pro features.',
+                 bg=_BG, fg='#aaaaaa', font=_FONT_SM).pack(pady=(0, 10))
+        self._key_var = tk.StringVar()
+        entry = tk.Entry(self, textvariable=self._key_var, width=44,
+                         bg=_ENTRY_BG, fg=_FG, insertbackground=_FG,
+                         relief='flat', font=_FONT)
+        entry.pack(padx=32, ipady=7)
+        entry.focus_set()
+        entry.bind('<Return>', lambda _: self._submit())
+        self._status_var = tk.StringVar()
+        tk.Label(self, textvariable=self._status_var,
+                 bg=_BG, fg=_ERROR_FG, font=_FONT_SM).pack(pady=(6, 0))
+        tk.Button(self, text='Activate', command=self._submit,
+                  bg=_ACCENT, fg=_FG,
+                  activebackground='#005fa3', activeforeground=_FG,
+                  relief='flat', padx=20, pady=7,
+                  font=_FONT, cursor='hand2').pack(pady=14)
+
+    def _submit(self) -> None:
+        key = self._key_var.get().strip()
+        if not key:
+            self._status_var.set('Please enter your license key.')
+            return
+        self._status_var.set('Validating…')
+        self.update()
+        try:
+            activate_license(key)
+            self._activated = True
+            self.destroy()
+        except InvalidKeyError:
+            self._status_var.set('Invalid license key — please check and try again.')
+        except DeviceLimitError:
+            self._status_var.set('Device limit reached. Deactivate another machine first.')
+        except NetworkError:
+            self._status_var.set('Cannot reach license server. Check your connection.')
+        except LicenseError as exc:
+            self._status_var.set(str(exc))
+
+    def _on_close(self) -> None:
+        self._activated = False
+        self.destroy()
+
+    @property
+    def activated(self) -> bool:
+        return self._activated
 
 DEFAULT_MIN_SIZE = (550, 150)
 PREVIEW_SIZE = (960, 540)       # native (max) on-screen size of each preview pane
@@ -26,9 +106,12 @@ class HDRConverterGUI:
     A class encapsulating the GUI components and functionality for the HDR to SDR Converter application.
     """
 
-    def __init__(self, root):
+    _licensed: bool = True  # class-level default for bare instances that bypass __init__
+
+    def __init__(self, root, licensed: bool = False):
         """Initialize the GUI and set up all components."""
         self.root = root
+        self._licensed = licensed
         self.root.title("HDR to SDR Converter")
         # Color-based dark theme (clam). Applied before create_widgets so the
         # classic Listbox inherits the dark colors via the option database. Not
@@ -74,6 +157,7 @@ class HDRConverterGUI:
         # Create widgets and configure layout
         self.create_widgets()
         self.configure_grid()
+        self._apply_license_state(licensed)
 
         # Derive the minimum window size from the controls so the user can never
         # drag the window small enough to clip them (the preview pane shrinks to
@@ -110,6 +194,70 @@ class HDRConverterGUI:
                 "without them. Please reinstall the application or install ffmpeg.")
             return False
         return True
+
+    # ── Licensing ──────────────────────────────────────────────────────────────
+
+    def _open_license_dialog(self) -> None:
+        dlg = _LicenseDialog(self.root)
+        self.root.wait_window(dlg)
+        if dlg.activated:
+            self._apply_license_state(True)
+
+    def _apply_license_state(self, licensed: bool) -> None:
+        """Enable or disable Pro-only widgets and rebuild interactable_elements."""
+        self._licensed = licensed
+        pro = 'normal' if licensed else 'disabled'
+
+        self.gpu_accel_checkbutton.config(state=pro)
+        if not licensed:
+            self.gpu_accel_var.set(False)
+            if hasattr(self, 'quality_slider'):
+                self._apply_quality_range()
+
+        self.quality_slider.config(state=pro)
+        self.custom_time_entry.config(state=pro)
+        self.custom_seek_button.config(state=pro)
+
+        if licensed:
+            self.format_combobox.config(values=self._OUTPUT_FORMATS)
+        else:
+            self.format_var.set('MP4')
+            self.format_combobox.config(values=['MP4'])
+            current = self.output_path_var.get()
+            if current:
+                self.output_path_var.set(self._output_path_with_format(current, 'MP4'))
+
+        self.add_files_button.config(state=pro)
+        self.remove_batch_button.config(state=pro)
+        self.clear_batch_button.config(state=pro)
+
+        self._rebuild_interactable_elements()
+
+        if licensed:
+            self._pro_banner.grid_remove()
+        else:
+            self._pro_banner.grid()
+
+    def _rebuild_interactable_elements(self) -> None:
+        """Keep interactable_elements in sync with license state.
+
+        The conversion manager disables/re-enables this list during a job.
+        Premium widgets are excluded when unlicensed so they are never
+        accidentally re-enabled after a conversion finishes.
+        """
+        free = [
+            self.browse_button, self.convert_button, self.gamma_slider,
+            self.open_after_conversion_checkbutton, self.display_image_checkbutton,
+            self.input_entry, self.output_entry, self.gamma_entry,
+        ]
+        premium = [
+            self.gpu_accel_checkbutton, self.quality_slider, self.format_combobox,
+            self.custom_time_entry, self.custom_seek_button,
+            self.add_files_button, self.clear_batch_button, self.remove_batch_button,
+        ]
+        self.interactable_elements = free + premium if self._licensed else free
+
+    # ── Window / session ────────────────────────────────────────────────────────
 
     def on_close(self):
         """Handle the window close event by cancelling ongoing conversions and cleaning up."""
@@ -197,7 +345,7 @@ class HDRConverterGUI:
 
         # Add Filter Combobox with padding and event binding
         filter_frame = ttk.Frame(self.control_frame)
-        filter_frame.grid(row=3, column=1, sticky=tk.W, padx=(5, 10), pady=(5, 0))
+        filter_frame.grid(row=3, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))
         
         self.filter_combobox = ttk.Combobox(
             filter_frame,
@@ -225,52 +373,39 @@ class HDRConverterGUI:
         info_button.bind('<Enter>', lambda e: self.show_tooltip(e, tooltip_text))
         info_button.bind('<Leave>', self.hide_tooltip)
 
-        # Move tonemapper to a new frame next to display image checkbox
-        display_frame = ttk.Frame(self.control_frame)
-        display_frame.grid(row=4, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
-
-        # Display Image Checkbox in the new frame
+        # Display Image Checkbox - col 0
         self.display_image_checkbutton = ttk.Checkbutton(
-            display_frame,
+            self.control_frame,
             text="Display Frame Preview",
             variable=self.display_image_var,
             command=self.update_frame_preview
         )
-        self.display_image_checkbutton.grid(row=0, column=0, sticky=tk.W)
+        self.display_image_checkbutton.grid(row=4, column=0, sticky=tk.W, pady=(5, 0))
 
-        # Add Tonemapper Combobox in the new frame
+        # Tonemapper combobox + ⓘ button in a small frame at col 1 (mirrors filter_frame)
+        tonemap_frame = ttk.Frame(self.control_frame)
+        tonemap_frame.grid(row=4, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))
+
         self.tonemap_combobox = ttk.Combobox(
-            display_frame,
+            tonemap_frame,
             textvariable=self.tonemap_var,
             values=TONEMAP,
             state='readonly',
             width=15
         )
-        self.tonemap_combobox.grid(row=0, column=1, padx=(18, 0), sticky=tk.W)
+        self.tonemap_combobox.grid(row=0, column=0, padx=(0, 5))
         self.tonemap_combobox.bind('<<ComboboxSelected>>', self.update_frame_preview)
 
-        # Add Tonemapper Info Button with tooltip
-        info_button_tonemap = ttk.Label(
-            display_frame,
-            text="ⓘ",
-            cursor="hand2"
-        )
-        info_button_tonemap.grid(row=0, column=2, padx=(5, 0))
-        
-        # Tooltip text for tonemapper
+        info_button_tonemap = ttk.Label(tonemap_frame, text="ⓘ", cursor="hand2")
+        info_button_tonemap.grid(row=0, column=1)
+
         tooltip_text_tonemap = (
             "Reinhard: Basic HDR to SDR conversion\n"
             "Mobius: Natural-looking conversion\n"
             "Hable: Game-like conversion (Cyberpunk 2077)"
         )
-        
-        # Bind hover events for tonemapper tooltip
         info_button_tonemap.bind('<Enter>', lambda e: self.show_tooltip(e, tooltip_text_tonemap))
         info_button_tonemap.bind('<Leave>', self.hide_tooltip)
-
-        # Update tooltip text to include tonemapper info
-        tooltip_text = ("Static: Basic HDR to SDR conversion with fixed parameters\n"
-                       "Dynamic: Adaptive conversion that analyzes video brightness")
 
         # Quality slider: one control whose range depends on CPU (CRF 17-28) vs
         # GPU (CQ 15-30) mode. Driven by a command that snaps to whole steps (the
@@ -365,6 +500,20 @@ class HDRConverterGUI:
         self.error_label = ttk.Label(self.control_frame, text='', foreground='red')
         self.error_label.grid(row=7, column=0, columnspan=3, sticky=tk.W)
 
+        # Pro upgrade banner (row 8) — shown when unlicensed
+        self._pro_banner = ttk.Frame(self.control_frame)
+        self._pro_banner.grid(row=8, column=0, columnspan=3, sticky=tk.W + tk.E, pady=(6, 2))
+        self._pro_banner.grid_remove()
+        ttk.Label(
+            self._pro_banner,
+            text='🔒 GPU, quality, batch & container require Pro.',
+            foreground='gray',
+        ).grid(row=0, column=0, sticky=tk.W)
+        ttk.Button(
+            self._pro_banner, text='Activate License',
+            command=self._open_license_dialog,
+        ).grid(row=0, column=1, padx=(12, 0))
+
         # Button Frame
         self.button_frame = ttk.Frame(self.image_frame)
         self.button_frame.grid(row=2, column=0, columnspan=3, pady=(5, 0), sticky=tk.N)
@@ -456,7 +605,7 @@ class HDRConverterGUI:
         self.control_frame.columnconfigure(0, weight=0)
         self.control_frame.columnconfigure(1, weight=1)
         self.control_frame.columnconfigure(2, weight=0)
-        for i in range(8):
+        for i in range(9):
             self.control_frame.rowconfigure(i, weight=0)
 
         # Image Frame Grid Configuration
@@ -500,8 +649,8 @@ class HDRConverterGUI:
         top of the queue here so its first frames show as if it were selected).
         """
         self.input_path_var.set(file_path)
-        # Default the output container to the input's, then build the path.
-        fmt = self._format_for_input(file_path)
+        # Default the output container to the input's (Pro only; free users always get MP4).
+        fmt = self._format_for_input(file_path) if self._licensed else 'MP4'
         self.format_var.set(fmt)
         base = os.path.splitext(file_path)[0]
         self.output_path_var.set(self._output_path_with_format(f"{base}_sdr", fmt))
@@ -739,6 +888,16 @@ class HDRConverterGUI:
         if getattr(self, '_window_auto_fitted', False):
             return
 
+        # If the window is already maximized the user has explicitly sized it —
+        # calling geometry("") would un-maximize it and collapse the preview to
+        # INITIAL_PANE_SIZE.  Instead, mark the fit as done and immediately
+        # rescale to the live (fullscreen) frame geometry.
+        if self.root.wm_state() == 'zoomed':
+            self._window_auto_fitted = True
+            self.root.update_idletasks()
+            self._rescale_preview_to_window()
+            return
+
         self.root.geometry("")  # shrink-wrap to the first previews
         self.root.update_idletasks()
         screen_width = self.root.winfo_screenwidth()
@@ -904,7 +1063,11 @@ class HDRConverterGUI:
             if not paths:
                 return
             if len(paths) > 1:
-                # Several files dropped at once -> queue them for batch conversion.
+                if not self._licensed:
+                    messagebox.showinfo(
+                        'Pro Feature',
+                        'Batch processing requires a Pro license.\n\nClick "Activate License" to unlock.')
+                    return
                 self.add_batch_files(paths)
                 return
             file_path = paths[0]

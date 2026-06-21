@@ -65,7 +65,7 @@ class _GuiTestBase(unittest.TestCase):
         self.root = _probe_root
         for w in self.root.winfo_children():
             w.destroy()
-        self.gui = HDRConverterGUI(self.root)
+        self.gui = HDRConverterGUI(self.root, licensed=True)
 
     def tearDown(self):
         self._load_patch.stop()
@@ -592,13 +592,197 @@ class TestDropTargetAndClose(_GuiTestBase):
              patch('src.gui.save_settings'):
             tmp_root = TkinterDnD.Tk()
             tmp_root.withdraw()
-            tmp_gui = HDRConverterGUI(tmp_root)
+            tmp_gui = HDRConverterGUI(tmp_root, licensed=True)
         mock_cm.process = None
         tmp_gui.on_close()
         # Destroying the root tears down its Tcl interpreter, so any further
         # call on it raises TclError — that is the proof the window was destroyed.
         with self.assertRaises(tk.TclError):
             tmp_root.winfo_exists()
+
+
+class _LicensingBase(unittest.TestCase):
+    """Shared plumbing for licensing tests: patches load/save_settings at class level."""
+
+    _class_patches: list = []
+    _class_gui: 'HDRConverterGUI | None' = None
+
+    @classmethod
+    def _start_patches(cls) -> None:
+        load_p = patch('src.gui.load_settings', return_value=dict(DEFAULTS))
+        save_p = patch('src.gui.save_settings')
+        load_p.start()
+        save_p.start()
+        cls._class_patches = [load_p, save_p]
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        for p in cls._class_patches:
+            p.stop()
+
+    def setUp(self) -> None:
+        self.gui = self.__class__._class_gui
+
+    def tearDown(self) -> None:
+        pass  # patches live at class level, not instance level
+
+
+@unittest.skipUnless(_TK_OK, _SKIP)
+class TestUnlicensedState(_LicensingBase):
+    """Read-only checks on an unlicensed GUI — one construction shared across all tests."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._start_patches()
+        for w in _probe_root.winfo_children():
+            w.destroy()
+        cls._class_gui = HDRConverterGUI(_probe_root, licensed=False)
+
+    def test_disables_gpu_checkbox(self):
+        self.assertTrue(self.gui.gpu_accel_checkbutton.instate(['disabled']))
+
+    def test_disables_quality_slider(self):
+        self.assertTrue(self.gui.quality_slider.instate(['disabled']))
+
+    def test_disables_custom_seek(self):
+        self.assertTrue(self.gui.custom_time_entry.instate(['disabled']))
+        self.assertTrue(self.gui.custom_seek_button.instate(['disabled']))
+
+    def test_restricts_format_to_mp4(self):
+        self.assertEqual(list(self.gui.format_combobox['values']), ['MP4'])
+        self.assertEqual(self.gui.format_var.get(), 'MP4')
+
+    def test_disables_batch_buttons(self):
+        self.assertTrue(self.gui.add_files_button.instate(['disabled']))
+        self.assertTrue(self.gui.remove_batch_button.instate(['disabled']))
+        self.assertTrue(self.gui.clear_batch_button.instate(['disabled']))
+
+    def test_shows_pro_banner(self):
+        self.assertNotEqual(self.gui._pro_banner.grid_info(), {})
+
+    def test_excludes_premium_from_interactable_elements(self):
+        premium = [
+            self.gui.gpu_accel_checkbutton, self.gui.quality_slider,
+            self.gui.format_combobox, self.gui.custom_time_entry,
+            self.gui.custom_seek_button, self.gui.add_files_button,
+            self.gui.clear_batch_button, self.gui.remove_batch_button,
+        ]
+        for widget in premium:
+            self.assertNotIn(widget, self.gui.interactable_elements,
+                             msg=f'{widget} must not be in interactable_elements when unlicensed')
+
+    def test_multifile_drop_blocked(self):
+        event = MagicMock()
+        event.data = '/file1.mp4 /file2.mkv'
+        with patch('src.gui.messagebox.showinfo') as mock_info:
+            self.gui.handle_file_drop(event)
+        mock_info.assert_called_once()
+        self.assertEqual(self.gui.batch_items, [])
+
+
+@unittest.skipUnless(_TK_OK, _SKIP)
+class TestLicensedState(_LicensingBase):
+    """Read-only checks on a licensed GUI — one construction shared across all tests."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._start_patches()
+        for w in _probe_root.winfo_children():
+            w.destroy()
+        cls._class_gui = HDRConverterGUI(_probe_root, licensed=True)
+
+    def test_enables_gpu_checkbox(self):
+        self.assertFalse(self.gui.gpu_accel_checkbutton.instate(['disabled']))
+
+    def test_enables_quality_slider(self):
+        self.assertFalse(self.gui.quality_slider.instate(['disabled']))
+
+    def test_enables_custom_seek(self):
+        self.assertFalse(self.gui.custom_time_entry.instate(['disabled']))
+        self.assertFalse(self.gui.custom_seek_button.instate(['disabled']))
+
+    def test_shows_all_formats(self):
+        self.assertEqual(list(self.gui.format_combobox['values']),
+                         list(HDRConverterGUI._OUTPUT_FORMATS))
+
+    def test_enables_batch_buttons(self):
+        self.assertFalse(self.gui.add_files_button.instate(['disabled']))
+        self.assertFalse(self.gui.remove_batch_button.instate(['disabled']))
+        self.assertFalse(self.gui.clear_batch_button.instate(['disabled']))
+
+    def test_hides_pro_banner(self):
+        self.assertEqual(self.gui._pro_banner.grid_info(), {})
+
+    def test_includes_premium_in_interactable_elements(self):
+        premium = [
+            self.gui.gpu_accel_checkbutton, self.gui.quality_slider,
+            self.gui.format_combobox, self.gui.custom_time_entry,
+            self.gui.custom_seek_button, self.gui.add_files_button,
+            self.gui.clear_batch_button, self.gui.remove_batch_button,
+        ]
+        for widget in premium:
+            self.assertIn(widget, self.gui.interactable_elements,
+                          msg=f'{widget} must be in interactable_elements when licensed')
+
+    def test_multifile_drop_allowed(self):
+        event = MagicMock()
+        event.data = '/file1.mp4 /file2.mkv'
+        with patch.object(self.gui, 'add_batch_files') as mock_add:
+            self.gui.handle_file_drop(event)
+        mock_add.assert_called_once()
+
+
+@unittest.skipUnless(_TK_OK, _SKIP)
+class TestLicenseTransition(unittest.TestCase):
+    """State-mutating tests — fresh GUI per test (unavoidable)."""
+
+    def setUp(self) -> None:
+        self._load_patch = patch('src.gui.load_settings', return_value=dict(DEFAULTS))
+        self._save_patch = patch('src.gui.save_settings')
+        self._load_patch.start()
+        self._save_patch.start()
+        for w in _probe_root.winfo_children():
+            w.destroy()
+
+    def tearDown(self) -> None:
+        self._load_patch.stop()
+        self._save_patch.stop()
+
+    def _make_gui(self, licensed: bool) -> HDRConverterGUI:
+        return HDRConverterGUI(_probe_root, licensed=licensed)
+
+    def test_apply_license_state_unlocks_all_premium_features(self):
+        gui = self._make_gui(licensed=False)
+        self.assertTrue(gui.gpu_accel_checkbutton.instate(['disabled']))
+        gui._apply_license_state(True)
+        self.assertFalse(gui.gpu_accel_checkbutton.instate(['disabled']))
+        self.assertFalse(gui.quality_slider.instate(['disabled']))
+        self.assertFalse(gui.add_files_button.instate(['disabled']))
+        self.assertEqual(list(gui.format_combobox['values']),
+                         list(HDRConverterGUI._OUTPUT_FORMATS))
+        self.assertEqual(gui._pro_banner.grid_info(), {})
+
+    def test_load_input_forces_mp4_when_unlicensed(self):
+        gui = self._make_gui(licensed=False)
+        with patch.object(gui, '_update_info_label'), \
+             patch.object(gui, 'update_frame_preview'), \
+             patch.object(gui, 'highlight_frame_button'), \
+             patch.object(gui, '_reset_custom_seek'), \
+             patch.object(gui, '_reset_preview_cache'):
+            gui._load_input_file('/some/video.mkv')
+        self.assertEqual(gui.format_var.get(), 'MP4')
+        self.assertTrue(gui.output_path_var.get().endswith('.mp4'))
+
+    def test_load_input_uses_native_format_when_licensed(self):
+        gui = self._make_gui(licensed=True)
+        with patch.object(gui, '_update_info_label'), \
+             patch.object(gui, 'update_frame_preview'), \
+             patch.object(gui, 'highlight_frame_button'), \
+             patch.object(gui, '_reset_custom_seek'), \
+             patch.object(gui, '_reset_preview_cache'):
+            gui._load_input_file('/some/video.mkv')
+        self.assertEqual(gui.format_var.get(), 'MKV')
+        self.assertTrue(gui.output_path_var.get().endswith('.mkv'))
 
 
 if __name__ == '__main__':

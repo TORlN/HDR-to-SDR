@@ -1,4 +1,5 @@
 """Tests for node-locked licensing: fingerprinting, API validation, offline grace period."""
+import io
 import json
 import os
 import sys
@@ -35,6 +36,21 @@ def _urlopen_mock(body: dict) -> MagicMock:
     resp.__enter__ = MagicMock(return_value=resp)
     resp.__exit__ = MagicMock(return_value=False)
     return resp
+
+
+def _activate_machine_mock() -> MagicMock:
+    """Context-manager mock for the POST /machines call (returns 201 with empty body)."""
+    resp = MagicMock()
+    resp.read.return_value = b'{}'
+    resp.__enter__ = MagicMock(return_value=resp)
+    resp.__exit__ = MagicMock(return_value=False)
+    return resp
+
+
+def _http_error_mock(code: int, body: dict) -> urllib.error.HTTPError:
+    """HTTPError whose .read() returns the given JSON body."""
+    fp = io.BytesIO(json.dumps(body).encode())
+    return urllib.error.HTTPError(url='', code=code, msg='', hdrs=None, fp=fp)  # type: ignore[arg-type]
 
 
 # ── Hardware fingerprint ───────────────────────────────────────────────────────
@@ -97,6 +113,41 @@ class TestLicenseActivation(unittest.TestCase):
             with self.assertRaises(InvalidKeyError):
                 activate_license('   ')
             mock_net.assert_not_called()
+
+    def test_fingerprint_mismatch_activates_machine_then_succeeds(self):
+        """FINGERPRINT_SCOPE_MISMATCH triggers machine registration, then re-validates."""
+        mismatch_resp = {
+            'meta': {'valid': False, 'detail': 'is not activated', 'code': 'FINGERPRINT_SCOPE_MISMATCH'},
+            'data': {'id': 'lic-uuid-123', 'type': 'licenses'},
+        }
+        valid_resp = {'meta': {'valid': True, 'detail': 'is valid', 'code': 'VALID'}}
+        with tempfile.TemporaryDirectory() as tmp:
+            lic_file = os.path.join(tmp, 'license.dat')
+            with patch('urllib.request.urlopen', side_effect=[
+                    _urlopen_mock(mismatch_resp),  # validate-key → not activated
+                    _activate_machine_mock(),       # POST /machines → 201
+                    _urlopen_mock(valid_resp),      # re-validate → VALID
+                ]), \
+                 patch('src.licensing.LICENSE_FILE', lic_file), \
+                 patch('src.licensing.SETTINGS_DIR', tmp):
+                activate_license('AAAA-BBBB-CCCC-DDDD')
+            self.assertTrue(os.path.exists(lic_file), "Token file must be written after machine activation")
+
+    def test_machine_limit_exceeded_raises_device_limit_error(self):
+        """If POST /machines returns MACHINE_LIMIT_EXCEEDED, DeviceLimitError is raised."""
+        mismatch_resp = {
+            'meta': {'valid': False, 'detail': 'is not activated', 'code': 'FINGERPRINT_SCOPE_MISMATCH'},
+            'data': {'id': 'lic-uuid-123', 'type': 'licenses'},
+        }
+        limit_err = _http_error_mock(422, {
+            'errors': [{'code': 'MACHINE_LIMIT_EXCEEDED', 'detail': 'machine limit exceeded'}]
+        })
+        with patch('urllib.request.urlopen', side_effect=[
+                _urlopen_mock(mismatch_resp),
+                limit_err,
+            ]):
+            with self.assertRaises(DeviceLimitError):
+                activate_license('AAAA-BBBB-CCCC-DDDD')
 
 
 # ── Online/offline behaviour ───────────────────────────────────────────────────

@@ -35,9 +35,12 @@ LICENSE_FILE = os.path.join(SETTINGS_DIR, 'license.dat')
 
 # ── API ────────────────────────────────────────────────────────────────────────
 # Override via env vars for staging / different licensing providers.
-_ACCOUNT_ID  = os.environ.get('KEYGEN_ACCOUNT_ID',  'nelsontorin1')
-_PRODUCT_ID  = os.environ.get('KEYGEN_PRODUCT_ID',  '3a9972ee-1054-4020-82f4-1496b8fa2d4c')
-_POLICY_ID   = os.environ.get('KEYGEN_POLICY_ID',   '601a4ea7-03bf-4563-a773-eb2cc81660d0')
+_ACCOUNT_ID    = os.environ.get('KEYGEN_ACCOUNT_ID',    'nelsontorin1')
+_PRODUCT_ID    = os.environ.get('KEYGEN_PRODUCT_ID',    '3a9972ee-1054-4020-82f4-1496b8fa2d4c')
+_POLICY_ID     = os.environ.get('KEYGEN_POLICY_ID',     '601a4ea7-03bf-4563-a773-eb2cc81660d0')
+# Product token scoped to machine:create — used when registering a new machine.
+# Override via env var; replace the placeholder with the real token before shipping.
+_PRODUCT_TOKEN = os.environ.get('KEYGEN_PRODUCT_TOKEN', 'prod-d1b563d53fc28cb8a1016546c1bc659fda2c31ba7bf488ed5f7b86931f79667bv3')
 _API_ENDPOINT = os.environ.get(
     'LICENSE_API_ENDPOINT',
     f'https://api.keygen.sh/v1/accounts/{_ACCOUNT_ID}/licenses/actions/validate-key',
@@ -199,23 +202,79 @@ def _call_api(key: str, fingerprint: str) -> dict:  # type: ignore[type-arg]
 
 
 def _parse_api_response(response: dict) -> None:  # type: ignore[type-arg]
-    """Raise the appropriate LicenseError for any non-valid API response."""
+    """Raise the appropriate LicenseError for any non-valid API response.
+
+    FINGERPRINT_SCOPE_MISMATCH is intentionally excluded here — it means
+    "machine not yet activated" and is handled upstream in activate_license.
+    """
     meta = response.get('meta', {})
     if meta.get('valid'):
         return
     code: str = meta.get('code', 'UNKNOWN')
     detail: str = meta.get('detail', 'License validation failed')
-    if code in ('TOO_MANY_MACHINES', 'FINGERPRINT_SCOPE_MISMATCH'):
+    if code == 'TOO_MANY_MACHINES':
         raise DeviceLimitError(detail)
     if code in ('NOT_FOUND', 'SUSPENDED', 'EXPIRED', 'OVERDUE'):
         raise InvalidKeyError(detail)
     raise LicenseError(f"{code}: {detail}")
 
 
+def _activate_machine(key: str, fingerprint: str, license_id: str) -> None:
+    """Register this machine with Keygen.sh for the given license.
+
+    Called the first time a key is entered on a new machine.
+    Raises DeviceLimitError if the machine quota is already full,
+    or NetworkError on connectivity failures.
+    """
+    machines_url = f'https://api.keygen.sh/v1/accounts/{_ACCOUNT_ID}/machines'
+    body = json.dumps({
+        'data': {
+            'type': 'machines',
+            'attributes': {
+                'fingerprint': fingerprint,
+                'name': platform.node(),
+            },
+            'relationships': {
+                'license': {'data': {'type': 'licenses', 'id': license_id}},
+            },
+        },
+    }).encode('utf-8')
+    req = urllib.request.Request(
+        machines_url,
+        data=body,
+        headers={
+            'Content-Type':  'application/vnd.api+json',
+            'Accept':        'application/vnd.api+json',
+            'Authorization': f'Bearer {_PRODUCT_TOKEN}',
+        },
+        method='POST',
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_API_TIMEOUT) as resp:
+            resp.read()
+    except urllib.error.HTTPError as exc:
+        try:
+            result = json.loads(exc.read().decode('utf-8'))
+            for err in result.get('errors', []):
+                if err.get('code') in ('MACHINE_LIMIT_EXCEEDED', 'TOO_MANY_MACHINES'):
+                    raise DeviceLimitError(err.get('detail', 'Device limit reached')) from exc
+            detail = '; '.join(e.get('detail', '') for e in result.get('errors', []))
+            raise NetworkError(f"HTTP {exc.code}: {detail or result}") from exc
+        except json.JSONDecodeError:
+            raise NetworkError(f"HTTP {exc.code} with non-JSON body") from exc
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        raise NetworkError(str(exc)) from exc
+
+
 # ── Public interface ────────────────────────────────────────────────────────────
 
 def activate_license(key: str) -> None:
     """Validate *key* against the remote API and persist a local token.
+
+    Keygen.sh requires two steps for a new machine:
+      1. validate-key with fingerprint scope → FINGERPRINT_SCOPE_MISMATCH
+      2. POST /machines to register this machine
+      3. re-validate → VALID
 
     Raises:
         InvalidKeyError: key not found, suspended, or expired.
@@ -227,6 +286,21 @@ def activate_license(key: str) -> None:
         raise InvalidKeyError("License key cannot be empty")
     fingerprint = get_hardware_fingerprint()
     response = _call_api(key, fingerprint)
+    meta = response.get('meta', {})
+
+    if meta.get('valid'):
+        save_license_token(key)
+        return
+
+    code = meta.get('code', 'UNKNOWN')
+    if code == 'FINGERPRINT_SCOPE_MISMATCH':
+        license_id: str = response.get('data', {}).get('id', '')
+        if not license_id:
+            raise LicenseError("Could not retrieve license ID to activate machine")
+        _activate_machine(key, fingerprint, license_id)
+        # Re-validate now that the machine is registered
+        response = _call_api(key, fingerprint)
+
     _parse_api_response(response)
     save_license_token(key)
 

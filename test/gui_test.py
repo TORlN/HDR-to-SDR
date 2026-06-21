@@ -49,7 +49,7 @@ class TestHDRConverterGUI(TestCase):
         self.mocks['root'].return_value = self.mock_root
 
         # Initialize GUI
-        self.gui = HDRConverterGUI(self.mock_root)
+        self.gui = HDRConverterGUI(self.mock_root, licensed=True)
         self.gui.progress_var = self.mock_progress_var  # Ensure progress_var is set correctly
         
         # Setup common GUI elements

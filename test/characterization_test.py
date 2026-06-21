@@ -1476,6 +1476,19 @@ class TestGuiErrorAndResizePaths(unittest.TestCase):
         gui.root.geometry.assert_not_called()  # don't yank a user-resized window
         gui.root.minsize.assert_called_once_with(*DEFAULT_MIN_SIZE)
 
+    def test_adjust_window_size_skips_geometry_when_maximized(self):
+        # Regression: fullscreen-first then load file caused geometry("") to
+        # un-maximize the window, leaving previews stuck at INITIAL_PANE_SIZE.
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui._window_auto_fitted = False
+        gui.root.wm_state.return_value = 'zoomed'
+        gui._rescale_preview_to_window = MagicMock()
+        gui.adjust_window_size()
+        gui.root.geometry.assert_not_called()
+        self.assertTrue(gui._window_auto_fitted)
+        gui._rescale_preview_to_window.assert_called_once()
+
 
 class TestResponsivePreview(unittest.TestCase):
     """Previews scale to the window (issue 1) with a debounced resize."""

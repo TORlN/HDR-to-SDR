@@ -9,7 +9,6 @@ import unittest
 from unittest.mock import patch, MagicMock, ANY  # Import ANY
 from src.conversion import ConversionManager
 from src.utils import get_video_properties
-from tkinter import Tk, DoubleVar  # Added DoubleVar import
 from tkinter import ttk
 from PIL import Image
 from src.utils import FFMPEG_FILTER, FFMPEG_CONVERT_FILTER
@@ -59,10 +58,10 @@ class TestConversionManager(unittest.TestCase):
 
         # Create a mocked GUI instance with a 'root' attribute
         mock_gui = MagicMock()
-        mock_gui.root = Tk()  # Ensure root is a Tk instance
+        mock_gui.root = MagicMock()
         mock_gui.root.after = MagicMock()
 
-        progress_var = DoubleVar(master=mock_gui.root)  # Ensure DoubleVar is created with the root window
+        progress_var = MagicMock()
         interactable_elements = []
         cancel_button = MagicMock()
 
@@ -94,7 +93,7 @@ class TestConversionManager(unittest.TestCase):
 
         # Create a mock GUI instance with a 'root' attribute
         mock_gui = MagicMock()
-        mock_gui.root = Tk()  # Ensure root is a Tk instance
+        mock_gui.root = MagicMock()  # cleanup captures real destroy before the mock below
         mock_gui.root.after = MagicMock()
         mock_gui.root.destroy = MagicMock()
 
@@ -135,10 +134,10 @@ class TestConversionManager(unittest.TestCase):
 
         # Create a mocked GUI instance with a 'root' attribute
         mock_gui = MagicMock()
-        mock_gui.root = Tk()  # Ensure root is a Tk instance
+        mock_gui.root = MagicMock()
         mock_gui.root.after = MagicMock()
 
-        progress_var = DoubleVar(master=mock_gui.root)  # Ensure DoubleVar is created with the root window
+        progress_var = MagicMock()
         interactable_elements = []
         cancel_button = MagicMock()
 
@@ -166,9 +165,9 @@ class TestConversionManager(unittest.TestCase):
         """Test start_conversion with invalid input or output paths."""
         manager = ConversionManager()
         mock_gui = MagicMock()
-        mock_gui.root = Tk()
+        mock_gui.root = MagicMock()
         mock_gui.root.after = MagicMock()
-        progress_var = DoubleVar(master=mock_gui.root)
+        progress_var = MagicMock()
         interactable_elements = []
         cancel_button = MagicMock()
 
@@ -197,9 +196,9 @@ class TestConversionManager(unittest.TestCase):
         mock_get_props.return_value = None
         manager = ConversionManager()
         mock_gui = MagicMock()
-        mock_gui.root = Tk()  # Ensure root is a Tk instance
+        mock_gui.root = MagicMock()
         mock_gui.root.after = MagicMock()
-        progress_var = DoubleVar(master=mock_gui.root)  # Ensure DoubleVar is created with the root window
+        progress_var = MagicMock()
         interactable_elements = []
         cancel_button = MagicMock()
 
@@ -342,7 +341,7 @@ class TestConversionManager(unittest.TestCase):
 
         # Create a mock GUI instance with a 'root' attribute
         mock_gui = MagicMock()
-        mock_gui.root = Tk()  # Ensure root is a Tk instance
+        mock_gui.root = MagicMock()
         mock_gui.root.after = MagicMock(side_effect=lambda delay, func: func())
 
         cancel_button = MagicMock()
@@ -370,7 +369,7 @@ class TestConversionManager(unittest.TestCase):
 
         # Create a mock GUI instance with a 'root' attribute
         mock_gui = MagicMock()
-        mock_gui.root = Tk()  # Ensure root is a Tk instance
+        mock_gui.root = MagicMock()
         mock_gui.root.after = MagicMock(side_effect=lambda delay, func: func())
 
         cancel_button = MagicMock()
@@ -406,7 +405,7 @@ class TestConversionManager(unittest.TestCase):
         error_messages = spam + real_errors
 
         mock_gui = MagicMock()
-        mock_gui.root = Tk()
+        mock_gui.root = MagicMock()
         mock_gui.root.after = MagicMock(side_effect=lambda delay, func: func())
         cancel_button = MagicMock()
         cancel_button.grid_remove = MagicMock()
@@ -765,10 +764,8 @@ class TestConversionManager(unittest.TestCase):
             "codec_name": 'h264', "frame_rate": 30.0, "audio_codec": 'aac',
             "audio_bit_rate": 128000, "duration": 0, "subtitle_streams": []
         }
-        root = Tk()
         mock_gui = MagicMock()
-        mock_gui.root = root
-        progress_var = DoubleVar(master=root)
+        progress_var = MagicMock()
 
         manager = ConversionManager()
         manager.start_conversion('input.mp4', 'output.mkv', 2.2, False, 0,
@@ -778,7 +775,6 @@ class TestConversionManager(unittest.TestCase):
         self.assertIn("duration", mock_showwarning.call_args[0][1].lower())
         mock_popen.assert_not_called()  # never launched ffmpeg
         self.assertIsNone(manager.process)
-        root.destroy()
 
 
 class TestBatchCompletionHook(unittest.TestCase):

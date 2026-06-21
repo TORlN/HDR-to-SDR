@@ -27,11 +27,19 @@ from src.utils import TONEMAP
 from src.settings import DEFAULTS
 
 
-def _tk_available():
+# One Tk instance shared across the entire module.  Creating and destroying a
+# Tk() per test causes Tcl to deinit/reinit its library on each cycle, which
+# is unreliable when the system's Tcl installation is incomplete (e.g. a
+# Python 3.13 install missing init.tcl at the expected path).  Keeping one
+# interpreter alive for the whole run avoids all reinit.
+_probe_root: "TkinterDnD.Tk | None" = None
+
+
+def _tk_available() -> bool:
+    global _probe_root
     try:
-        r = TkinterDnD.Tk()
-        r.withdraw()
-        r.destroy()
+        _probe_root = TkinterDnD.Tk()
+        _probe_root.withdraw()
         return True
     except Exception:
         return False
@@ -50,16 +58,16 @@ class _GuiTestBase(unittest.TestCase):
         self._save_patch = patch('src.gui.save_settings')
         self._load_patch.start()
         self._save_patch.start()
-        self.root = TkinterDnD.Tk()
-        self.root.withdraw()
+        # Reuse the module-level Tk — never destroy it between tests.
+        # Destroying and recreating Tk forces Tcl to deinit/reinit, which is
+        # unreliable on broken system Tcl installs.  Instead, destroy only the
+        # child widgets so HDRConverterGUI can build a fresh tree on the same root.
+        self.root = _probe_root
+        for w in self.root.winfo_children():
+            w.destroy()
         self.gui = HDRConverterGUI(self.root)
 
     def tearDown(self):
-        try:
-            if self.root.winfo_exists():
-                self.root.destroy()
-        except tk.TclError:
-            pass
         self._load_patch.stop()
         self._save_patch.stop()
 
@@ -576,12 +584,21 @@ class TestDropTargetAndClose(_GuiTestBase):
 
     @patch('src.gui.conversion_manager')
     def test_on_close_destroys_when_idle(self, mock_cm):
+        # on_close() destroys self.root.  Use a dedicated temporary root so
+        # the module-level _probe_root stays alive and Tcl remains initialized
+        # for any tests that follow this one.  Creating a second Tk() while
+        # _probe_root is alive is safe — the Tcl library is already loaded.
+        with patch('src.gui.load_settings', return_value=dict(DEFAULTS)), \
+             patch('src.gui.save_settings'):
+            tmp_root = TkinterDnD.Tk()
+            tmp_root.withdraw()
+            tmp_gui = HDRConverterGUI(tmp_root)
         mock_cm.process = None
-        self.gui.on_close()
-        # Destroying the main root tears down the interpreter app, so any further
-        # Tk call raises -- that exception is the proof the window was destroyed.
+        tmp_gui.on_close()
+        # Destroying the root tears down its Tcl interpreter, so any further
+        # call on it raises TclError — that is the proof the window was destroyed.
         with self.assertRaises(tk.TclError):
-            self.root.winfo_exists()
+            tmp_root.winfo_exists()
 
 
 if __name__ == '__main__':

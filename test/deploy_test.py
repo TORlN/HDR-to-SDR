@@ -68,7 +68,7 @@ class TestGetMimeType(unittest.TestCase):
         self.assertEqual(get_mime_type(self._path("font.woff2")), "font/woff2")
 
     def test_unknown_extension_returns_octet_stream(self):
-        self.assertEqual(get_mime_type(self._path("data.xyz")), "application/octet-stream")
+        self.assertEqual(get_mime_type(self._path("data.fakeext")), "application/octet-stream")
 
     def test_case_insensitive_extension(self):
         self.assertEqual(get_mime_type(self._path("IMAGE.PNG")), "image/png")

@@ -1,6 +1,6 @@
 This is a desktop GUI application to convert HDR videos to SDR using FFmpeg. The application lets you select an input video (or drag and drop one), live-preview the tonemapped result frame by frame, fine-tune the conversion, and convert single files or a whole queue while monitoring progress.
 
-The [latest release](https://github.com/TORlN/HDR-to-SDR/releases) is the **free Community Edition** — download and run it with no account required. Entering a **Pro license key** inside the app unlocks the additional features listed below.
+The [latest release](https://github.com/TORlN/HDR-to-SDR/releases) is the **free Community Edition**. Download and run it with no account required. Entering a **Pro license key** inside the app unlocks the additional features listed below.
 
 > **Note:** Pro license key sales are a work in progress and not yet publicly available. Watch this repo or the website for updates.
 
@@ -23,7 +23,7 @@ The [latest release](https://github.com/TORlN/HDR-to-SDR/releases) is the **free
 
 All free features, plus:
 
-- **GPU Acceleration**: Runs HDR→SDR tonemapping on the GPU via libplacebo (Vulkan) and encodes with the detected hardware encoder (`h264_nvenc` / `h264_amf` / `h264_qsv`). Because tonemapping — not encoding — is the real bottleneck, moving it to the GPU can roughly halve conversion time on capable hardware. Falls back automatically to CPU tonemapping when Vulkan/libplacebo isn't available, and to CPU encoding if the GPU encoder fails.
+- **GPU Acceleration**: Runs HDR→SDR tonemapping on the GPU via libplacebo (Vulkan) and encodes with the detected hardware encoder (`h264_nvenc` / `h264_amf` / `h264_qsv`). Because tonemapping (not encoding) is the real bottleneck, moving it to the GPU can roughly halve conversion time on capable hardware. Falls back automatically to CPU tonemapping when Vulkan/libplacebo isn't available, and to CPU encoding if the GPU encoder fails.
 - **Quality Control**: A Quality slider (CRF 17–28 on CPU, CQ 15–30 on GPU) trades file size against quality.
 - **Output Container**: Explicitly choose the output container (MP4 / MKV / MOV); it defaults to match the input. Audio and subtitles are stream-copied when the container allows, and transcoded or dropped only when it can't hold them (e.g. TrueHD audio or PGS subtitles into MP4).
 - **Custom Frame Seek**: Jump the preview to any exact timestamp (`HH:MM:SS`, `MM:SS`, or plain seconds) in addition to the five frame buttons.
@@ -32,9 +32,9 @@ All free features, plus:
 
 ## Licensing
 
-The Pro version uses a **node-locked license** issued via [Keygen.sh](https://keygen.sh). Activation requires an internet connection the first time a key is entered on a new device. After activation, the app works offline indefinitely — it re-validates against the server at most once every 30 days. If the server is unreachable at that point, the local token is trusted so paid users are never blocked by network failures.
+The Pro version uses a **node-locked license** issued via [Keygen.sh](https://keygen.sh). Activation requires an internet connection the first time a key is entered on a new device. After activation, the app works offline indefinitely. It re-validates against the server at most once every 30 days. If the server is unreachable at that point, the local token is trusted so paid users are never blocked by network failures.
 
-The license key is stored in `%APPDATA%\HDR-to-SDR\license.dat` as an HMAC-signed, hardware-bound token. Copying the file to another machine will not work — the HMAC is keyed to the machine's hardware fingerprint.
+The license key is stored in `%APPDATA%\HDR-to-SDR\license.dat` as an HMAC-signed, hardware-bound token. Copying the file to another machine will not work; the HMAC is keyed to the machine's hardware fingerprint.
 
 ## Requirements
 

@@ -2,6 +2,8 @@ This is a desktop GUI application to convert HDR videos to SDR using FFmpeg. The
 
 The [latest release](https://github.com/TORlN/HDR-to-SDR/releases) is the **free Community Edition** — download and run it with no account required. Entering a **Pro license key** inside the app unlocks the additional features listed below.
 
+> **Note:** Pro license key sales are a work in progress and not yet publicly available. Watch this repo or the website for updates.
+
 ## Features
 
 ### Free (Community Edition)
@@ -30,8 +32,6 @@ All free features, plus:
 
 ## Licensing
 
-> **Note:** Pro license key sales are a work in progress and not yet publicly available. Watch this repo or the website for updates.
-
 The Pro version uses a **node-locked license** issued via [Keygen.sh](https://keygen.sh). Activation requires an internet connection the first time a key is entered on a new device. After activation, the app works offline indefinitely — it re-validates against the server at most once every 30 days. If the server is unreachable at that point, the local token is trusted so paid users are never blocked by network failures.
 
 The license key is stored in `%APPDATA%\HDR-to-SDR\license.dat` as an HMAC-signed, hardware-bound token. Copying the file to another machine will not work — the HMAC is keyed to the machine's hardware fingerprint.
@@ -48,78 +48,6 @@ The license key is stored in `%APPDATA%\HDR-to-SDR\license.dat` as an HMAC-signe
 
 1. Download the latest release from the [releases page](https://github.com/TORlN/HDR-to-SDR/releases).
 2. Run the `HDR_to_SDR_Converter.exe` file.
-
-### Development Installation
-
-1. Clone the repository:
-    ```sh
-    git clone https://github.com/TORlN/HDR-to-SDR
-    cd HDR-to-SDR
-    ```
-
-2. Create and activate a virtual environment:
-    - On Windows:
-        ```sh
-        python -m venv .venv
-        .venv\Scripts\activate
-        ```
-    - On macOS/Linux:
-        ```sh
-        python -m venv .venv
-        source .venv/bin/activate
-        ```
-
-3. Install the required Python packages:
-    ```sh
-    pip install -r requirements.txt
-    ```
-
-4. Ensure `ffmpeg` and `ffprobe` are available. Either install FFmpeg so they're on your PATH, or place `ffmpeg.exe`, `ffprobe.exe`, and `ffplay.exe` in the `src` folder (where the app looks first).
-
-### Running from source
-
-```sh
-python src/main.pyw
-```
-
-## Testing
-
-The project is covered by a unit/integration test suite (currently 424 tests) run on CI against Python 3.10–3.13.
-
-Run the suite:
-```sh
-python -m unittest discover -s test -p '*_test.py' -t .
-```
-
-Run it with coverage (configuration lives in `.coveragerc`; CI enforces a 90% floor):
-```sh
-pip install coverage
-python -m coverage run -m unittest discover -s test -p '*_test.py' -t .
-python -m coverage report
-```
-
-Some tests (smoke and performance audits) only run when a sample video and a real FFmpeg are present, and skip automatically otherwise.
-
-## Building the executable
-
-With the development environment set up and `ffmpeg.exe`, `ffprobe.exe`, and `ffplay.exe` placed in the `src` folder, build a standalone `.exe` with PyInstaller:
-
-```sh
-pyinstaller --onefile --noconsole --name "HDR_to_SDR_Converter" --icon=logo/icon.ico ^
-    --paths=.venv\Lib\site-packages ^
-    --hidden-import=numpy ^
-    --hidden-import=numpy.core ^
-    --add-data ".venv\Lib\site-packages\tkinterdnd2;tkinterdnd2" ^
-    --add-data ".venv\Lib\site-packages\PIL;PIL" ^
-    --add-binary "src\ffmpeg.exe;." ^
-    --add-binary "src\ffprobe.exe;." ^
-    --add-binary "src\ffplay.exe;." ^
-    --collect-submodules numpy ^
-    --log-level DEBUG ^
-    src\main.pyw
-```
-
-The compiled executable will be located in the `dist` directory.
 
 ## License
 

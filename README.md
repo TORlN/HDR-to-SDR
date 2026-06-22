@@ -1,10 +1,6 @@
 This is a desktop GUI application to convert HDR videos to SDR using FFmpeg. The application lets you select an input video (or drag and drop one), live-preview the tonemapped result frame by frame, fine-tune the conversion, and convert single files or a whole queue while monitoring progress.
 
-> ## ⚠️ Project Status
->
-> **The current release is the free Community Edition, and it does *not* match the source code in this repository.** The published `.exe` on the [releases page](https://github.com/TORlN/HDR-to-SDR/releases) works and is fully usable, but it is an earlier build that lags behind the ongoing development here.
->
-> The source code in this repo targets a **full Pro release** with node-locked licensing. Until that ships, treat the released Community Edition as the stable free version and this repository as a preview of work in progress.
+The [latest release](https://github.com/TORlN/HDR-to-SDR/releases) is the **free Community Edition** — download and run it with no account required. Entering a **Pro license key** inside the app unlocks the additional features listed below.
 
 ## Features
 
@@ -33,6 +29,8 @@ All free features, plus:
 - **Persistent Settings**: Gamma, conversion method, tonemapper, quality, GPU toggle, preview toggle, and "open after conversion" are saved between sessions.
 
 ## Licensing
+
+> **Note:** Pro license key sales are a work in progress and not yet publicly available. Watch this repo or the website for updates.
 
 The Pro version uses a **node-locked license** issued via [Keygen.sh](https://keygen.sh). Activation requires an internet connection the first time a key is entered on a new device. After activation, the app works offline indefinitely — it re-validates against the server at most once every 30 days. If the server is unreachable at that point, the local token is trusted so paid users are never blocked by network failures.
 

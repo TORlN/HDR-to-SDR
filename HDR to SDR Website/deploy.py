@@ -292,7 +292,7 @@ def deploy(source_dir: Path, dry_run: bool = False) -> bool:
     print(f"\n{'=' * 62}")
     if success:
         print(f"  Deployment complete.")
-        print(f"  Live at: https://www.hdrtosdr.com")
+        print(f"  Live at: https://hdrtosdr.com")
     else:
         print(f"  Deployment finished with errors - review output above.")
     print(f"{'=' * 62}\n")

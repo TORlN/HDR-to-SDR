@@ -54,3 +54,4 @@ mock_license.py
 make_comparison.py
 comparison.png
 *.mkv
+installer.iss

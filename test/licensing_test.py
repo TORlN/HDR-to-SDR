@@ -286,5 +286,147 @@ class TestTokenStorage(unittest.TestCase):
             self.assertIsNone(load_license_token())
 
 
+# ── load_license_token edge cases ─────────────────────────────────────────────
+
+class TestLoadLicenseTokenEdgeCases(unittest.TestCase):
+
+    def test_corrupted_payload_json_returns_none(self):
+        """If the stored payload_json is not valid JSON, return None."""
+        import json as _json
+        with tempfile.TemporaryDirectory() as tmp:
+            lic_file = os.path.join(tmp, 'license.dat')
+            token = {'payload': '{not valid json', 'sig': 'fake-sig'}
+            with open(lic_file, 'w') as f:
+                _json.dump(token, f)
+            import hmac as _hmac
+            with patch('src.licensing.LICENSE_FILE', lic_file), \
+                 patch.object(_hmac, 'compare_digest', return_value=True):
+                result = load_license_token()
+        self.assertIsNone(result)
+
+    def test_fingerprint_mismatch_in_payload_returns_none(self):
+        """Payload with a different fingerprint is rejected even with valid HMAC."""
+        import json as _json
+        with tempfile.TemporaryDirectory() as tmp:
+            lic_file = os.path.join(tmp, 'license.dat')
+            payload_json = _json.dumps({'key': 'K', 'fingerprint': 'wrong-fp', 'validated_at': 0})
+            token = {'payload': payload_json, 'sig': 'fake-sig'}
+            with open(lic_file, 'w') as f:
+                _json.dump(token, f)
+            import hmac as _hmac
+            with patch('src.licensing.LICENSE_FILE', lic_file), \
+                 patch.object(_hmac, 'compare_digest', return_value=True):
+                result = load_license_token()
+        self.assertIsNone(result)
+
+
+# ── _call_api error branches ───────────────────────────────────────────────────
+
+class TestCallApiErrorBranches(unittest.TestCase):
+
+    def test_http_error_with_non_json_body_raises_network_error(self):
+        """HTTPError whose body is not JSON must raise NetworkError."""
+        import io as _io
+        fp = _io.BytesIO(b'<html>Service Unavailable</html>')
+        err = urllib.error.HTTPError(url='', code=503, msg='', hdrs=None, fp=fp)  # type: ignore[arg-type]
+        with patch('urllib.request.urlopen', side_effect=err):
+            with self.assertRaises(NetworkError):
+                activate_license('ANY-KEY-1234')
+
+
+# ── _parse_api_response unknown code ──────────────────────────────────────────
+
+class TestParseApiResponseUnknownCode(unittest.TestCase):
+
+    def test_unknown_error_code_raises_license_error(self):
+        """An unrecognised error code from the API must raise LicenseError."""
+        api_resp = {'meta': {'valid': False, 'detail': 'something wrong', 'code': 'UNKNOWN_CODE'}}
+        with patch('urllib.request.urlopen', return_value=_urlopen_mock(api_resp)):
+            with self.assertRaises(LicenseError):
+                activate_license('ANY-KEY-1234')
+
+
+# ── _activate_machine error branches ──────────────────────────────────────────
+
+class TestActivateMachineErrorBranches(unittest.TestCase):
+
+    _MISMATCH_RESP = {
+        'meta': {'valid': False, 'detail': 'not activated', 'code': 'FINGERPRINT_SCOPE_MISMATCH'},
+        'data': {'id': 'lic-uuid-123', 'type': 'licenses'},
+    }
+
+    def test_other_http_error_raises_network_error(self):
+        """A non-machine-limit HTTPError from POST /machines raises NetworkError."""
+        import io as _io, json as _json
+        body = _json.dumps({'errors': [{'code': 'VALIDATION_ERROR', 'detail': 'bad field'}]}).encode()
+        fp = _io.BytesIO(body)
+        other_err = urllib.error.HTTPError(url='', code=400, msg='', hdrs=None, fp=fp)  # type: ignore[arg-type]
+        with patch('urllib.request.urlopen', side_effect=[
+                _urlopen_mock(self._MISMATCH_RESP),
+                other_err,
+            ]):
+            with self.assertRaises(NetworkError):
+                activate_license('AAAA-BBBB-CCCC-DDDD')
+
+    def test_non_json_http_error_raises_network_error(self):
+        """A non-JSON HTTPError body from POST /machines raises NetworkError."""
+        import io as _io
+        fp = _io.BytesIO(b'Internal Server Error')
+        bad_err = urllib.error.HTTPError(url='', code=500, msg='', hdrs=None, fp=fp)  # type: ignore[arg-type]
+        with patch('urllib.request.urlopen', side_effect=[
+                _urlopen_mock(self._MISMATCH_RESP),
+                bad_err,
+            ]):
+            with self.assertRaises(NetworkError):
+                activate_license('AAAA-BBBB-CCCC-DDDD')
+
+    def test_missing_license_id_in_mismatch_response_raises_license_error(self):
+        """FINGERPRINT_SCOPE_MISMATCH without a license ID in the response raises LicenseError."""
+        mismatch_no_id = {
+            'meta': {'valid': False, 'detail': 'not activated', 'code': 'FINGERPRINT_SCOPE_MISMATCH'},
+            'data': {},  # no 'id' field
+        }
+        with patch('urllib.request.urlopen', return_value=_urlopen_mock(mismatch_no_id)):
+            with self.assertRaises(LicenseError):
+                activate_license('AAAA-BBBB-CCCC-DDDD')
+
+    def test_activate_machine_url_error_raises_network_error(self):
+        """URLError during POST /machines raises NetworkError."""
+        with patch('urllib.request.urlopen', side_effect=[
+                _urlopen_mock(self._MISMATCH_RESP),
+                urllib.error.URLError('connection refused'),
+            ]):
+            with self.assertRaises(NetworkError):
+                activate_license('AAAA-BBBB-CCCC-DDDD')
+
+
+# ── check_license stale-token branches ────────────────────────────────────────
+
+class TestCheckLicenseStaleTokenBranches(unittest.TestCase):
+
+    def _stale_payload(self) -> dict:  # type: ignore[type-arg]
+        return {
+            'key': 'SOME-KEY',
+            'fingerprint': get_hardware_fingerprint(),
+            'validated_at': int(time.time()) - 31 * 24 * 3600,  # 31 days ago — past cooldown
+        }
+
+    def test_stale_token_network_offline_still_returns_true(self):
+        """When the token is stale but the network is down, trust the local token."""
+        with patch('src.licensing.load_license_token', return_value=self._stale_payload()), \
+             patch('urllib.request.urlopen', side_effect=urllib.error.URLError('offline')):
+            result = check_license()
+        self.assertTrue(result)
+
+    def test_revoked_key_oserror_on_file_delete_still_returns_false(self):
+        """OSError while removing the revoked token file is swallowed; function returns False."""
+        api_resp = {'meta': {'valid': False, 'detail': 'suspended', 'code': 'SUSPENDED'}}
+        with patch('src.licensing.load_license_token', return_value=self._stale_payload()), \
+             patch('urllib.request.urlopen', return_value=_urlopen_mock(api_resp)), \
+             patch('os.remove', side_effect=OSError('permission denied')):
+            result = check_license()
+        self.assertFalse(result)
+
+
 if __name__ == '__main__':
     unittest.main()

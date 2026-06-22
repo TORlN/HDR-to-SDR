@@ -662,6 +662,58 @@ class TestConversionManager(unittest.TestCase):
         self.assertNotIn('h264_nvenc', cmd)
         self.assertNotIn('-hwaccel', cmd)
 
+    @patch('src.conversion.platform.system', return_value='Darwin')
+    @patch('src.conversion.messagebox.showwarning')
+    def test_construct_command_qsv_unsupported_platform(self, mock_warn, _plat):
+        """On non-Windows/Linux, h264_qsv warns and falls back to CPU encoder."""
+        manager = ConversionManager()
+        manager._gpu_encoder = 'h264_qsv'
+        props = {
+            "width": 1920, "height": 1080, "bit_rate": 4000000, "frame_rate": 30.0,
+            "duration": 120.0, "audio_codec": "aac", "audio_bit_rate": 128000,
+            "subtitle_streams": [],
+        }
+        cmd = manager.construct_ffmpeg_command('in.mp4', 'out.mkv', 2.2, props,
+                                               True, 0, tonemapper='reinhard')
+        mock_warn.assert_called_once()
+        self.assertIn('libx264', cmd)
+        self.assertNotIn('h264_qsv', cmd)
+        self.assertNotIn('-hwaccel', cmd)
+
+    @patch('src.conversion.platform.system', return_value='Darwin')
+    @patch('src.conversion.messagebox.showwarning')
+    def test_construct_command_amf_unsupported_platform(self, mock_warn, _plat):
+        """On non-Windows/Linux, h264_amf warns and falls back to CPU encoder."""
+        manager = ConversionManager()
+        manager._gpu_encoder = 'h264_amf'
+        props = {
+            "width": 1920, "height": 1080, "bit_rate": 4000000, "frame_rate": 30.0,
+            "duration": 120.0, "audio_codec": "aac", "audio_bit_rate": 128000,
+            "subtitle_streams": [],
+        }
+        cmd = manager.construct_ffmpeg_command('in.mp4', 'out.mkv', 2.2, props,
+                                               True, 0, tonemapper='reinhard')
+        mock_warn.assert_called_once()
+        self.assertIn('libx264', cmd)
+        self.assertNotIn('h264_amf', cmd)
+
+    @patch('src.conversion.platform.system', return_value='Darwin')
+    @patch('src.conversion.messagebox.showwarning')
+    def test_construct_command_unknown_encoder_unsupported_platform(self, mock_warn, _plat):
+        """On non-Windows/Linux, an unrecognised GPU encoder warns and falls back to CPU."""
+        manager = ConversionManager()
+        manager._gpu_encoder = 'h264_unknown_gpu'
+        props = {
+            "width": 1920, "height": 1080, "bit_rate": 4000000, "frame_rate": 30.0,
+            "duration": 120.0, "audio_codec": "aac", "audio_bit_rate": 128000,
+            "subtitle_streams": [],
+        }
+        cmd = manager.construct_ffmpeg_command('in.mp4', 'out.mkv', 2.2, props,
+                                               True, 0, tonemapper='reinhard')
+        mock_warn.assert_called_once()
+        self.assertIn('libx264', cmd)
+        self.assertNotIn('h264_unknown_gpu', cmd)
+
     _QUALITY_PROPS = {
         "width": 1920, "height": 1080, "bit_rate": 4000000, "codec_name": 'h264',
         "frame_rate": 30.0, "audio_codec": 'aac', "audio_bit_rate": 128000,

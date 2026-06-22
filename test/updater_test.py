@@ -298,5 +298,37 @@ class TestGuiUpdateIntegration(unittest.TestCase):
         MockDialog.assert_not_called()
 
 
+# ── Version sync guard ─────────────────────────────────────────────────────────
+
+class TestVersionSync(unittest.TestCase):
+    """APP_VERSION in updater.py and #define AppVersion in installer.iss must always match.
+
+    When releasing a new version, both must be bumped together:
+      1. src/updater.py  — APP_VERSION = "X.Y.Z"
+      2. installer.iss   — #define AppVersion  "X.Y.Z"
+    This test fails the suite immediately if they drift apart.
+    """
+
+    _ISS = os.path.join(os.path.dirname(__file__), '..', 'installer.iss')
+
+    def _iss_version(self) -> str:
+        import re
+        with open(self._ISS) as f:
+            content = f.read()
+        m = re.search(r'#define\s+AppVersion\s+"([^"]+)"', content)
+        if not m:
+            self.fail("Could not find '#define AppVersion' in installer.iss")
+        return m.group(1)
+
+    def test_updater_and_installer_versions_match(self):
+        iss_ver = self._iss_version()
+        self.assertEqual(
+            APP_VERSION, iss_ver,
+            f"Version mismatch: updater.py APP_VERSION={APP_VERSION!r} "
+            f"but installer.iss AppVersion={iss_ver!r}. "
+            f"Bump both files together when cutting a release."
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -18,6 +18,11 @@ import mimetypes
 import argparse
 from pathlib import Path
 
+# Ensure Unicode status symbols (✓ ✗ →) work on Windows consoles that default
+# to cp1252. reconfigure is a no-op on stdout streams that are already UTF-8.
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')  # type: ignore[union-attr]
+
 _SCRIPT_DIR = Path(__file__).parent
 
 try:

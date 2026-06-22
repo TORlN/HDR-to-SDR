@@ -785,5 +785,89 @@ class TestLicenseTransition(unittest.TestCase):
         self.assertTrue(gui.output_path_var.get().endswith('.mkv'))
 
 
+@unittest.skipUnless(_TK_OK, _SKIP)
+class TestLicenseDialog(unittest.TestCase):
+    """Tests for the _LicenseDialog Toplevel."""
+
+    def setUp(self) -> None:
+        for w in _probe_root.winfo_children():
+            w.destroy()
+
+    def tearDown(self) -> None:
+        for w in _probe_root.winfo_children():
+            try:
+                w.destroy()
+            except Exception:
+                pass
+
+    def _make_dialog(self):  # type: ignore[return]
+        from src.gui import _LicenseDialog  # type: ignore[attr-defined]
+        dlg = _LicenseDialog(_probe_root)
+        dlg.withdraw()
+        return dlg
+
+    def test_initial_activated_is_false(self):
+        dlg = self._make_dialog()
+        self.assertFalse(dlg.activated)
+        dlg.destroy()
+
+    def test_submit_empty_key_shows_prompt(self):
+        dlg = self._make_dialog()
+        dlg._key_var.set('')
+        dlg._submit()
+        self.assertIn('enter', dlg._status_var.get().lower())
+        self.assertFalse(dlg.activated)
+        dlg.destroy()
+
+    def test_on_close_sets_activated_false(self):
+        dlg = self._make_dialog()
+        dlg._on_close()
+        self.assertFalse(dlg._activated)
+
+    def test_submit_valid_key_sets_activated_true(self):
+        dlg = self._make_dialog()
+        dlg._key_var.set('VALID-KEY-1234')
+        with patch('src.gui.activate_license'):
+            dlg._submit()
+        self.assertTrue(dlg._activated)
+
+    def test_submit_invalid_key_shows_error(self):
+        import src.gui as _gm
+        dlg = self._make_dialog()
+        dlg._key_var.set('BAD-KEY')
+        with patch('src.gui.activate_license', side_effect=_gm.InvalidKeyError('bad')):
+            dlg._submit()
+        self.assertIn('invalid', dlg._status_var.get().lower())
+        self.assertFalse(dlg._activated)
+        dlg.destroy()
+
+    def test_submit_device_limit_shows_error(self):
+        import src.gui as _gm
+        dlg = self._make_dialog()
+        dlg._key_var.set('LIMIT-KEY')
+        with patch('src.gui.activate_license', side_effect=_gm.DeviceLimitError('limit')):
+            dlg._submit()
+        self.assertIn('limit', dlg._status_var.get().lower())
+        dlg.destroy()
+
+    def test_submit_network_error_shows_error(self):
+        import src.gui as _gm
+        dlg = self._make_dialog()
+        dlg._key_var.set('NET-KEY')
+        with patch('src.gui.activate_license', side_effect=_gm.NetworkError('offline')):
+            dlg._submit()
+        self.assertIn('connection', dlg._status_var.get().lower())
+        dlg.destroy()
+
+    def test_submit_generic_license_error_shows_message(self):
+        import src.gui as _gm
+        dlg = self._make_dialog()
+        dlg._key_var.set('ERR-KEY')
+        with patch('src.gui.activate_license', side_effect=_gm.LicenseError('custom message')):
+            dlg._submit()
+        self.assertIn('custom message', dlg._status_var.get())
+        dlg.destroy()
+
+
 if __name__ == '__main__':
     unittest.main()

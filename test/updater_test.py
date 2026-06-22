@@ -213,6 +213,7 @@ class TestDownloadInstaller(unittest.TestCase):
 
 class TestLaunchInstaller(unittest.TestCase):
 
+    @unittest.skipUnless(sys.platform == "win32", "Windows-only creationflags")
     def test_calls_popen_with_detached_flags(self):
         with patch('subprocess.Popen') as mock_popen:
             launch_installer(r'C:\tmp\HDR_to_SDR_Setup.exe')

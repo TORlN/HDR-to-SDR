@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import urllib.request
 from typing import Callable
@@ -71,8 +72,9 @@ def download_installer(
 
 def launch_installer(path: str) -> None:
     """Launch the installer detached so it survives the parent process exiting."""
-    subprocess.Popen(
-        [path],
-        creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
-        close_fds=True,
-    )
+    kwargs: dict = {"close_fds": True}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = (
+            subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        )
+    subprocess.Popen([path], **kwargs)

@@ -50,3 +50,6 @@ error.png
 Shōgun S01e01 Anjin.mkv
 .gitignore
 mock_license.py
+make_comparison.py
+comparison.png
+*.mkv

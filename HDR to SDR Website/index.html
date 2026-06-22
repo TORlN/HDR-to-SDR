@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HDR to SDR: Convert Washout HDR Gameplay to Perfect SDR Instantly</title>
+  <meta name="description"
+    content="Stop recording washed-out, gray gameplay footage. HDR to SDR applies studio-grade tone mapping to your clips so they look perfect on every screen and platform." />
+  <meta name="theme-color" content="#1e1e1e" />
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="HDR to SDR: Perfect Tone Mapping for Gameplay Creators" />
+  <meta property="og:description"
+    content="Convert washed-out HDR clips to vivid, perfectly tone-mapped SDR in one click. Free forever. Pro upgrade available." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://www.hdrtosdr.com" />
+
+  <!-- Tailwind via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            surface: "#252525",
+            border: "#333333",
+            accent: "#5b9cf6",
+            pro: "#f59e0b",
+          },
+        },
+      },
+    };
+  </script>
+
+  <!-- Lemon Squeezy overlay SDK -->
+  <script src="https://app.lemonsqueezy.com/js/lemon.js" defer></script>
+
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+    }
+
+    :root {
+      --bg: #1e1e1e;
+      --bg-alt: #1a1a1a;
+      --surface: #252525;
+      --border: #333333;
+      --accent: #5b9cf6;
+      --accent-h: #4a8ae5;
+      --pro: #f59e0b;
+      --text: #ffffff;
+      --muted: #888888;
+      --subtle: #555555;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+    }
+
+    /* ── Scrollbar ─────────────────────────────────────── */
+    ::-webkit-scrollbar {
+      width: 5px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: var(--bg);
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #3a3a3a;
+      border-radius: 3px;
+    }
+
+    /* ── Nav ───────────────────────────────────────────── */
+    .site-nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(30, 30, 30, 0.92);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border-bottom: 1px solid #282828;
+    }
+
+    /* ── Buttons ───────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      font-weight: 600;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      transition: opacity 0.15s, transform 0.1s, background 0.15s;
+      white-space: nowrap;
+    }
+
+    .btn:hover {
+      opacity: 0.9;
+      transform: translateY(-1px);
+    }
+
+    .btn:active {
+      transform: translateY(0);
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      padding: 13px 28px;
+      font-size: 15px;
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-h);
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--muted);
+      padding: 12px 16px;
+      font-size: 14px;
+      border: 1px solid var(--border);
+    }
+
+    .btn-ghost:hover {
+      color: var(--text);
+      border-color: #555;
+    }
+
+    .btn-pro {
+      background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
+      color: #fff;
+      padding: 15px 32px;
+      font-size: 16px;
+      width: 100%;
+    }
+
+    .btn-free-nav {
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid rgba(91, 156, 246, 0.4);
+      padding: 7px 16px;
+      font-size: 13px;
+      border-radius: 7px;
+    }
+
+    .btn-free-nav:hover {
+      background: rgba(91, 156, 246, 0.08);
+    }
+
+    /* ── Badges ────────────────────────────────────────── */
+    .badge {
+      display: inline-block;
+      padding: 3px 11px;
+      border-radius: 100px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .badge-free {
+      background: rgba(91, 156, 246, 0.12);
+      color: var(--accent);
+      border: 1px solid rgba(91, 156, 246, 0.28);
+    }
+
+    .badge-pro {
+      background: rgba(245, 158, 11, 0.12);
+      color: var(--pro);
+      border: 1px solid rgba(245, 158, 11, 0.28);
+    }
+
+    /* ── Hero glow ─────────────────────────────────────── */
+    .hero-glow {
+      position: absolute;
+      inset: -100px 0 auto;
+      height: 500px;
+      background: radial-gradient(ellipse 60% 50% at 50% 0%, rgba(91, 156, 246, 0.10) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    /* ── Comparison slider ─────────────────────────────── */
+    .comparison-wrap {
+      position: relative;
+      width: 100%;
+      max-width: 860px;
+      margin: 0 auto;
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      cursor: col-resize;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    .comparison-inner {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: #111;
+    }
+
+    #img-after,
+    #img-before {
+      position: absolute;
+      inset: 0;
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    #img-before {
+      clip-path: inset(0 50% 0 0);
+    }
+
+    /* Labels */
+    .cmp-label {
+      position: absolute;
+      top: 12px;
+      z-index: 5;
+      padding: 4px 10px;
+      border-radius: 5px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      pointer-events: none;
+    }
+
+    .cmp-label-left {
+      left: 12px;
+      background: rgba(0, 0, 0, 0.65);
+      color: #999;
+      border: 1px solid #444;
+    }
+
+    .cmp-label-right {
+      right: 12px;
+      background: rgba(91, 156, 246, 0.18);
+      color: var(--accent);
+      border: 1px solid rgba(91, 156, 246, 0.5);
+    }
+
+    /* Handle */
+    #sliderHandle {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      width: 2px;
+      height: 100%;
+      background: #fff;
+      transform: translateX(-50%);
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    #sliderHandle::before {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 2px 16px rgba(0, 0, 0, 0.55);
+    }
+
+    #sliderHandle::after {
+      content: "◀ ▶";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 10px;
+      font-weight: 800;
+      color: #1e1e1e;
+      letter-spacing: -1.5px;
+      white-space: nowrap;
+      z-index: 11;
+    }
+
+    /* ── Feature cards ─────────────────────────────────── */
+    .feature-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px;
+      transition: border-color 0.2s ease, transform 0.2s ease;
+    }
+
+    .feature-card:hover {
+      border-color: rgba(91, 156, 246, 0.55);
+      transform: translateY(-3px);
+    }
+
+    .feature-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 20px;
+      flex-shrink: 0;
+    }
+
+    /* ── Pricing cards ─────────────────────────────────── */
+    .pricing-card {
+      background: var(--surface);
+      border-radius: 16px;
+      padding: 36px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .pricing-card-free {
+      border: 1px solid var(--border);
+    }
+
+    .pricing-card-pro {
+      border: 1px solid rgba(245, 158, 11, 0.35);
+    }
+
+    .pricing-card-pro::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, #f59e0b 0%, #ef4444 50%, #5b9cf6 100%);
+    }
+
+    /* ── Check list ────────────────────────────────────── */
+    .check-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .check-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 11px;
+      color: #bbb;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .check-list li .tick {
+      color: var(--accent);
+      font-weight: 700;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .check-list li.pro {
+      color: #ddd;
+    }
+
+    .check-list li.pro .tick {
+      color: var(--pro);
+    }
+
+    /* ── Section separators ────────────────────────────── */
+    .section-alt {
+      background: var(--bg-alt);
+    }
+
+    /* ── Link underline util ───────────────────────────── */
+    .link-muted {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 13px;
+      transition: color 0.15s;
+    }
+
+    .link-muted:hover {
+      color: var(--text);
+    }
+
+    /* ── Divider line ──────────────────────────────────── */
+    .divider {
+      border: none;
+      border-top: 1px solid #2a2a2a;
+      margin: 0;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- ═══════════════════════════════ NAV ══════════════════════════════════════ -->
+  <nav class="site-nav">
+    <div class="max-w-6xl mx-auto px-5 py-3.5 flex items-center justify-between gap-6">
+
+      <!-- Wordmark -->
+      <a href="#" style="display:flex;align-items:center;gap:10px;text-decoration:none;">
+        <div
+          style="width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,#5b9cf6,#8b5cf6);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
+            <path d="M2 7.5l3-4 4 4 4-5" stroke="#fff" stroke-width="2.2" stroke-linecap="round"
+              stroke-linejoin="round" />
+          </svg>
+        </div>
+        <span style="font-size:17px;font-weight:700;color:#fff;letter-spacing:-0.02em;">
+          HDR<span style="color:var(--accent);">to</span>SDR
+        </span>
+      </a>
+
+      <!-- Nav links (desktop) -->
+      <div class="hidden md:flex items-center gap-7">
+        <a href="#comparison" class="link-muted" style="font-size:14px;">Demo</a>
+        <a href="#features" class="link-muted" style="font-size:14px;">Features</a>
+        <a href="#pricing" class="link-muted" style="font-size:14px;">Pricing</a>
+      </div>
+
+      <!-- CTA -->
+      <a href="https://github.com/TORlN/HDR-to-SDR/releases/download/v3.0.0/HDR_to_SDR_Converter.exe"
+        class="btn btn-free-nav hidden md:inline-flex">
+        Download Free
+      </a>
+    </div>
+  </nav>
+
+
+  <!-- ═══════════════════════════════ HERO ══════════════════════════════════════ -->
+  <section class="relative overflow-hidden" style="padding: 96px 24px 100px;">
+    <div class="hero-glow"></div>
+
+    <div class="max-w-4xl mx-auto text-center relative z-10">
+      <span class="badge badge-free" style="margin-bottom:20px;display:inline-block;">Free to Download · Windows</span>
+
+      <h1
+        style="font-size:clamp(2.2rem,5vw,3.6rem);font-weight:800;line-height:1.12;letter-spacing:-0.03em;margin-bottom:20px;">
+        Convert Washout HDR Gameplay<br>
+        <span
+          style="background:linear-gradient(135deg,#5b9cf6 0%,#8b5cf6 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">
+          to Perfect SDR Instantly
+        </span>
+      </h1>
+
+      <p style="font-size:1.15rem;color:var(--muted);max-width:580px;margin:0 auto 36px;line-height:1.7;">
+        Stop losing viewers to gray, lifeless clips. HDR to SDR applies
+        industry-standard tone mapping (Reinhard, Mobius, Hable) so your footage
+        looks exactly right on every screen and platform, with no color science
+        degree required.
+      </p>
+
+      <div style="display:flex;flex-wrap:wrap;gap:12px;justify-content:center;align-items:center;">
+        <a href="https://github.com/TORlN/HDR-to-SDR/releases/download/v3.0.0/HDR_to_SDR_Converter.exe" id="download"
+          class="btn btn-primary" style="padding:15px 34px;font-size:16px;">
+          <svg width="17" height="17" viewBox="0 0 17 17" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8.5 2v9M4.5 7.5l4 4 4-4" />
+            <path d="M2 13.5h13" />
+          </svg>
+          Download Free Version
+        </a>
+        <a href="#comparison" class="btn btn-ghost" style="padding:14px 20px;font-size:15px;">
+          See it in action
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 7h8M7 3l4 4-4 4" />
+          </svg>
+        </a>
+      </div>
+
+      <p style="font-size:12px;color:var(--subtle);margin-top:18px;">
+        No subscription &nbsp;·&nbsp; No account required &nbsp;·&nbsp; Unlimited single-file conversions free
+      </p>
+    </div>
+  </section>
+
+
+  <!-- ═══════════════════════════ COMPARISON ════════════════════════════════════ -->
+  <section id="comparison" class="section-alt" style="padding: 88px 24px;">
+    <div class="max-w-5xl mx-auto">
+
+      <div style="text-align:center;margin-bottom:44px;">
+        <span class="badge badge-free" style="margin-bottom:14px;display:inline-block;">Interactive Demo</span>
+        <h2 style="font-size:clamp(1.8rem,3.5vw,2.6rem);font-weight:800;letter-spacing:-0.025em;margin-bottom:12px;">
+          The difference is impossible to ignore
+        </h2>
+        <p style="color:var(--muted);max-width:520px;margin:0 auto;font-size:15px;line-height:1.65;">
+          Drag the handle left and right. On the left: raw HDR signal crammed into an SDR container. On the right: the
+          same frame after HDR to SDR's tone mapper runs. This image is straight from the input and output file, no
+          color
+          grading or adjustments.
+        </p>
+      </div>
+
+      <!-- Slider component -->
+      <div class="comparison-wrap" id="comparisonContainer">
+        <div class="comparison-inner">
+          <!-- Drop your converted files here: sdr-frame.png (right) and hdr-frame.png (left) -->
+          <img id="img-after" src="sdr-frame.png" alt="SDR tone-mapped output" draggable="false" />
+          <img id="img-before" src="hdr-frame.png" alt="HDR washed-out input" draggable="false" />
+          <div class="cmp-label cmp-label-left">HDR: Washed Out</div>
+          <div class="cmp-label cmp-label-right">SDR: Tone Mapped</div>
+          <div id="sliderHandle"></div>
+        </div>
+      </div>
+
+      <p style="text-align:center;font-size:12px;color:var(--subtle);margin-top:14px;">
+        Drag the handle to compare
+      </p>
+
+    </div>
+  </section>
+
+
+  <!-- ═══════════════════════════ FEATURES ═════════════════════════════════════ -->
+  <section id="features" style="padding: 96px 24px;">
+    <div class="max-w-5xl mx-auto">
+
+      <div style="text-align:center;margin-bottom:56px;">
+        <span class="badge badge-pro" style="margin-bottom:14px;display:inline-block;">Pro Features</span>
+        <h2 style="font-size:clamp(1.8rem,3.5vw,2.6rem);font-weight:800;letter-spacing:-0.025em;margin-bottom:12px;">
+          Built for high-volume creators
+        </h2>
+        <p style="color:var(--muted);max-width:500px;margin:0 auto;font-size:15px;line-height:1.65;">
+          The free tier handles single files perfectly. Pro removes every bottleneck
+          when you're processing hours of 4K footage daily.
+        </p>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px;">
+
+        <!-- Format & Quality -->
+        <div class="feature-card">
+          <div class="feature-icon" style="background:rgba(91,156,246,0.10);border:1px solid rgba(91,156,246,0.22);">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#5b9cf6" stroke-width="1.7"
+              stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="5" width="18" height="12" rx="2" />
+              <path d="M7 9h8M7 13h5" />
+              <circle cx="17" cy="13" r="1.5" fill="#5b9cf6" stroke="none" />
+            </svg>
+          </div>
+          <h3 style="font-size:17px;font-weight:700;margin-bottom:10px;">Custom Format &amp; Quality Control</h3>
+          <p style="color:var(--muted);font-size:14px;line-height:1.7;margin:0;">
+            Choose your output container (MP4, MKV, MOV) and dial in exactly the
+            bitrate you want with a per-export quality slider. Full control over
+            file size versus visual fidelity. Never settle for a one-size preset.
+          </p>
+        </div>
+
+        <!-- Batch Processing -->
+        <div class="feature-card">
+          <div class="feature-icon" style="background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.22);">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#f59e0b" stroke-width="1.7"
+              stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="2" width="8" height="8" rx="1.5" />
+              <rect x="12" y="2" width="8" height="8" rx="1.5" />
+              <rect x="2" y="12" width="8" height="8" rx="1.5" />
+              <rect x="12" y="12" width="8" height="8" rx="1.5" />
+            </svg>
+          </div>
+          <h3 style="font-size:17px;font-weight:700;margin-bottom:10px;">High-Volume Batch Processing</h3>
+          <p style="color:var(--muted);font-size:14px;line-height:1.7;margin:0;">
+            Drag in hundreds of clips at once. Add or remove files from the queue
+            at any time, and per-job progress bars keep you informed. Process an
+            entire recording session overnight and wake up to finished SDR masters.
+          </p>
+        </div>
+
+        <!-- GPU Acceleration -->
+        <div class="feature-card">
+          <div class="feature-icon" style="background:rgba(139,92,246,0.10);border:1px solid rgba(139,92,246,0.22);">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#8b5cf6" stroke-width="1.7"
+              stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="6" width="18" height="10" rx="2.5" />
+              <path d="M6 6V4M10 6V4M14 6V4M18 6V4M6 16v2M10 16v2M14 16v2M18 16v2" />
+              <rect x="6" y="9" width="10" height="4" rx="1" />
+            </svg>
+          </div>
+          <h3 style="font-size:17px;font-weight:700;margin-bottom:10px;">Native GPU Acceleration</h3>
+          <p style="color:var(--muted);font-size:14px;line-height:1.7;margin:0;">
+            Hardware-accelerated encode via NVENC (NVIDIA), AMD AMF, and Intel
+            QuickSync. Convert 4K HDR clips significantly faster than CPU-only
+            tools. Your GPU was built for this.
+          </p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ════════════════════════════ PRICING ══════════════════════════════════════ -->
+  <section id="pricing" class="section-alt" style="padding: 96px 24px 104px;">
+    <div class="max-w-5xl mx-auto">
+
+      <div style="text-align:center;margin-bottom:56px;">
+        <h2 style="font-size:clamp(1.8rem,3.5vw,2.6rem);font-weight:800;letter-spacing:-0.025em;margin-bottom:12px;">
+          Simple, permanent pricing
+        </h2>
+        <p style="color:var(--muted);font-size:15px;">
+          One payment. Yours forever. No subscriptions. No renewal nags.
+        </p>
+      </div>
+
+      <div
+        style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;max-width:740px;margin:0 auto;">
+
+        <!-- Free -->
+        <div class="pricing-card pricing-card-free">
+          <span class="badge badge-free" style="margin-bottom:18px;display:inline-block;">Free</span>
+          <div style="font-size:2.6rem;font-weight:800;margin-bottom:4px;">$0</div>
+          <div style="color:var(--muted);font-size:13px;margin-bottom:28px;">Always free, no time limit</div>
+
+          <ul class="check-list" style="margin-bottom:30px;">
+            <li><span class="tick">✓</span> Single-file conversion</li>
+            <li><span class="tick">✓</span> All tone-mapping presets</li>
+            <li><span class="tick">✓</span> 4K &amp; 8K source support</li>
+            <li><span class="tick">✓</span> MP4 output</li>
+            <li><span class="tick">✓</span> Unlimited conversions</li>
+          </ul>
+
+          <a href="https://github.com/TORlN/HDR-to-SDR/releases/download/v3.0.0/HDR_to_SDR_Converter.exe" class="btn"
+            style="width:100%;background:#333;color:#aaa;padding:13px;font-size:14px;border-radius:8px;justify-content:center;">
+            Download Free
+          </a>
+        </div>
+
+        <!-- Pro -->
+        <div class="pricing-card pricing-card-pro">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
+            <span class="badge badge-pro">Pro</span>
+            <span
+              style="font-size:11px;color:#f59e0b;background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.28);padding:3px 9px;border-radius:100px;">Coming
+              Soon</span>
+          </div>
+
+          <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px;">
+            <div style="font-size:2.6rem;font-weight:800;">$24.99</div>
+            <div style="color:var(--muted);font-size:13px;">one-time</div>
+          </div>
+          <div style="color:var(--muted);font-size:13px;margin-bottom:28px;">
+            Perpetual license for the current version.
+          </div>
+
+          <ul class="check-list" style="margin-bottom:30px;">
+            <li><span class="tick">✓</span> Everything in Free</li>
+            <li class="pro"><span class="tick">✓</span> <strong>Custom Format &amp; Quality Slider</strong> (MP4 / MKV /
+              MOV, H.264)</li>
+            <li class="pro"><span class="tick">✓</span> <strong>High-Volume Batch Processing</strong></li>
+            <li class="pro"><span class="tick">✓</span> <strong>GPU Acceleration</strong> (NVENC / VCE / QSV)</li>
+            <li><span class="tick">✓</span> Priority support</li>
+          </ul>
+
+          <button disabled class="btn btn-pro" style="opacity:0.45;cursor:not-allowed;pointer-events:none;">
+            Pro Coming Soon
+          </button>
+
+          <p style="text-align:center;font-size:12px;color:var(--subtle);margin-top:14px;">
+            Pro version is in development &nbsp;·&nbsp; Pricing locked at $24.99 at launch
+          </p>
+        </div>
+
+      </div>
+
+      <!-- Trust line -->
+      <div style="text-align:center;margin-top:40px;display:flex;justify-content:center;gap:24px;flex-wrap:wrap;">
+        <span style="font-size:12px;color:var(--subtle);display:flex;align-items:center;gap:6px;">
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.5"
+            stroke-linecap="round">
+            <path d="M6.5 1l1.4 3.1H11L8.5 6.5l.9 3.1L6.5 8 3.6 9.6l.9-3.1L2 4.1h3.1z" />
+          </svg>
+          Instant delivery
+        </span>
+        <span style="font-size:12px;color:var(--subtle);display:flex;align-items:center;gap:6px;">
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.5"
+            stroke-linecap="round">
+            <path d="M6.5 1.5a5 5 0 100 10 5 5 0 000-10zM4.5 6.5l1.5 1.5 2.5-3" />
+          </svg>
+          30-day refund policy
+        </span>
+        <span style="font-size:12px;color:var(--subtle);display:flex;align-items:center;gap:6px;">
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.5"
+            stroke-linecap="round">
+            <rect x="2" y="5" width="9" height="7" rx="1.5" />
+            <path d="M4.5 5V3.5a2 2 0 014 0V5" />
+          </svg>
+          Secure payment
+        </span>
+      </div>
+
+    </div>
+  </section>
+
+
+  <!-- ════════════════════════════ FOOTER ═══════════════════════════════════════ -->
+  <footer style="border-top:1px solid #262626;padding:44px 24px;">
+    <div class="max-w-5xl mx-auto">
+      <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:20px;">
+
+        <!-- Logo -->
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div
+            style="width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#5b9cf6,#8b5cf6);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <svg width="13" height="13" viewBox="0 0 15 15" fill="none">
+              <path d="M2 7.5l3-4 4 4 4-5" stroke="#fff" stroke-width="2.2" stroke-linecap="round"
+                stroke-linejoin="round" />
+            </svg>
+          </div>
+          <span style="font-weight:700;font-size:15px;color:#ddd;">HDRtoSDR</span>
+        </div>
+
+        <!-- Footer links -->
+        <nav style="display:flex;gap:20px;flex-wrap:wrap;">
+          <a href="#" onclick="openModal('modal-privacy');return false;" class="link-muted">Privacy Policy</a>
+          <a href="#" onclick="openModal('modal-tos');return false;" class="link-muted">Terms of Service</a>
+          <a href="https://github.com/TORlN/HDR-to-SDR/issues" target="_blank" rel="noopener" class="link-muted">Contact
+            / Support</a>
+        </nav>
+
+        <p style="font-size:12px;color:var(--subtle);margin:0;">
+          &copy; 2026 HDRtoSDR. All rights reserved.
+        </p>
+      </div>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+
+  <!-- ══════════════════════ TERMS OF SERVICE MODAL ══════════════════════════ -->
+  <div id="modal-tos" role="dialog" aria-modal="true" aria-labelledby="tos-title"
+    style="display:none;position:fixed;inset:0;z-index:500;background:rgba(0,0,0,0.75);overflow-y:auto;padding:48px 24px;"
+    onclick="closeModal('modal-tos')">
+    <div
+      style="max-width:680px;margin:0 auto;background:#252525;border:1px solid #333;border-radius:16px;padding:48px 48px 52px;position:relative;"
+      onclick="event.stopPropagation()">
+      <button onclick="closeModal('modal-tos')"
+        style="position:absolute;top:18px;right:18px;background:none;border:none;color:#666;font-size:22px;cursor:pointer;line-height:1;"
+        aria-label="Close">✕</button>
+
+      <h2 id="tos-title" style="font-size:1.5rem;font-weight:800;margin-bottom:6px;">Terms of Service</h2>
+      <p style="font-size:12px;color:#666;margin-bottom:36px;">Effective: June 2026</p>
+
+      <div style="color:#bbb;font-size:14px;line-height:1.8;">
+
+        <h3 style="color:#eee;font-size:15px;font-weight:700;margin:0 0 8px;">1. Acceptance</h3>
+        <p style="margin:0 0 24px;">By downloading or using HDR to SDR ("the Software"), you agree to these Terms. If
+          you do not agree, do not use the Software.</p>
+
+        <h3 style="color:#eee;font-size:15px;font-weight:700;margin:0 0 8px;">2. License Grant</h3>
+        <p style="margin:0 0 10px;"><strong style="color:#ddd;">Free Tier.</strong> We grant you a free, perpetual,
+          non-exclusive, non-transferable license to use the Software for personal or commercial purposes, subject to
+          the restrictions below.</p>
+        <p style="margin:0 0 24px;"><strong style="color:#ddd;">Pro Tier.</strong> Upon purchasing a Pro license, we
+          grant you a perpetual, non-exclusive, non-transferable license to use the Pro version. Your license covers the
+          version current at the time of purchase and all subsequent updates to that major version.</p>
+
+        <h3 style="color:#eee;font-size:15px;font-weight:700;margin:0 0 8px;">3. Restrictions</h3>
+        <p style="margin:0 0 24px;">You may not: (a) redistribute, sell, rent, or sublicense the Software; (b) reverse
+          engineer or decompile the Software; (c) remove or obscure any proprietary notices.</p>
+
+        <h3 style="color:#eee;font-size:15px;font-weight:700;margin:0 0 8px;">4. Payment &amp; Refunds</h3>
+        <p style="margin:0 0 24px;">Pro licenses are one-time purchases processed by Lemon Squeezy. Prices are in USD.
+          We offer a 30-day refund, no questions asked — open an issue at the GitHub link in the footer to request one.
+        </p>
+
+        <h3 style="color:#eee;font-size:15px;font-weight:700;margin:0 0 8px;">5. No Warranty</h3>
+        <p style="margin:0 0 24px;">THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND. WE DISCLAIM ALL
+          WARRANTIES, EXPRESS OR IMPLIED, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND
+          NON-INFRINGEMENT.</p>
+
+        <h3 style="color:#eee;font-size:15px;font-weight:700;margin:0 0 8px;">6. Limitation of Liability</h3>
+        <p style="margin:0 0 24px;">IN NO EVENT SHALL WE BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, OR
+          CONSEQUENTIAL DAMAGES ARISING FROM YOUR USE OF THE SOFTWARE. OUR TOTAL LIABILITY SHALL NOT EXCEED THE AMOUNT
+          YOU PAID FOR THE SOFTWARE IN THE TWELVE MONTHS PRECEDING THE CLAIM.</p>
+
+        <h3 style="color:#eee;font-size:15px;font-weight:700;margin:0 0 8px;">7. Changes</h3>
+        <p style="margin:0;">We may update these Terms at any time. Continued use of the Software after changes
+          constitutes acceptance of the updated Terms.</p>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════ PRIVACY POLICY MODAL ════════════════════════════ -->
+  <div id="modal-privacy" role="dialog" aria-modal="true" aria-labelledby="privacy-title"
+    style="display:none;position:fixed;inset:0;z-index:500;background:rgba(0,0,0,0.75);overflow-y:auto;padding:48px 24px;"
+    onclick="closeModal('modal-privacy')">
+    <div
+      style="max-width:680px;margin:0 auto;background:#252525;border:1px solid #333;border-radius:16px;padding:48px 48px 52px;position:relative;"
+      onclick="event.stopPropagation()">
+      <button onclick="closeModal('modal-privacy')"
+        style="position:absolute;top:18px;right:18px;background:none;border:none;color:#666;font-size:22px;cursor:pointer;line-height:1;"
+        aria-label="Close">✕</button>
+
+      <h2 id="privacy-title" style="font-size:1.5rem;font-weight:800;margin-bottom:6px;">Privacy Policy</h2>
+      <p style="font-size:12px;color:#666;margin-bottom:36px;">Effective: June 2026</p>
+
+      <div style="color:#bbb;font-size:14px;line-height:1.8;">
+
+        <h3 style="color:#eee;font-size:15px;font-weight:700;margin:0 0 8px;">1. What We Collect</h3>
+        <p style="margin:0 0 10px;"><strong style="color:#ddd;">The Desktop App.</strong> HDR to SDR runs entirely on
+          your machine. It does not transmit usage data, telemetry, or any personal information to us.</p>
+        <p style="margin:0 0 10px;"><strong style="color:#ddd;">The Website.</strong> When you visit hdrtosdr.com, our
+          CDN (Amazon CloudFront) may log standard request data such as IP address, browser type, and pages visited. We
+          do not use tracking pixels, third-party analytics, or persistent cookies.</p>
+        <p style="margin:0 0 24px;"><strong style="color:#ddd;">Purchases.</strong> Payment is handled entirely by Lemon
+          Squeezy. We receive your email address in order to deliver your license key. We do not store payment card
+          details.</p>
+
+        <h3 style="color:#eee;font-size:15px;font-weight:700;margin:0 0 8px;">2. How We Use Your Information</h3>
+        <p style="margin:0 0 24px;">We use your email solely to deliver your license key. We do not send marketing
+          emails, sell your data, or share it with third parties beyond what is necessary to fulfill your purchase.</p>
+
+        <h3 style="color:#eee;font-size:15px;font-weight:700;margin:0 0 8px;">3. Third-Party Services</h3>
+        <ul style="margin:0 0 24px;padding-left:20px;list-style:disc;">
+          <li style="margin-bottom:6px;"><strong style="color:#ddd;">Lemon Squeezy</strong> — payment processing.
+            Subject to their privacy policy at lemonsqueezy.com.</li>
+          <li style="margin-bottom:6px;"><strong style="color:#ddd;">Amazon CloudFront / S3</strong> — website hosting
+            and content delivery.</li>
+          <li><strong style="color:#ddd;">GitHub</strong> — public issue tracker for support requests.</li>
+        </ul>
+
+        <h3 style="color:#eee;font-size:15px;font-weight:700;margin:0 0 8px;">4. Data Retention</h3>
+        <p style="margin:0 0 24px;">Purchase records are retained as required by applicable accounting and tax law. You
+          may request deletion of your personal data by opening an issue at the GitHub link in the footer.</p>
+
+        <h3 style="color:#eee;font-size:15px;font-weight:700;margin:0 0 8px;">5. Children's Privacy</h3>
+        <p style="margin:0 0 24px;">The Software is not directed at children under 13. We do not knowingly collect
+          information from children.</p>
+
+        <h3 style="color:#eee;font-size:15px;font-weight:700;margin:0 0 8px;">6. Changes</h3>
+        <p style="margin:0 0 24px;">We may update this Policy at any time. The effective date at the top of this page
+          reflects the latest revision.</p>
+
+        <h3 style="color:#eee;font-size:15px;font-weight:700;margin:0 0 8px;">7. Contact</h3>
+        <p style="margin:0;">Questions? Open an issue at <a href="https://github.com/TORlN/HDR-to-SDR/issues"
+            target="_blank" rel="noopener"
+            style="color:var(--accent);text-decoration:none;">github.com/TORlN/HDR-to-SDR/issues</a>.</p>
+
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function openModal(id) {
+      document.getElementById(id).style.display = 'block';
+      document.body.style.overflow = 'hidden';
+    }
+    function closeModal(id) {
+      document.getElementById(id).style.display = 'none';
+      document.body.style.overflow = '';
+    }
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        ['modal-tos', 'modal-privacy'].forEach(closeModal);
+      }
+    });
+  </script>
+</body>
+
+</html>

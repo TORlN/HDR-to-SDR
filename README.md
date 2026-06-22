@@ -44,8 +44,6 @@ The license key is stored in `%APPDATA%\HDR-to-SDR\license.dat` as an HMAC-signe
 
 ## Installation
 
-### Normal Installation
-
 1. Download the latest release from the [releases page](https://github.com/TORlN/HDR-to-SDR/releases).
 2. Run the `HDR_to_SDR_Converter.exe` file.
 

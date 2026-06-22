@@ -2,7 +2,7 @@ This is a desktop GUI application to convert HDR videos to SDR using FFmpeg. The
 
 The [latest release](https://github.com/TORlN/HDR-to-SDR/releases) is the **free Community Edition**. Download and run it with no account required. Entering a **Pro license key** inside the app unlocks the additional features listed below.
 
-> **Note:** Pro license key sales are a work in progress and not yet publicly available. Watch this repo or the website for updates.
+> **Note:** Pro license key sales are a work in progress and not yet publicly available. Watch this repo or [hdrtosdr.com](https://hdrtosdr.com) for updates.
 
 ## Features
 

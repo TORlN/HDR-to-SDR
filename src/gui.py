@@ -1,6 +1,7 @@
 import os
 import tempfile
 import tkinter as tk
+import webbrowser
 from tkinter import filedialog, messagebox
 from tkinter import ttk
 from dark_theme import apply_dark_theme
@@ -37,7 +38,7 @@ class _LicenseDialog(tk.Toplevel):
         self._activated = False
         self._build_ui()
         self.update_idletasks()
-        w, h = 460, 230
+        w, h = 460, 260
         x = (self.winfo_screenwidth() - w) // 2
         y = (self.winfo_screenheight() - h) // 2
         self.geometry(f'{w}x{h}+{x}+{y}')
@@ -64,6 +65,15 @@ class _LicenseDialog(tk.Toplevel):
                   activebackground='#005fa3', activeforeground=_FG,
                   relief='flat', padx=20, pady=7,
                   font=_FONT, cursor='hand2').pack(pady=14)
+        link = tk.Label(self, text='Need to free up a machine slot? Manage activations →',
+                        bg=_BG, fg='#888888', font=_FONT_SM, cursor='hand2')
+        link.pack()
+        link.bind('<Button-1>', lambda _: self._open_manage_url())
+        link.bind('<Enter>', lambda _: link.config(fg='#aaaaaa'))
+        link.bind('<Leave>', lambda _: link.config(fg='#888888'))
+
+    def _open_manage_url(self) -> None:
+        webbrowser.open('https://app.lemonsqueezy.com/my-orders')
 
     def _submit(self) -> None:
         key = self._key_var.get().strip()

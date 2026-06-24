@@ -868,6 +868,25 @@ class TestLicenseDialog(unittest.TestCase):
         self.assertIn('custom message', dlg._status_var.get())
         dlg.destroy()
 
+    def test_manage_activations_link_opens_lemon_squeezy(self):
+        """_open_manage_url must open the LS orders page in the default browser."""
+        dlg = self._make_dialog()
+        with patch('src.gui.webbrowser') as mock_wb:
+            dlg._open_manage_url()
+        mock_wb.open.assert_called_once_with('https://app.lemonsqueezy.com/my-orders')
+        dlg.destroy()
+
+    def test_manage_activations_link_widget_exists(self):
+        """The dialog must contain a label whose text mentions 'machine slot'."""
+        dlg = self._make_dialog()
+        texts = [w.cget('text') for w in dlg.winfo_children()
+                 if isinstance(w, tk.Label)]
+        self.assertTrue(
+            any('machine slot' in t.lower() for t in texts),
+            f"Expected a label mentioning 'machine slot'; found: {texts}",
+        )
+        dlg.destroy()
+
 
 if __name__ == '__main__':
     unittest.main()

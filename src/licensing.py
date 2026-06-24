@@ -1,15 +1,17 @@
-"""Node-locked software licensing with 72-hour offline grace period.
+"""Node-locked software licensing with 30-day offline grace period.
 
 Token format (license.dat):
   { "payload": "<JSON string>", "sig": "<HMAC-SHA256 hex>" }
 
-The payload JSON contains the license key, machine fingerprint, and the Unix
-timestamp of the last successful online validation.  The HMAC key is derived
-from the hardware fingerprint, so the token is both machine-locked and
-tamper-proof without requiring any external crypto library.
+The payload JSON contains the license key, this machine's hardware fingerprint,
+the Lemon Squeezy instance_id (returned on activation), and the Unix timestamp
+of the last successful online validation.  The HMAC prevents tampering without
+requiring any external crypto library.
 
-API shape targets Keygen.sh — set LICENSE_API_ENDPOINT via environment variable
-to point at your Lemon Squeezy or self-hosted endpoint.
+Lemon Squeezy license API (base: https://api.lemonsqueezy.com/v1/licenses):
+  POST .../activate   body: license_key + instance_name  → returns instance.id
+  POST .../validate   body: license_key + instance_id    → returns valid bool
+  POST .../deactivate body: license_key + instance_id    → frees the slot
 """
 from __future__ import annotations
 
@@ -22,6 +24,7 @@ import platform
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from typing import Optional
@@ -34,22 +37,12 @@ logger = logging.getLogger(__name__)
 LICENSE_FILE = os.path.join(SETTINGS_DIR, 'license.dat')
 
 # ── API ────────────────────────────────────────────────────────────────────────
-# Override via env vars for staging / different licensing providers.
-_ACCOUNT_ID    = os.environ.get('KEYGEN_ACCOUNT_ID',    'nelsontorin1')
-_PRODUCT_ID    = os.environ.get('KEYGEN_PRODUCT_ID',    '3a9972ee-1054-4020-82f4-1496b8fa2d4c')
-_POLICY_ID     = os.environ.get('KEYGEN_POLICY_ID',     '601a4ea7-03bf-4563-a773-eb2cc81660d0')
-# Real token lives in src/_secrets.py (gitignored); falls back to '' in CI where the file is absent.
-try:
-    from _secrets import KEYGEN_PRODUCT_TOKEN as _SECRETS_TOKEN  # type: ignore[import]
-except ImportError:
-    _SECRETS_TOKEN = ''
-_PRODUCT_TOKEN = os.environ.get('KEYGEN_PRODUCT_TOKEN', _SECRETS_TOKEN)
-_API_ENDPOINT = os.environ.get(
+_LS_API_BASE = os.environ.get(
     'LICENSE_API_ENDPOINT',
-    f'https://api.keygen.sh/v1/accounts/{_ACCOUNT_ID}/licenses/actions/validate-key',
+    'https://api.lemonsqueezy.com/v1/licenses',
 )
-_API_TIMEOUT = 10  # seconds
-_REFRESH_COOLDOWN = 30 * 24 * 3600  # only re-validate against Keygen every 30 days
+_API_TIMEOUT = 10
+_REFRESH_COOLDOWN = 30 * 24 * 3600  # re-validate against LS every 30 days
 
 _lock = threading.Lock()
 
@@ -78,7 +71,9 @@ def get_hardware_fingerprint() -> str:
     """Return a SHA-256 hex digest derived from stable hardware identifiers.
 
     Uses the primary MAC address, hostname, CPU architecture, and OS family.
-    The result is deterministic across calls on the same machine.
+    The result is deterministic across calls on the same machine, and serves as
+    the instance_name sent to Lemon Squeezy — so the same machine always maps
+    to the same identifier and never burns an extra activation slot on re-install.
     """
     parts = [
         str(uuid.getnode()),   # primary MAC address as a 48-bit integer
@@ -93,12 +88,10 @@ def get_hardware_fingerprint() -> str:
 # ── Token helpers ──────────────────────────────────────────────────────────────
 
 def _hmac_key(fingerprint: str) -> bytes:
-    """Derive a 32-byte machine-specific signing key."""
     return hashlib.sha256(fingerprint.encode('utf-8')).digest()
 
 
 def _sign(payload_json: str, fingerprint: str) -> str:
-    """Return HMAC-SHA256 hex digest of *payload_json* keyed to this machine."""
     return hmac.new(
         _hmac_key(fingerprint),
         payload_json.encode('utf-8'),
@@ -106,18 +99,14 @@ def _sign(payload_json: str, fingerprint: str) -> str:
     ).hexdigest()
 
 
-def save_license_token(key: str) -> None:
-    """Persist a tamper-proof, machine-locked validation token.
-
-    The token records the license key, this machine's fingerprint, and the
-    current timestamp.  The HMAC prevents modification on a different machine
-    or tampering of any field.
-    """
+def save_license_token(key: str, instance_id: str) -> None:
+    """Persist a tamper-proof, machine-locked validation token."""
     fingerprint = get_hardware_fingerprint()
     payload = json.dumps(
         {
             'key': key,
             'fingerprint': fingerprint,
+            'instance_id': instance_id,
             'validated_at': int(time.time()),
         },
         separators=(',', ':'),
@@ -135,7 +124,8 @@ def load_license_token() -> Optional[dict]:  # type: ignore[type-arg]
     """Read and cryptographically verify the local token.
 
     Returns the payload dict on success, or None if the file is absent,
-    corrupt, tampered with, or belongs to a different machine.
+    corrupt, tampered with, bound to a different machine, or missing
+    instance_id (i.e. a legacy keygen.sh-era token).
     """
     try:
         with open(LICENSE_FILE, 'r', encoding='utf-8') as f:
@@ -161,35 +151,30 @@ def load_license_token() -> Optional[dict]:  # type: ignore[type-arg]
         logger.warning("License token fingerprint does not match this machine")
         return None
 
+    # Tokens without instance_id are from the legacy keygen.sh scheme — reject them.
+    if not payload.get('instance_id'):
+        return None
+
     return payload
 
 
-# ── API call ───────────────────────────────────────────────────────────────────
+# ── Lemon Squeezy API layer ────────────────────────────────────────────────────
 
-def _call_api(key: str, fingerprint: str) -> dict:  # type: ignore[type-arg]
-    """POST a validation request to the licensing API.
+def _ls_post(endpoint: str, body: dict) -> dict:  # type: ignore[type-arg]
+    """POST form-encoded data to a Lemon Squeezy license endpoint.
 
     Returns the parsed JSON response dict.
-    Raises NetworkError on any connectivity or timeout failure.
-    For Keygen.sh, 4xx responses carry a JSON body with meta.valid = false;
-    we parse those the same as 2xx so _parse_api_response handles them uniformly.
+    Raises NetworkError on connectivity or timeout failures.
+    LS sometimes returns 4xx with a JSON body (e.g. invalid key) — we parse
+    those the same as 2xx so callers handle them uniformly.
     """
-    body = json.dumps({
-        'meta': {
-            'key': key,
-            'scope': {
-                'product':     _PRODUCT_ID,
-                'policy':      _POLICY_ID,
-                'fingerprint': fingerprint,
-            },
-        },
-    }).encode('utf-8')
+    data = urllib.parse.urlencode(body).encode('utf-8')
     req = urllib.request.Request(
-        _API_ENDPOINT,
-        data=body,
+        f'{_LS_API_BASE}/{endpoint}',
+        data=data,
         headers={
-            'Content-Type': 'application/vnd.api+json',
-            'Accept':       'application/vnd.api+json',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept':       'application/json',
         },
         method='POST',
     )
@@ -205,108 +190,108 @@ def _call_api(key: str, fingerprint: str) -> dict:  # type: ignore[type-arg]
         raise NetworkError(str(exc)) from exc
 
 
-def _parse_api_response(response: dict) -> None:  # type: ignore[type-arg]
-    """Raise the appropriate LicenseError for any non-valid API response.
+def _ls_activate(key: str, fingerprint: str) -> str:
+    """POST /activate → returns the instance_id string assigned by Lemon Squeezy.
 
-    FINGERPRINT_SCOPE_MISMATCH is intentionally excluded here — it means
-    "machine not yet activated" and is handled upstream in activate_license.
+    The hardware fingerprint is used as the instance_name so the same machine
+    always maps to the same identifier in the LS dashboard.
+
+    Raises InvalidKeyError, DeviceLimitError, or NetworkError.
     """
-    meta = response.get('meta', {})
-    if meta.get('valid'):
+    result = _ls_post('activate', {
+        'license_key':   key,
+        'instance_name': fingerprint,
+    })
+    if result.get('activated'):
+        return result['instance']['id']
+
+    error: str = result.get('error', 'Activation failed')
+    if 'exceeded' in error.lower() or 'limit' in error.lower():
+        raise DeviceLimitError(error)
+    raise InvalidKeyError(error)
+
+
+def _ls_validate(key: str, instance_id: str) -> None:
+    """POST /validate. Raises InvalidKeyError if the key is revoked or expired.
+
+    Raises NetworkError if the server is unreachable.
+    """
+    result = _ls_post('validate', {
+        'license_key': key,
+        'instance_id': instance_id,
+    })
+    if result.get('valid'):
         return
-    code: str = meta.get('code', 'UNKNOWN')
-    detail: str = meta.get('detail', 'License validation failed')
-    if code == 'TOO_MANY_MACHINES':
-        raise DeviceLimitError(detail)
-    if code in ('NOT_FOUND', 'SUSPENDED', 'EXPIRED', 'OVERDUE'):
-        raise InvalidKeyError(detail)
-    raise LicenseError(f"{code}: {detail}")
+    raise InvalidKeyError(result.get('error', 'License is not valid'))
 
 
-def _activate_machine(key: str, fingerprint: str, license_id: str) -> None:
-    """Register this machine with Keygen.sh for the given license.
-
-    Called the first time a key is entered on a new machine.
-    Raises DeviceLimitError if the machine quota is already full,
-    or NetworkError on connectivity failures.
-    """
-    machines_url = f'https://api.keygen.sh/v1/accounts/{_ACCOUNT_ID}/machines'
-    body = json.dumps({
-        'data': {
-            'type': 'machines',
-            'attributes': {
-                'fingerprint': fingerprint,
-                'name': platform.node(),
-            },
-            'relationships': {
-                'license': {'data': {'type': 'licenses', 'id': license_id}},
-            },
-        },
-    }).encode('utf-8')
-    req = urllib.request.Request(
-        machines_url,
-        data=body,
-        headers={
-            'Content-Type':  'application/vnd.api+json',
-            'Accept':        'application/vnd.api+json',
-            'Authorization': f'Bearer {_PRODUCT_TOKEN}',
-        },
-        method='POST',
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=_API_TIMEOUT) as resp:
-            resp.read()
-    except urllib.error.HTTPError as exc:
-        try:
-            result = json.loads(exc.read().decode('utf-8'))
-            for err in result.get('errors', []):
-                if err.get('code') in ('MACHINE_LIMIT_EXCEEDED', 'TOO_MANY_MACHINES'):
-                    raise DeviceLimitError(err.get('detail', 'Device limit reached')) from exc
-            detail = '; '.join(e.get('detail', '') for e in result.get('errors', []))
-            raise NetworkError(f"HTTP {exc.code}: {detail or result}") from exc
-        except json.JSONDecodeError:
-            raise NetworkError(f"HTTP {exc.code} with non-JSON body") from exc
-    except (urllib.error.URLError, OSError, TimeoutError) as exc:
-        raise NetworkError(str(exc)) from exc
+def _ls_deactivate(key: str, instance_id: str) -> None:
+    """POST /deactivate. Best-effort — swallows API errors but raises NetworkError."""
+    result = _ls_post('deactivate', {
+        'license_key': key,
+        'instance_id': instance_id,
+    })
+    if not result.get('deactivated'):
+        logger.warning("LS deactivate returned deactivated=false: %s", result.get('error'))
 
 
 # ── Public interface ────────────────────────────────────────────────────────────
 
 def activate_license(key: str) -> None:
-    """Validate *key* against the remote API and persist a local token.
+    """Validate *key* against Lemon Squeezy and persist a local token.
 
-    Keygen.sh requires two steps for a new machine:
-      1. validate-key with fingerprint scope → FINGERPRINT_SCOPE_MISMATCH
-      2. POST /machines to register this machine
-      3. re-validate → VALID
+    If this machine already has a valid token for this exact key, the existing
+    instance_id is reused and only a validate call is made — no new activation
+    slot is consumed.
 
     Raises:
         InvalidKeyError: key not found, suspended, or expired.
-        DeviceLimitError: machine quota for this license is full.
+        DeviceLimitError: activation limit reached for this license.
         NetworkError: server unreachable.
     """
     key = key.strip()
     if not key:
         raise InvalidKeyError("License key cannot be empty")
-    fingerprint = get_hardware_fingerprint()
-    response = _call_api(key, fingerprint)
-    meta = response.get('meta', {})
 
-    if meta.get('valid'):
-        save_license_token(key)
+    fingerprint = get_hardware_fingerprint()
+
+    # Reuse existing activation when the same key is re-entered on the same machine.
+    with _lock:
+        existing = load_license_token()
+    if existing and existing.get('key') == key:
+        instance_id: str = existing['instance_id']
+        _ls_validate(key, instance_id)
+        save_license_token(key, instance_id)
         return
 
-    code = meta.get('code', 'UNKNOWN')
-    if code == 'FINGERPRINT_SCOPE_MISMATCH':
-        license_id: str = response.get('data', {}).get('id', '')
-        if not license_id:
-            raise LicenseError("Could not retrieve license ID to activate machine")
-        _activate_machine(key, fingerprint, license_id)
-        # Re-validate now that the machine is registered
-        response = _call_api(key, fingerprint)
+    instance_id = _ls_activate(key, fingerprint)
+    save_license_token(key, instance_id)
 
-    _parse_api_response(response)
-    save_license_token(key)
+
+def deactivate_license() -> bool:
+    """Deactivate this machine's license via the Lemon Squeezy API and clear the local token.
+
+    Returns True if the local token was cleared (regardless of whether the API
+    call succeeded — we always remove the local token so the machine is unlocked).
+    Returns False if no license token exists.
+    """
+    with _lock:
+        payload = load_license_token()
+
+    if payload is None:
+        return False
+
+    try:
+        _ls_deactivate(payload['key'], payload['instance_id'])
+    except (NetworkError, LicenseError) as exc:
+        logger.warning("Could not deactivate with LS (will clear token anyway): %s", exc)
+
+    with _lock:
+        try:
+            os.remove(LICENSE_FILE)
+        except OSError:
+            pass
+    return True
 
 
 def check_license() -> bool:
@@ -315,8 +300,8 @@ def check_license() -> bool:
     A paid user is never blocked by network failures — the token is accepted
     as long as it is present, HMAC-valid, and bound to this machine.
 
-    When online, silently refreshes the token timestamp so the local record
-    stays current.  Only returns False when the key has been explicitly
+    When online and the token is older than 30 days, silently refreshes the
+    timestamp.  Only returns False when the key has been explicitly
     revoked/invalidated by the server (not merely unreachable).
     """
     with _lock:
@@ -325,21 +310,19 @@ def check_license() -> bool:
     if payload is None:
         return False
 
-    # Within the 30-day cooldown — trust the HMAC token, skip network call.
     age = int(time.time()) - payload.get('validated_at', 0)
     if age < _REFRESH_COOLDOWN:
         return True
 
-    # Token is stale — refresh against Keygen to catch revocations.
+    key: str = payload['key']
+    instance_id: str = payload['instance_id']
+
     try:
-        fingerprint = get_hardware_fingerprint()
-        response = _call_api(payload['key'], fingerprint)
-        _parse_api_response(response)
-        save_license_token(payload['key'])
+        _ls_validate(key, instance_id)
+        save_license_token(key, instance_id)
     except NetworkError:
         pass  # offline — trust the local token
     except LicenseError:
-        # Key explicitly revoked or invalid — remove local token.
         with _lock:
             try:
                 os.remove(LICENSE_FILE)

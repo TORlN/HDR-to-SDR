@@ -239,7 +239,7 @@ class TestExtractFrameWithConversion(unittest.TestCase):
             frame = extract_frame_with_conversion('input.mp4', gamma, filter_index=1)  # Added filter_index
             
             # Update the expected_vf string to match actual format
-            expected_vf = 'zscale=t=linear:npl=100.0,tonemap=reinhard,zscale=t=bt709:m=bt709:r=tv:p=bt709,eq=gamma=2.2,scale=iw:ih'
+            expected_vf = 'zscale=t=linear:npl=100.0,tonemap=reinhard,zscale=t=bt709:m=bt709:r=tv:p=bt709,eq=gamma=2.2,scale=iw:ih:force_original_aspect_ratio=decrease'
             
             self.assertIsInstance(frame, Image.Image)
     
@@ -255,8 +255,8 @@ class TestExtractFrameWithConversion(unittest.TestCase):
                 '-vf', expected_vf, '-vframes', '1', '-f', 'image2pipe', '-'
             ])
 
+    @patch('src.utils.get_maxfall')
     @patch('src.utils.run_ffmpeg_command')
-    @patch('src.utils.get_maxfall')  # Added patch for get_maxfall
     def test_extract_frame_with_conversion_failure(self, mock_run_ffmpeg, mock_get_maxfall):
         # Mock video properties first
         with patch('src.utils.get_video_properties') as mock_get_props:
@@ -314,6 +314,24 @@ class TestPreviewScaling(unittest.TestCase):
                                       width=960, height=540)
         vf = mock_run.call_args[0][0][mock_run.call_args[0][0].index('-vf') + 1]
         self.assertIn('scale=960:540', vf)
+
+    @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
+    @patch('src.utils.run_ffmpeg_command', return_value=_VALID_PNG)
+    def test_extract_frame_scale_does_not_upscale(self, mock_run, _props):
+        """scale filter must include force_original_aspect_ratio=decrease so a
+        1080p source is not upscaled when the 4K cap is larger than the source."""
+        extract_frame('in.mp4', time_position=1.0, width=3840, height=2160)
+        vf = mock_run.call_args[0][0][mock_run.call_args[0][0].index('-vf') + 1]
+        self.assertIn('force_original_aspect_ratio=decrease', vf,
+                      "scale filter is missing force_original_aspect_ratio=decrease")
+
+    def test_ffmpeg_filter_scale_does_not_upscale(self):
+        """Every FFMPEG_FILTER entry must include force_original_aspect_ratio=decrease
+        so preview frames for sub-4K sources are never upscaled."""
+        from src.utils import FFMPEG_FILTER
+        for i, f in enumerate(FFMPEG_FILTER):
+            self.assertIn('force_original_aspect_ratio=decrease', f,
+                          f"FFMPEG_FILTER[{i}] is missing force_original_aspect_ratio=decrease")
 
 
 class TestGetVideoPropertiesColorFields(unittest.TestCase):

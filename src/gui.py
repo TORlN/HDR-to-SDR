@@ -202,7 +202,7 @@ class _UpdateDialog(tk.Toplevel):
 
 
 DEFAULT_MIN_SIZE = (550, 150)
-PREVIEW_SIZE = (960, 540)       # native (max) on-screen size of each preview pane
+PREVIEW_SIZE = (3840, 2160)     # ffmpeg render cap; never upscales past source resolution
 INITIAL_PANE_SIZE = (640, 360)  # comfortable per-pane size on the first preview reveal
 _MIN_PANE_W = 240               # don't shrink a preview pane narrower than this
 _RESIZE_DEBOUNCE_MS = 60        # coalesce a burst of resize events into one rescale
@@ -1060,7 +1060,7 @@ class HDRConverterGUI:
         if not isinstance(frame_w, int) or frame_w <= 1:
             return PREVIEW_SIZE  # not laid out yet (or mocked) -> native size
         avail_w = (frame_w - _PREVIEW_WIDTH_RESERVE) / 2  # two panes share the width
-        avail_h = frame_h - _PREVIEW_HEIGHT_RESERVE if frame_h > 1 else 0
+        avail_h = max(0, frame_h - _PREVIEW_HEIGHT_RESERVE) if frame_h > 1 else 0
         return self._fit_preview_pane(avail_w, avail_h)
 
     def _initial_preview_size(self):
@@ -1698,14 +1698,17 @@ class HDRConverterGUI:
         self.last_time_position = time_position
         self.converted_image_base = converted_image_base
 
-        # Render both panes at the right size (responsive: shrinks with the
-        # window instead of a fixed 960x540). The first preview uses a generous
-        # default (then the window auto-fits to it); later previews/resizes use
-        # the live window geometry. This also re-caches the display-sized SDR
-        # base so a later gamma change only re-runs the cheap PIL gamma pass --
-        # no ffmpeg, no full-res resize.
+        # Render both panes at the right size. First preview uses a generous
+        # default (then the window auto-fits to it). Subsequent previews reuse
+        # _preview_render_size — the size from the last successful render —
+        # because the image labels are hidden during loading, which makes
+        # image_frame.winfo_height() unreliable for computing the target size
+        # (it reflects the full row-1 height, not just the spinner height, and
+        # subtracting _PREVIEW_HEIGHT_RESERVE can over-constrain the image).
+        # Window resizes are handled independently by _rescale_preview_to_window
+        # which calls _preview_target_size() while images are still visible.
         if getattr(self, '_window_auto_fitted', False):
-            size = self._preview_target_size()
+            size = getattr(self, '_preview_render_size', None) or self._preview_target_size()
         else:
             size = self._initial_preview_size()
         self._render_preview_at_size(size)

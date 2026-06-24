@@ -16,8 +16,8 @@ TONEMAP = ["Reinhard", "Mobius", "Hable"]
 # preview pipeline downscales the extracted frame to a thumbnail. Index 0 = Static,
 # 1 = Dynamic.
 FFMPEG_FILTER = [
-    'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap={tonemapper},eq=gamma={gamma},scale={width}:{height}',
-    'zscale=t=linear:npl={npl},tonemap={tonemapper},zscale=t=bt709:m=bt709:r=tv:p=bt709,eq=gamma={gamma},scale={width}:{height}'
+    'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap={tonemapper},eq=gamma={gamma},scale={width}:{height}:force_original_aspect_ratio=decrease',
+    'zscale=t=linear:npl={npl},tonemap={tonemapper},zscale=t=bt709:m=bt709:r=tv:p=bt709,eq=gamma={gamma},scale={width}:{height}:force_original_aspect_ratio=decrease'
 ]
 
 # Conversion filter chains (CPU path). Identical to the preview chains minus the
@@ -444,7 +444,7 @@ def extract_frame(video_path, time_position=None, width: 'int | None' = None,
 
     cmd = [FFMPEG_EXECUTABLE, '-ss', str(target_time), '-i', video_path]
     if width and height:
-        cmd += ['-vf', f'scale={width}:{height}']
+        cmd += ['-vf', f'scale={width}:{height}:force_original_aspect_ratio=decrease']
     cmd += ['-vframes', '1', '-f', 'image2pipe', '-']
 
     out = run_ffmpeg_command(cmd)

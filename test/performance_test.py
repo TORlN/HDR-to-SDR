@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../s
 
 from PIL import Image
 
-from src.gui import HDRConverterGUI, PREVIEW_SIZE
+from src.gui import HDRConverterGUI, PREVIEW_SIZE, INITIAL_PANE_SIZE
 from src.utils import (
     extract_frame, extract_frame_with_conversion, FFMPEG_EXECUTABLE,
     clear_maxfall_cache,
@@ -179,14 +179,15 @@ class TestTimingBudgets(unittest.TestCase):
         self.assertLess(ms, 5.0)  # gamma==1.0 returns the same object
 
     def test_working_on_preview_size_beats_full_resolution(self):
-        # Documents *why* we cache a display-sized base: gamma on the small frame
-        # is materially cheaper than on the full-resolution one.
+        # Documents why rescaling the display pane from the cached 4K base is
+        # cheaper than running gamma on the full 4K base itself: the pane is
+        # materially smaller so per-pixel ops are much faster.
         gui = _bare_gui()
-        small = Image.new('RGB', PREVIEW_SIZE, (120, 90, 60))
-        big = Image.new('RGB', (3840, 1632), (120, 90, 60))
+        small = Image.new('RGB', INITIAL_PANE_SIZE, (120, 90, 60))
+        big = Image.new('RGB', PREVIEW_SIZE, (120, 90, 60))
         ms_small = _best_ms(lambda: gui.adjust_gamma(small, 1.8))
         ms_big = _best_ms(lambda: gui.adjust_gamma(big, 1.8))
-        print(f"\n[perf] adjust_gamma small={ms_small:.2f}ms full={ms_big:.2f}ms "
+        print(f"\n[perf] adjust_gamma pane={ms_small:.2f}ms 4K={ms_big:.2f}ms "
               f"(~{ms_big / max(ms_small, 1e-3):.0f}x)")
         self.assertLess(ms_small, ms_big)
 

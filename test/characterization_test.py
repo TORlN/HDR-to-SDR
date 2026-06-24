@@ -492,8 +492,8 @@ class TestPreviewWorkerThreadRender(unittest.TestCase):
 
         gui.adjust_gamma.assert_called_once_with(mock_img, 2.2)
         mock_img.resize.assert_has_calls([
-            call((960, 540), Image.LANCZOS),
-            call((960, 540), Image.LANCZOS),
+            call((3840, 2160), Image.LANCZOS),
+            call((3840, 2160), Image.LANCZOS),
         ])
         self.assertEqual(mock_photo.call_count, 2)
         gui.original_image_label.config.assert_called_with(image=photo)

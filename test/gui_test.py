@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest import TestCase
 from unittest.mock import patch, MagicMock, call
@@ -331,6 +332,14 @@ class TestHDRConverterGUI(TestCase):
         
         self.gui.cancel_button.grid.assert_called_once()
 
+def _safe_stop(patcher):
+    """Stop a patcher; silently ignore if it was already stopped."""
+    try:
+        patcher.stop()
+    except RuntimeError:
+        pass
+
+
 class TestWindowIcon(unittest.TestCase):
     """_set_window_icon should load icon.png and call root.iconphoto."""
 
@@ -345,7 +354,12 @@ class TestWindowIcon(unittest.TestCase):
         if extra_patches:
             patches.update(extra_patches)
         mocks = {name: p.start() for name, p in patches.items()}
+        # Guarantee cleanup even when a test fails before its explicit p.stop() calls.
+        # _safe_stop ignores double-stop so explicit calls in tests remain harmless.
+        for p in patches.values():
+            self.addCleanup(_safe_stop, p)
         gui = HDRConverterGUI(mock_root, licensed=True)
+        self.addCleanup(gui.on_close)
         return gui, mock_root, patches, mocks
 
     @patch('src.gui.os.path.exists', return_value=True)
@@ -402,7 +416,10 @@ class TestWindowIcon(unittest.TestCase):
     def test_nuitka_exe_uses_executable_dir(self):
         """Nuitka does not set sys.frozen; must still use sys.executable dir when exe is not python.exe."""
         import sys as _sys
-        fake_exe = r'C:\fake_nuitka\HDR_to_SDR_Converter.exe'
+        # Build an absolute path using os.sep so the path is valid on both Linux and Windows.
+        # A Windows-style r'C:\...' string is treated as a relative path on Linux, causing
+        # os.path.dirname(os.path.abspath(...)) to return the repo root instead of fake_nuitka.
+        fake_exe = os.path.join(os.sep, 'fake_nuitka', 'HDR_to_SDR_Converter.exe')
         with patch('src.gui.os.path.exists', return_value=True), \
              patch.object(_sys, 'executable', fake_exe):
             gui, mock_root, patches, _ = self._make_gui()

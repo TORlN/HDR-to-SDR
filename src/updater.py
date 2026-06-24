@@ -10,7 +10,7 @@ import tempfile
 import urllib.request
 from typing import Callable
 
-APP_VERSION = "3.0.3"
+APP_VERSION = "3.0.4"
 _GITHUB_API = "https://api.github.com/repos/TORlN/HDR-to-SDR/releases/latest"
 _ASSET_NAME = "HDR_to_SDR_Setup.exe"
 _HEADERS = {

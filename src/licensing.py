@@ -39,8 +39,9 @@ _ACCOUNT_ID    = os.environ.get('KEYGEN_ACCOUNT_ID',    'nelsontorin1')
 _PRODUCT_ID    = os.environ.get('KEYGEN_PRODUCT_ID',    '3a9972ee-1054-4020-82f4-1496b8fa2d4c')
 _POLICY_ID     = os.environ.get('KEYGEN_POLICY_ID',     '601a4ea7-03bf-4563-a773-eb2cc81660d0')
 # Product token scoped to machine:create — used when registering a new machine.
-# Override via env var; replace the placeholder with the real token before shipping.
-_PRODUCT_TOKEN = os.environ.get('KEYGEN_PRODUCT_TOKEN', 'prod-d1b563d53fc28cb8a1016546c1bc659fda2c31ba7bf488ed5f7b86931f79667bv3')
+# Real token lives in src/_secrets.py (gitignored); override via env var for CI/staging.
+from _secrets import KEYGEN_PRODUCT_TOKEN as _SECRETS_TOKEN
+_PRODUCT_TOKEN = os.environ.get('KEYGEN_PRODUCT_TOKEN', _SECRETS_TOKEN)
 _API_ENDPOINT = os.environ.get(
     'LICENSE_API_ENDPOINT',
     f'https://api.keygen.sh/v1/accounts/{_ACCOUNT_ID}/licenses/actions/validate-key',

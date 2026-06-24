@@ -54,3 +54,6 @@ mock_license.py
 make_comparison.py
 comparison.png
 *.mkv
+
+# Secrets — never commit
+src/_secrets.py

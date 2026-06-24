@@ -245,7 +245,7 @@ class HDRConverterGUI:
         self.filter_var = tk.StringVar(value=_s['filter'])
         self.tonemap_var = tk.StringVar(value=_s['tonemapper'])
         self.quality_var = tk.IntVar(value=_s['quality'])
-        self.format_var = tk.StringVar(value='MKV')  # output container; set from input on load
+        self.format_var = tk.StringVar(value=_s['filetype'])  # output container; set from input on load
         self.custom_time_var = tk.StringVar()  # HH:MM:SS for the custom-seek entry
         self.custom_time_position = None  # absolute seconds when a custom seek is active
         self.batch_items = []  # queued files: {input, output, format, status}
@@ -409,6 +409,7 @@ class HDRConverterGUI:
                 'open_after_conversion': self.open_after_conversion_var.get(),
                 'display_preview': self.display_image_var.get(),
                 'quality': self.quality_var.get(),
+                'filetype': self.format_var.get(),
             })
         except AttributeError:
             pass  # bare/partially-initialized instance (test contexts only)

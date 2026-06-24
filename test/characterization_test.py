@@ -1727,11 +1727,12 @@ class TestGuiLifecycle(unittest.TestCase):
         for name, val in [('gamma_var', 1.0), ('filter_var', 'Static'),
                           ('tonemap_var', 'Mobius'), ('gpu_accel_var', False),
                           ('open_after_conversion_var', False), ('display_image_var', True),
-                          ('quality_var', 21)]:
+                          ('quality_var', 21), ('format_var', 'MKV')]:
             m = MagicMock(); m.get.return_value = val
             setattr(gui, name, m)
         gui._save_current_settings()
         self.assertEqual(mock_save.call_args[0][0]['quality'], 21)
+        self.assertEqual(mock_save.call_args[0][0]['filetype'], 'MKV')
 
     @patch('src.gui.conversion_manager')
     def test_cancel_conversion_delegates_to_manager(self, mock_cm):

@@ -57,3 +57,4 @@ comparison.png
 
 # Secrets — never commit
 src/_secrets.py
+signing/

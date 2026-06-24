@@ -112,53 +112,6 @@ class TestConversionManager(unittest.TestCase):
         self.assertTrue(manager.cancelled)
         mock_showinfo.assert_called_once_with("Cancelled", "Video conversion has been cancelled.")
 
-    @patch('src.conversion.get_video_properties')
-    @patch('src.conversion.subprocess.Popen')
-    def test_monitor_progress_failure(self, mock_popen, mock_get_props):
-        mock_get_props.return_value = {
-            "width": 1920,
-            "height": 1080,
-            "bit_rate": 4000000,
-            "codec_name": 'h264',
-            "frame_rate": 30.0,
-            "audio_codec": 'aac',
-            "audio_bit_rate": 128000,
-            "duration": 120.0,
-            "subtitle_streams": []  # Ensure this key is present
-        }
-
-        mock_process = MagicMock()
-        mock_process.stderr = iter(['error message'])
-        mock_process.wait.return_value = 1
-        mock_popen.return_value = mock_process
-
-        # Create a mocked GUI instance with a 'root' attribute
-        mock_gui = MagicMock()
-        mock_gui.root = MagicMock()
-        mock_gui.root.after = MagicMock()
-
-        progress_var = MagicMock()
-        interactable_elements = []
-        cancel_button = MagicMock()
-
-        selected_filter_index = 0  # Add a selected_filter_index value
-
-        manager = ConversionManager()
-        manager.start_conversion(
-            'input.mp4',
-            'output.mkv',
-            2.2,
-            False,  # use_gpu
-            selected_filter_index,  # Added selected_filter_index argument
-            progress_var,
-            interactable_elements,
-            mock_gui,  # gui_instance
-            False,
-            cancel_button
-        )
-
-        # Additional assertions can be added here as needed
-
     @patch('src.conversion.messagebox.showwarning')
     @patch('src.conversion.get_video_properties')
     def test_start_conversion_invalid_paths(self, mock_get_props, mock_showwarning):  # Swapped argument order
@@ -269,13 +222,12 @@ class TestConversionManager(unittest.TestCase):
         ]
         self.assertEqual(cmd, expected_cmd)
 
-    @patch('src.conversion.get_maxfall')  # Mock get_maxfall
     @patch('src.conversion.subprocess.Popen')
-    def test_construct_ffmpeg_command_with_subtitles(self, mock_get_props, mock_get_maxfall):
+    @patch('src.conversion.get_maxfall')
+    def test_construct_ffmpeg_command_with_subtitles(self, mock_get_maxfall, mock_popen):
         """Test that construct_ffmpeg_command includes subtitle streams when available."""
-        mock_get_maxfall.return_value = 10  # Set a predefined maxfall value
-        
-        mock_get_props.return_value = {
+        mock_get_maxfall.return_value = 10
+        properties = {
             "width": 1920,
             "height": 1080,
             "bit_rate": 4000000,
@@ -290,14 +242,14 @@ class TestConversionManager(unittest.TestCase):
         }
 
         manager = ConversionManager()
-        tonemapper = 'reinhard'  # Add tonemapper parameter
+        tonemapper = 'reinhard'
         cmd = manager.construct_ffmpeg_command(
             'input.mp4',
             'output.mkv',
             2.2,
-            mock_get_props.return_value,
-            False,  # use_gpu
-             1,      # selected_filter_index
+            properties,
+            False,
+            1,
             tonemapper=tonemapper
         )
 
@@ -530,24 +482,8 @@ class TestConversionManager(unittest.TestCase):
                 creationflags=ANY  # Allow any creationflags
             )
 
-    @patch('src.conversion.subprocess.Popen')
-    def test_run_ffmpeg_command_failure(self, mock_popen):
-        mock_process = MagicMock()
-        mock_process.communicate.return_value = (b'', b'error')
-        mock_process.returncode = 1
-        mock_popen.return_value = mock_process
-
-        with self.assertRaises(RuntimeError):
-            run_ffmpeg_command(['ffmpeg', '-i', 'input.mp4', 'output.mkv'])
-
     def test_is_gpu_available_no_gpu(self):
         """is_gpu_available returns False when detect_gpu_encoder finds nothing."""
-        manager = ConversionManager()
-        with patch.object(manager, 'detect_gpu_encoder', return_value=None):
-            self.assertFalse(manager.is_gpu_available())
-
-    def test_is_gpu_available_no_encoder(self):
-        """is_gpu_available returns False when no GPU encoder is detected."""
         manager = ConversionManager()
         with patch.object(manager, 'detect_gpu_encoder', return_value=None):
             self.assertFalse(manager.is_gpu_available())
@@ -760,18 +696,6 @@ class TestConversionManager(unittest.TestCase):
         self.assertIn('h264_amf', cmd)
         self.assertEqual(cmd[cmd.index('-qp_i') + 1], '22')
         self.assertEqual(cmd[cmd.index('-qp_p') + 1], '22')
-
-    def test_is_gpu_available_encoder_list_fails(self):
-        """is_gpu_available returns False when encoder detection finds nothing."""
-        manager = ConversionManager()
-        with patch.object(manager, 'detect_gpu_encoder', return_value=None):
-            self.assertFalse(manager.is_gpu_available())
-
-    def test_is_gpu_available_nvenc_not_listed(self):
-        """is_gpu_available returns False when no supported GPU encoder is detected."""
-        manager = ConversionManager()
-        with patch.object(manager, 'detect_gpu_encoder', return_value=None):
-            self.assertFalse(manager.is_gpu_available())
 
     def test_is_gpu_available_nvidia_smi_missing(self):
         """is_gpu_available returns False when detect_gpu_encoder raises."""

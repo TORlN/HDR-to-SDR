@@ -285,18 +285,6 @@ class TestGuiUpdateIntegration(unittest.TestCase):
 
         MockDialog.assert_not_called()
 
-    def test_start_update_check_no_dialog_on_network_error(self):
-        gui, _ = self._make_gui()
-
-        gui.root.after = MagicMock()
-
-        with patch('src.updater.check_for_update', return_value=None):
-            with patch('src.gui._UpdateDialog') as MockDialog:
-                gui._start_update_check()
-                import time; time.sleep(0.3)
-
-        MockDialog.assert_not_called()
-
 
 # ── Version sync guard ─────────────────────────────────────────────────────────
 

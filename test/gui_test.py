@@ -186,14 +186,87 @@ class TestHDRConverterGUI(TestCase):
 
         # Verify image resize calls
         mock_image.resize.assert_has_calls([
-            call((960, 540), Image.LANCZOS),
-            call((960, 540), Image.LANCZOS)
+            call((3840, 2160), Image.LANCZOS),
+            call((3840, 2160), Image.LANCZOS)
         ])
 
         # Verify PhotoImage creation and label updates
         mock_photo_image.assert_has_calls([call(mock_image), call(mock_image)])
         self.gui.original_image_label.config.assert_called_with(image=mock_photo)
         self.gui.converted_image_label.config.assert_called_with(image=mock_photo)
+
+    def test_preview_size_constant_is_4k(self):
+        """PREVIEW_SIZE must be 4K so ffmpeg renders at the highest useful resolution."""
+        from src.gui import PREVIEW_SIZE
+        self.assertEqual(PREVIEW_SIZE, (3840, 2160),
+                         f"PREVIEW_SIZE should be (3840, 2160) but got {PREVIEW_SIZE}")
+
+    @patch('src.gui.ImageTk.PhotoImage')
+    def test_render_preview_images_correct_size_when_frame_collapsed(self, mock_photo_image):
+        """Frame buttons must render at a usable size even when image_frame height
+        is below _PREVIEW_HEIGHT_RESERVE (as happens during loading: the spinner is
+        the only committed geometry so the frame is short)."""
+        from src.gui import _PREVIEW_HEIGHT_RESERVE, _MIN_PANE_W
+        # Simulate a wide window whose image_frame height is below the reserve
+        # because the loading indicator is still the committed geometry.
+        self.gui.image_frame.winfo_width.return_value = 1380
+        self.gui.image_frame.winfo_height.return_value = _PREVIEW_HEIGHT_RESERVE - 20  # collapsed
+
+        mock_image = MagicMock(spec=Image.Image)
+        mock_image.resize.return_value = mock_image
+        mock_photo_image.return_value = MagicMock()
+        self.gui.adjust_gamma = MagicMock(return_value=mock_image)
+        self.gui.original_image_label = MagicMock()
+        self.gui.converted_image_label = MagicMock()
+        self.gui.original_title_label = MagicMock()
+        self.gui.converted_title_label = MagicMock()
+
+        self.gui._window_auto_fitted = True
+        self.gui._render_preview_images(mock_image, mock_image, 10.0)
+
+        # The rendered size must not be degenerate; width ≥ _MIN_PANE_W and
+        # height ≥ 100 (not collapsed to a 1×1 sliver).
+        resize_calls = mock_image.resize.call_args_list
+        self.assertGreater(len(resize_calls), 0)
+        used_size = resize_calls[0][0][0]
+        self.assertGreaterEqual(used_size[0], _MIN_PANE_W,
+                                f"Rendered width {used_size[0]} < _MIN_PANE_W={_MIN_PANE_W}")
+        self.assertGreaterEqual(used_size[1], 100,
+                                f"Rendered height {used_size[1]} is too small (collapsed frame bug)")
+
+    @patch('src.gui.ImageTk.PhotoImage')
+    def test_render_preview_reuses_previous_size_when_frame_height_constrains(self, mock_photo_image):
+        """Clicking a frame button while a render is in progress must not shrink
+        the images.  image_frame fills the root vertically (weight=1), so its
+        winfo_height() during loading equals the full row-1 height (~380 px), NOT
+        just the spinner.  That makes avail_h well below the image height and
+        _fit_preview_pane would downscale the images.  The fix: reuse the
+        previously rendered size (_preview_render_size) instead of recomputing."""
+        prev_size = (640, 360)
+        self.gui._preview_render_size = prev_size  # set by last successful render
+
+        # Simulate a realistic window: wide, and frame_h is the full row-1 height
+        # (much larger than the loading-indicator but still constraining).
+        self.gui.image_frame.winfo_width.return_value = 1380
+        self.gui.image_frame.winfo_height.return_value = 380  # realistic full height
+
+        mock_image = MagicMock(spec=Image.Image)
+        mock_image.resize.return_value = mock_image
+        mock_photo_image.return_value = MagicMock()
+        self.gui.adjust_gamma = MagicMock(return_value=mock_image)
+        self.gui.original_image_label = MagicMock()
+        self.gui.converted_image_label = MagicMock()
+        self.gui.original_title_label = MagicMock()
+        self.gui.converted_title_label = MagicMock()
+
+        self.gui._window_auto_fitted = True
+        self.gui._render_preview_images(mock_image, mock_image, 10.0)
+
+        resize_calls = mock_image.resize.call_args_list
+        self.assertGreater(len(resize_calls), 0)
+        used_size = resize_calls[0][0][0]
+        self.assertEqual(used_size, prev_size,
+                         f"Expected previous render size {prev_size}, got {used_size}")
 
     @patch('src.gui.messagebox.askyesno')
     @patch('src.gui.HDRConverterGUI.unregister_drop_target')
@@ -211,17 +284,9 @@ class TestHDRConverterGUI(TestCase):
     def test_ui_state_management(self):
         """Test UI element state management."""
         test_elements = [MagicMock(), MagicMock()]
-        
-        # Test disable
         self.gui.disable_ui(test_elements)
         for element in test_elements:
             element.config.assert_called_with(state='disabled')
-
-        # Test direct enable (since there's no enable_ui method)
-        for element in test_elements:
-            element.config.reset_mock()
-            element.config(state='normal')
-            element.config.assert_called_with(state='normal')
 
     def _assert_frame_updates(self):
         """Helper method to verify frame updates."""
@@ -229,13 +294,6 @@ class TestHDRConverterGUI(TestCase):
                      self.gui.action_frame]:
             frame.grid.assert_called_once()
         self.gui.update_frame_preview.assert_called_once()
-
-    def _assert_preview_updates(self, mock_extract, mock_convert):
-        """Helper method to verify preview updates."""
-        mock_extract.assert_called_once_with('test_input.mp4')
-        mock_convert.assert_called_once_with('test_input.mp4', self.gui.gamma_var.get())
-        self.gui.error_label.config.assert_called_with(text="")
-        self.gui.arrange_widgets.assert_called_with(image_frame=True)
 
     def _setup_conversion_test(self, mock_confirm):
         """Helper method to setup conversion test."""
@@ -272,49 +330,6 @@ class TestHDRConverterGUI(TestCase):
         self.assertIs(args[9], self.gui.cancel_button)  # cancel button
         
         self.gui.cancel_button.grid.assert_called_once()
-
-    @patch('src.gui.ImageTk.PhotoImage')
-    @patch('src.gui.extract_frame_with_conversion')
-    @patch('src.gui.extract_frame')
-    def test_tooltip_display(self, mock_extract, mock_convert, mock_photo_image):
-        """Test tooltip display on hover over info button."""
-        with patch.object(self.gui, 'show_tooltip') as mock_show_tooltip, \
-             patch.object(self.gui, 'hide_tooltip') as mock_hide_tooltip:
-            # Simulate mouse enter event
-            event = MagicMock()
-            self.gui.show_tooltip(event, "Static: Basic HDR to SDR conversion with fixed parameters\nDynamic: Adaptive conversion that analyzes video brightness")
-            mock_show_tooltip.assert_called()
-            
-            # Simulate mouse leave event
-            self.gui.hide_tooltip()
-            mock_hide_tooltip.assert_called()
-
-    def test_filter_dropdown(self):
-        """Test filter dropdown menu functionality."""
-        # Setup mock combobox and bind method
-        self.gui.filter_combobox = MagicMock(spec=ttk.Combobox)
-        self.gui.filter_var = self.mock_string_var
-        
-        # Create and call create_widgets to set up the combobox bindings
-        with patch.object(self.gui, 'update_frame_preview') as mock_update:
-            # Manually trigger the combobox binding setup
-            self.gui.filter_combobox.bind('<<ComboboxSelected>>', self.gui.update_frame_preview)
-            
-            # Verify filter options
-            self.assertEqual(self.gui.filter_options, ['Static', 'Dynamic'])
-            
-            # Simulate filter selection change
-            self.mock_string_var.get.return_value = 'Dynamic'
-            
-            # Simulate the combobox selection event
-            self.gui.filter_combobox.bind.assert_called_with('<<ComboboxSelected>>', self.gui.update_frame_preview)
-            
-            # Trigger the event handler directly
-            self.gui.update_frame_preview()
-            mock_update.assert_called_once()
-            
-            # Verify filter value is used
-            self.assertEqual(self.gui.filter_var.get(), 'Dynamic')
 
 if __name__ == '__main__':
     unittest.main()

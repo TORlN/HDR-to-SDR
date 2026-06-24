@@ -40,7 +40,7 @@ _PRODUCT_ID    = os.environ.get('KEYGEN_PRODUCT_ID',    '3a9972ee-1054-4020-82f4
 _POLICY_ID     = os.environ.get('KEYGEN_POLICY_ID',     '601a4ea7-03bf-4563-a773-eb2cc81660d0')
 # Real token lives in src/_secrets.py (gitignored); falls back to '' in CI where the file is absent.
 try:
-    from _secrets import KEYGEN_PRODUCT_TOKEN as _SECRETS_TOKEN
+    from _secrets import KEYGEN_PRODUCT_TOKEN as _SECRETS_TOKEN  # type: ignore[import]
 except ImportError:
     _SECRETS_TOKEN = ''
 _PRODUCT_TOKEN = os.environ.get('KEYGEN_PRODUCT_TOKEN', _SECRETS_TOKEN)

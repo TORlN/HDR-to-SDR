@@ -120,10 +120,11 @@ class _UpdateDialog(tk.Toplevel):
         self._url = download_url
         self._build_ui()
         self.update_idletasks()
-        w, h = 430, 220
-        x = (self.winfo_screenwidth() - w) // 2
-        y = (self.winfo_screenheight() - h) // 2
-        self.geometry(f'{w}x{h}+{x}+{y}')
+        w = max(self.winfo_reqwidth() + 40, 430)
+        h = max(self.winfo_reqheight() + 20, 200)
+        px = master.winfo_rootx() + (master.winfo_width() - w) // 2
+        py = master.winfo_rooty() + (master.winfo_height() - h) // 2
+        self.geometry(f'{w}x{h}+{px}+{py}')
         self.grab_set()
         self.focus_set()
 

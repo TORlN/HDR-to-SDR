@@ -113,17 +113,18 @@ class TestGetMaxfall(unittest.TestCase):
         clear_maxfall_cache()
 
     @patch('src.utils.subprocess.check_output')
-    def test_reads_max_fall_from_mastering_metadata(self, mock_out):
+    def test_reads_maxcll_from_content_light_level_metadata(self, mock_out):
         data = {"frames": [{"side_data_list": [
-            {"side_data_type": "Mastering display metadata", "max_fall": 400}
+            {"side_data_type": "Content light level metadata",
+             "max_content": 1000, "max_average": 400}
         ]}]}
         mock_out.return_value = json.dumps(data).encode('utf-8')
-        self.assertEqual(get_maxfall('video.mkv'), 400.0)
+        self.assertEqual(get_maxfall('video.mkv'), 1000.0)
 
     @patch('src.utils.subprocess.check_output')
-    def test_defaults_to_100_when_absent(self, mock_out):
+    def test_returns_none_when_absent(self, mock_out):
         mock_out.return_value = json.dumps({"frames": []}).encode('utf-8')
-        self.assertEqual(get_maxfall('video.mkv'), 100)
+        self.assertIsNone(get_maxfall('video.mkv'))
 
 
 class TestGetMaxfallCaching(unittest.TestCase):
@@ -138,12 +139,13 @@ class TestGetMaxfallCaching(unittest.TestCase):
     def test_repeated_calls_probe_once(self, mock_out):
         mock_out.return_value = json.dumps(
             {"frames": [{"side_data_list": [
-                {"side_data_type": "Mastering display metadata", "max_fall": 250}
+                {"side_data_type": "Content light level metadata",
+                 "max_content": 1000, "max_average": 250}
             ]}]}).encode('utf-8')
         first = get_maxfall('a.mkv')
         second = get_maxfall('a.mkv')
-        self.assertEqual(first, 250.0)
-        self.assertEqual(second, 250.0)
+        self.assertEqual(first, 1000.0)   # get_maxfall = get_maxcll = max_content
+        self.assertEqual(second, 1000.0)
         self.assertEqual(mock_out.call_count, 1)  # second call served from cache
 
     @patch('src.utils.subprocess.check_output')
@@ -1035,6 +1037,7 @@ class TestBatchProcessing(unittest.TestCase):
     @patch('src.gui.conversion_manager')
     @patch('src.gui.os.path.isfile', return_value=True)
     def test_complete_advances_to_next_item(self, _isfile, mock_cm):
+        mock_cm.cancelled = False
         gui = self._gui()
         gui.batch_items = [self._item('a', 'Converting'), self._item('b')]
         gui._current_batch_item = gui.batch_items[0]
@@ -1046,6 +1049,7 @@ class TestBatchProcessing(unittest.TestCase):
     @patch('src.gui.messagebox')
     @patch('src.gui.conversion_manager')
     def test_complete_finishes_when_no_pending_left(self, mock_cm, mock_mb):
+        mock_cm.cancelled = False
         gui = self._gui()
         gui.batch_items = [self._item('a', 'Converting')]
         gui._current_batch_item = gui.batch_items[0]
@@ -1100,6 +1104,7 @@ class TestBatchProcessing(unittest.TestCase):
     @patch('src.gui.conversion_manager')
     @patch('src.gui.os.path.isfile', return_value=True)
     def test_advance_loads_next_file_into_preview(self, _isfile, mock_cm):
+        mock_cm.cancelled = False
         gui = self._gui()
         gui.batch_items = [self._item('a', 'Converting'), self._item('b')]
         gui._current_batch_item = gui.batch_items[0]
@@ -2025,7 +2030,8 @@ class TestUpdateInfoLabel(unittest.TestCase):
             'codec_name': 'hevc', 'audio_codec': 'aac',
             'color_primaries': 'bt2020', 'color_transfer': '',
         }
-        with patch('src.gui.get_video_properties', return_value=props):
+        with patch('src.gui.get_video_properties', return_value=props), \
+             patch('src.gui.get_maxcll', return_value=400.0):
             gui._update_info_label('clip.mkv')
         gui.info_label.config.assert_called_once()
         gui.info_label.grid.assert_called_once()
@@ -2285,7 +2291,7 @@ class TestExtractAndConvertFrameErrorPaths(unittest.TestCase):
         with self.assertRaises(ValueError):
             extract_frame_with_conversion('none.mp4', gamma=1.0, filter_index=0)
 
-    @patch('src.utils.get_maxfall', return_value=100.0)
+    @patch('src.utils.get_npl', return_value=100.0)
     @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
     @patch('src.utils.run_ffmpeg_command', return_value=b'not-an-image')
     def test_raises_runtime_error_on_bad_image_bytes(self, _run, _props, _mf):

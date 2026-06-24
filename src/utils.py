@@ -230,46 +230,24 @@ def run_ffmpeg_command(cmd):
         logging.error(f"Error running FFmpeg command: {str(e)}")
         raise RuntimeError(f"Error running FFmpeg command: {str(e)}")
 
-# MAXFALL is static mastering-display metadata, identical for every call on a
-# given file, yet probing it costs ~0.5-1.2s (ffprobe decodes ~1s of frames).
-# Memoize per path so it is paid once per video instead of once per preview.
-_MAXFALL_CACHE: dict[str, float] = {}
+# HDR metadata (MaxCLL, mastering display peak) is static per file and costs
+# ~0.5-1.2s to probe.  Cache the full dict so all callers share one ffprobe hit.
+_MAXFALL_CACHE: dict[str, dict] = {}
 _MAXFALL_CACHE_LOCK = threading.Lock()
 
 
 def clear_maxfall_cache():
-    """Drop memoized MAXFALL values (call when loading a new/replaced file)."""
+    """Drop cached HDR metadata (call when loading a new/replaced file)."""
     with _MAXFALL_CACHE_LOCK:
         _MAXFALL_CACHE.clear()
 
 
-def get_maxfall(video_path):
-    """Extract MAXFALL from video metadata using ffprobe (memoized per path).
+def _probe_hdr_metadata(video_path):
+    """Probe MaxCLL and mastering display peak luminance from the first frame (uncached).
 
-    Thread-safe: the background pre-warm thread and the preview thread can call
-    this concurrently.  A double-checked lock ensures _compute_maxfall is invoked
-    exactly once per path even when multiple callers race on a cache miss.
-
-    Args:
-        video_path (str): Path to the video file.
     Returns:
-        float: The MAXFALL value.
+        dict with keys 'maxcll' (float|None) and 'mastering_peak' (float|None).
     """
-    # Fast path — no lock needed once the entry is present.
-    if video_path in _MAXFALL_CACHE:
-        return _MAXFALL_CACHE[video_path]
-    with _MAXFALL_CACHE_LOCK:
-        # Re-check inside the lock: another thread may have computed and stored
-        # the value between the unlocked check above and the lock acquisition.
-        if video_path in _MAXFALL_CACHE:
-            return _MAXFALL_CACHE[video_path]
-        value = _compute_maxfall(video_path)
-        _MAXFALL_CACHE[video_path] = value
-        return value
-
-
-def _compute_maxfall(video_path):
-    """Probe MAXFALL from mastering-display metadata (uncached)."""
     cmd = [
         FFPROBE_EXECUTABLE,
         '-v', 'quiet',
@@ -290,15 +268,62 @@ def _compute_maxfall(video_path):
         creationflags=creationflags
     )
     data = json.loads(out.decode('utf-8'))
-    frames = data.get('frames', [])
-    for frame in frames:
-        side_data_list = frame.get('side_data_list', [])
-        for side_data in side_data_list:
-            if side_data.get('side_data_type') == 'Mastering display metadata':
-                max_fall = side_data.get('max_fall', None)
-                if (max_fall):
-                    return float(max_fall)
-    return 100  # Default value if MAXFALL is not found
+    result: dict = {'maxcll': None, 'maxfall': None, 'mastering_peak': None}
+    for frame in data.get('frames', []):
+        for sd in frame.get('side_data_list', []):
+            sdt = sd.get('side_data_type')
+            if sdt == 'Content light level metadata':
+                mc = sd.get('max_content')
+                if mc:
+                    result['maxcll'] = float(mc)
+                mf = sd.get('max_average')
+                if mf:
+                    result['maxfall'] = float(mf)
+            elif sdt == 'Mastering display metadata':
+                lum = sd.get('max_luminance')
+                if lum and '/' in str(lum):
+                    num, den = str(lum).split('/')
+                    if float(den) != 0:
+                        result['mastering_peak'] = float(num) / float(den)
+    return result
+
+
+def _get_hdr_metadata(video_path):
+    """Thread-safe cached wrapper around _probe_hdr_metadata."""
+    if video_path in _MAXFALL_CACHE:
+        return _MAXFALL_CACHE[video_path]
+    with _MAXFALL_CACHE_LOCK:
+        if video_path in _MAXFALL_CACHE:
+            return _MAXFALL_CACHE[video_path]
+        meta = _probe_hdr_metadata(video_path)
+        _MAXFALL_CACHE[video_path] = meta
+        return meta
+
+
+def get_maxcll(video_path):
+    """Return MaxCLL (peak pixel luminance) for display; None if not embedded."""
+    return _get_hdr_metadata(video_path)['maxcll']
+
+
+def get_npl(video_path):
+    """Return the nominal peak luminance for the zscale npl= parameter.
+
+    Uses MAXFALL (max average frame luminance) which sits near zscale's own
+    built-in default of 250, giving bright perceptually pleasing SDR output.
+    Falls back to 250 (zscale default) when no metadata is embedded.
+    """
+    meta = _get_hdr_metadata(video_path)
+    return meta['maxfall'] or 250
+
+
+def get_maxfall(video_path):
+    """Backward-compat alias for get_maxcll."""
+    return get_maxcll(video_path)
+
+
+def _compute_maxfall(video_path):
+    """Backward-compat shim — returns the raw probe dict (tests patch this)."""
+    return _probe_hdr_metadata(video_path)
 
 def build_libplacebo_filter(filter_index, gamma, tonemapper, width='iw', height='ih'):
     """Build the GPU tonemapping filter chain (HDR->SDR) using libplacebo.
@@ -399,9 +424,10 @@ def extract_frame_with_conversion(video_path, gamma, filter_index, tonemapper='r
     tonemapper = tonemapper.lower()  # Ensure tonemapper is lowercase
 
     if filter_index == 1:
-        maxfall = get_maxfall(video_path)
         filter_str = FFMPEG_FILTER[filter_index].format(
-            gamma=gamma, width=width, height=height, npl=maxfall, tonemapper=tonemapper
+            gamma=gamma, width=width, height=height,
+            npl=get_npl(video_path),
+            tonemapper=tonemapper
         )
     else:
         filter_str = FFMPEG_FILTER[filter_index].format(
@@ -454,6 +480,14 @@ def extract_frame(video_path, time_position=None, width: 'int | None' = None,
         logging.error(f"Failed to extract frame: {e}")
         raise RuntimeError("Failed to extract frame.")
 
+def _int_or_zero(v) -> int:
+    """Convert a value to int; return 0 for None, empty, or non-numeric strings (e.g. 'N/A')."""
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
 def get_video_properties(input_file):
     startupinfo, creationflags = _startupinfo()
 
@@ -504,17 +538,19 @@ def get_video_properties(input_file):
             num, den = map(int, frame_rate.split('/'))
             frame_rate = num / den if den != 0 else 0
         
+        if 'format' not in data:
+            return None
         duration = float(data['format'].get('duration', 0))
             
         return {
             "width": int(video_stream.get('width', 0)),
             "height": int(video_stream.get('height', 0)),
-            "bit_rate": int(video_stream.get('bit_rate', 0)),
+            "bit_rate": _int_or_zero(video_stream.get('bit_rate')),
             "codec_name": video_stream.get('codec_name', ''),
             "frame_rate": float(frame_rate),
             "duration": duration,
             "audio_codec": audio_stream.get('codec_name', '') if audio_stream else '',
-            "audio_bit_rate": int(audio_stream.get('bit_rate', 0)) if audio_stream else 0,
+            "audio_bit_rate": _int_or_zero(audio_stream.get('bit_rate')) if audio_stream else 0,
             "subtitle_streams": subtitle_streams,
             "color_primaries": video_stream.get('color_primaries', ''),
             "color_transfer": video_stream.get('color_transfer', ''),

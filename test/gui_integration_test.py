@@ -508,9 +508,10 @@ class TestInfoLabel(_GuiTestBase):
     def test_info_label_hidden_before_file_load(self):
         self.assertEqual(self.gui.info_label.grid_info(), {})
 
+    @patch('src.gui.get_maxcll', return_value=400.0)
     @patch('src.gui.get_video_properties')
     @patch('src.gui.filedialog.askopenfilename')
-    def test_info_label_shown_after_file_select(self, mock_dialog, mock_props):
+    def test_info_label_shown_after_file_select(self, mock_dialog, mock_props, _mock_maxcll):
         mock_dialog.return_value = 'movie.mkv'
         mock_props.return_value = {
             'width': 3840, 'height': 2160, 'frame_rate': 23.976,

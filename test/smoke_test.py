@@ -113,12 +113,11 @@ class TestRealVideoProbing(unittest.TestCase):
         self.assertGreater(props['duration'], 0)
         self.assertGreater(props['frame_rate'], 0)
 
-    def test_get_maxfall_returns_a_number(self):
-        # Real mastering metadata (float) or the documented default (int 100)
-        # when the stream carries no MAXFALL side data, as this sample does.
+    def test_get_maxfall_returns_float_or_none(self):
+        # Returns a float when MAXFALL metadata is present, None when absent.
+        # This sample carries no MAXFALL side data so None is expected here.
         value = get_maxfall(SAMPLE_VIDEO)
-        self.assertIsInstance(value, (int, float))
-        self.assertGreater(value, 0)
+        self.assertTrue(value is None or isinstance(value, float))
 
 
 @unittest.skipUnless(_BO6_OK, "sample 'drag multi bo6.mp4' / ffmpeg not available")

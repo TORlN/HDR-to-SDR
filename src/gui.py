@@ -7,7 +7,7 @@ from tkinter import filedialog, messagebox
 from tkinter import ttk
 from dark_theme import apply_dark_theme
 from conversion import conversion_manager  # Import the conversion_manager instance
-from utils import extract_frame_with_conversion, extract_frame, TONEMAP, get_video_properties, clear_maxfall_cache
+from utils import extract_frame_with_conversion, extract_frame, TONEMAP, get_video_properties, get_maxcll, clear_maxfall_cache
 from settings import load_settings, save_settings
 from licensing import activate_license, InvalidKeyError, DeviceLimitError, NetworkError, LicenseError
 from PIL import Image, ImageTk
@@ -39,10 +39,11 @@ class _LicenseDialog(tk.Toplevel):
         self._activated = False
         self._build_ui()
         self.update_idletasks()
-        w, h = 460, 260
-        x = (self.winfo_screenwidth() - w) // 2
-        y = (self.winfo_screenheight() - h) // 2
-        self.geometry(f'{w}x{h}+{x}+{y}')
+        w = max(self.winfo_reqwidth() + 40, 460)
+        h = max(self.winfo_reqheight() + 20, 220)
+        px = master.winfo_rootx() + (master.winfo_width() - w) // 2
+        py = master.winfo_rooty() + (master.winfo_height() - h) // 2
+        self.geometry(f'{w}x{h}+{px}+{py}')
         self.grab_set()
         self.focus_set()
 
@@ -960,7 +961,7 @@ class HDRConverterGUI:
             self.format_combobox.selection_clear()
 
     @staticmethod
-    def _build_info_text(properties):
+    def _build_info_text(properties, maxcll=None):
         """Format key video metadata as a compact one-line string for the info strip."""
         w = properties.get('width', '?')
         h = properties.get('height', '?')
@@ -969,9 +970,14 @@ class HDRConverterGUI:
         audio = (properties.get('audio_codec') or 'none').upper()
         primaries = properties.get('color_primaries', '')
         transfer = properties.get('color_transfer', '')
-        hdr_tag = 'HDR' if (primaries == 'bt2020' or transfer in ('smpte2084', 'arib-std-b67')) else 'SDR'
+        is_hdr = primaries == 'bt2020' or transfer in ('smpte2084', 'arib-std-b67')
+        hdr_tag = 'HDR' if is_hdr else 'SDR'
         fps_str = f"{fps:.3f} fps" if fps else "? fps"
-        return f"{w}×{h}  {fps_str}  {codec}  {hdr_tag}  Audio: {audio}"
+        if is_hdr:
+            maxcll_str = f"  Max Nits: {int(maxcll)} nits" if maxcll is not None else "  Max Nits: N/A"
+        else:
+            maxcll_str = ""
+        return f"{w}×{h}  {fps_str}  {codec}  {hdr_tag}{maxcll_str}  Audio: {audio}"
 
     def _update_info_label(self, file_path):
         """Probe file metadata and update the info strip below the output path."""
@@ -979,7 +985,8 @@ class HDRConverterGUI:
             return
         props = get_video_properties(file_path)
         if props:
-            self.info_label.config(text=self._build_info_text(props))
+            maxcll = get_maxcll(file_path)
+            self.info_label.config(text=self._build_info_text(props, maxcll=maxcll))
             self.info_label.grid()
         else:
             self.info_label.config(text='')
@@ -1480,7 +1487,8 @@ class HDRConverterGUI:
             self._current_batch_item['status'] = 'Done' if success else 'Failed'
         self._current_batch_item = None
         self._refresh_batch_list()
-        self._start_next_batch_item()  # finishes the batch when nothing is left
+        if not conversion_manager.cancelled:
+            self._start_next_batch_item()  # finishes the batch when nothing is left
 
     def _finish_batch(self):
         """Re-enable the UI and report a one-line summary once the queue drains."""
@@ -1533,9 +1541,8 @@ class HDRConverterGUI:
 
     def show_tooltip(self, event, text):
         """Show tooltip window at mouse position"""
-        x, y, _, _ = event.widget.bbox("insert")
-        x += event.widget.winfo_rootx() + 25
-        y += event.widget.winfo_rooty() + 20
+        x = event.widget.winfo_rootx() + 25
+        y = event.widget.winfo_rooty() + 20
 
         self.hide_tooltip()
 

@@ -223,10 +223,10 @@ class TestConversionManager(unittest.TestCase):
         self.assertEqual(cmd, expected_cmd)
 
     @patch('src.conversion.subprocess.Popen')
-    @patch('src.conversion.get_maxfall')
-    def test_construct_ffmpeg_command_with_subtitles(self, mock_get_maxfall, mock_popen):
+    @patch('src.conversion.get_npl')
+    def test_construct_ffmpeg_command_with_subtitles(self, mock_get_npl, mock_popen):
         """Test that construct_ffmpeg_command includes subtitle streams when available."""
-        mock_get_maxfall.return_value = 10
+        mock_get_npl.return_value = 10
         properties = {
             "width": 1920,
             "height": 1080,
@@ -488,14 +488,14 @@ class TestConversionManager(unittest.TestCase):
         with patch.object(manager, 'detect_gpu_encoder', return_value=None):
             self.assertFalse(manager.is_gpu_available())
 
-    @patch('src.conversion.get_maxfall')
+    @patch('src.conversion.get_npl')
     @patch('src.conversion.subprocess.Popen')
     @patch('src.conversion.ConversionManager.is_gpu_available', return_value=True)
-    def test_construct_ffmpeg_command_with_gpu(self, mock_popen, mock_get_maxfall, mock_is_gpu):
+    def test_construct_ffmpeg_command_with_gpu(self, mock_popen, mock_get_npl, mock_is_gpu):
         """Test construct_ffmpeg_command with GPU acceleration enabled."""
         manager = ConversionManager()
         manager._gpu_encoder = 'h264_nvenc'
-        mock_get_maxfall.return_value = 10
+        mock_get_npl.return_value = 10
         properties = {
             "width": 1920,
             "height": 1080,
@@ -517,7 +517,7 @@ class TestConversionManager(unittest.TestCase):
             gamma=gamma, 
             width=properties["width"], 
             height=properties["height"], 
-            npl=mock_get_maxfall.return_value,
+            npl=mock_get_npl.return_value,
             tonemapper=tonemapper
         )
         cmd = manager.construct_ffmpeg_command(input_path, output_path, gamma, properties, use_gpu, selected_filter_index)
@@ -529,11 +529,11 @@ class TestConversionManager(unittest.TestCase):
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'h264_nvenc')
 
     @patch('src.conversion.ConversionManager.is_gpu_available', return_value=False)  
-    @patch('src.conversion.get_maxfall')
+    @patch('src.conversion.get_npl')
     @patch('src.conversion.subprocess.Popen')
-    def test_construct_ffmpeg_command_without_gpu(self, mock_popen, mock_get_maxfall, mock_is_gpu):
+    def test_construct_ffmpeg_command_without_gpu(self, mock_popen, mock_get_npl, mock_is_gpu):
         """Test construct_ffmpeg_command with GPU acceleration disabled."""
-        mock_get_maxfall.return_value = 10  
+        mock_get_npl.return_value = 10  
         manager = ConversionManager()
         properties = {
             "width": 1920,
@@ -669,7 +669,7 @@ class TestConversionManager(unittest.TestCase):
             'in.mp4', 'out.mkv', 2.2, self._QUALITY_PROPS, False, 0, tonemapper='reinhard')
         self.assertEqual(cmd[cmd.index('-crf') + 1], '23')
 
-    @patch('src.conversion.get_maxfall', return_value=10)
+    @patch('src.conversion.get_npl', return_value=10)
     def test_quality_sets_cq_for_nvenc(self, _mf):
         manager = ConversionManager()
         manager._gpu_encoder = 'h264_nvenc'
@@ -993,7 +993,7 @@ class TestLibplaceboCommandConstruction(unittest.TestCase):
     }
 
     @patch('src.conversion.vulkan_libplacebo_available', return_value=True)
-    @patch('src.conversion.get_maxfall')
+    @patch('src.conversion.get_npl')
     def test_libplacebo_path_used_when_gpu_and_available(self, mock_maxfall, _avail):
         m = ConversionManager()
         m._gpu_encoder = 'h264_nvenc'

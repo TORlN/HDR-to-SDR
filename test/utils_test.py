@@ -6,7 +6,7 @@ from src.utils import (
     get_video_properties, run_ffmpeg_command, extract_frame,
     extract_frame_with_conversion, get_executable_path, initialize_ffmpeg,
     build_libplacebo_filter, vulkan_libplacebo_available, reset_libplacebo_probe,
-    get_maxfall, verify_ffmpeg_files,
+    get_maxfall, get_maxcll, get_npl, verify_ffmpeg_files,
 )
 import subprocess
 from PIL import Image  # Added import
@@ -209,10 +209,9 @@ class TestExtractFrame(unittest.TestCase):
 
 class TestExtractFrameWithConversion(unittest.TestCase):
 
-    @patch('src.utils.get_maxfall')  # Added patch for get_maxfall
+    @patch('src.utils.get_npl', return_value=100.0)
     @patch('src.utils.run_ffmpeg_command')
-    def test_extract_frame_with_conversion_success(self, mock_run_ffmpeg, mock_get_maxfall):
-        # Mock the video properties to have a duration of 90 seconds
+    def test_extract_frame_with_conversion_success(self, mock_run_ffmpeg, mock_get_npl):
         with patch('src.utils.get_video_properties') as mock_get_props:
             mock_get_props.return_value = {
                 "width": 1920,
@@ -226,7 +225,6 @@ class TestExtractFrameWithConversion(unittest.TestCase):
                 "subtitle_streams": []
             }
 
-            # Provide valid PNG image bytes
             mock_run_ffmpeg.return_value = (
                 b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01'
                 b'\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00'
@@ -234,31 +232,23 @@ class TestExtractFrameWithConversion(unittest.TestCase):
                 b'\x18\xdd\x8d\x1b\x00\x00\x00\x00IEND\xaeB`\x82'
             )
 
-            mock_get_maxfall.return_value = 100.0  # Mocked get_maxfall return value
             gamma = 2.2
-            frame = extract_frame_with_conversion('input.mp4', gamma, filter_index=1)  # Added filter_index
-            
-            # Update the expected_vf string to match actual format
+            frame = extract_frame_with_conversion('input.mp4', gamma, filter_index=1)
+
             expected_vf = 'zscale=t=linear:npl=100.0,tonemap=reinhard,zscale=t=bt709:m=bt709:r=tv:p=bt709,eq=gamma=2.2,scale=iw:ih:force_original_aspect_ratio=decrease'
-            
             self.assertIsInstance(frame, Image.Image)
-    
-            # Verify that ffmpeg was called with the correct command and timestamp
-            expected_time = 90.0 / 3  # 30 seconds
-    
+
+            expected_time = 90.0 / 3
             mock_run_ffmpeg.assert_called_once()
             actual_args = mock_run_ffmpeg.call_args[0][0]
-            
-            # Check all arguments except the first one (ffmpeg path)
             self.assertEqual(actual_args[1:], [
                 '-ss', str(expected_time), '-i', 'input.mp4',
                 '-vf', expected_vf, '-vframes', '1', '-f', 'image2pipe', '-'
             ])
 
-    @patch('src.utils.get_maxfall')
+    @patch('src.utils.get_npl', return_value=100.0)
     @patch('src.utils.run_ffmpeg_command')
-    def test_extract_frame_with_conversion_failure(self, mock_run_ffmpeg, mock_get_maxfall):
-        # Mock video properties first
+    def test_extract_frame_with_conversion_failure(self, mock_run_ffmpeg, mock_get_npl):
         with patch('src.utils.get_video_properties') as mock_get_props:
             mock_get_props.return_value = {
                 "width": 1920,
@@ -272,14 +262,10 @@ class TestExtractFrameWithConversion(unittest.TestCase):
                 "subtitle_streams": []
             }
 
-            # Mock get_maxfall to return a predefined value
-            mock_get_maxfall.return_value = 100.0  # Mocked get_maxfall return value
-
-            # Setup run_ffmpeg_command to raise RuntimeError to simulate failure
             mock_run_ffmpeg.side_effect = RuntimeError("FFmpeg conversion failed")
 
             with self.assertRaises(RuntimeError):
-                extract_frame_with_conversion('input.mp4', gamma=2.2, filter_index=1)  # Added gamma and filter_index
+                extract_frame_with_conversion('input.mp4', gamma=2.2, filter_index=1)
 
 _VALID_PNG = (
     b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01'
@@ -306,7 +292,7 @@ class TestPreviewScaling(unittest.TestCase):
         extract_frame('in.mp4', time_position=1.0)
         self.assertNotIn('-vf', mock_run.call_args[0][0])  # unchanged default
 
-    @patch('src.utils.get_maxfall', return_value=100.0)
+    @patch('src.utils.get_npl', return_value=100.0)
     @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
     @patch('src.utils.run_ffmpeg_command', return_value=_VALID_PNG)
     def test_conversion_uses_given_size_in_scale(self, mock_run, _props, _mf):
@@ -502,12 +488,11 @@ class TestVulkanLibplaceboProbe(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestMaxfallConcurrency(unittest.TestCase):
-    """get_maxfall must call _compute_maxfall exactly once under concurrent cache misses.
+    """_get_hdr_metadata must call _probe_hdr_metadata exactly once under concurrent cache misses.
 
     Without a threading.Lock, two threads that both see the cache miss can both
-    call _compute_maxfall before either one writes the result back — spawning two
-    ffprobe processes for the same file.  The test below is RED today and will
-    turn GREEN once a lock serialises the read-check-write sequence.
+    call _probe_hdr_metadata before either one writes the result back — spawning two
+    ffprobe processes for the same file.
     """
 
     def setUp(self):
@@ -521,21 +506,19 @@ class TestMaxfallConcurrency(unittest.TestCase):
         call_count: list[int] = []
         start = threading.Barrier(4)
 
-        def slow_compute(path: str) -> float:
-            # time.sleep releases the GIL, giving other threads a chance to pass
-            # the cache-miss check before the first thread writes the result back.
+        def slow_probe(path: str) -> dict:
             import time
             time.sleep(0.05)
             call_count.append(1)
-            return 400.0
+            return {'maxcll': 400.0, 'maxfall': None, 'mastering_peak': None}
 
-        results: list[float] = []
+        results: list = []
 
         def worker() -> None:
-            start.wait()  # all four threads hit the cache check simultaneously
+            start.wait()
             results.append(get_maxfall('/fake/concurrent/video.mkv'))
 
-        with patch('src.utils._compute_maxfall', side_effect=slow_compute):
+        with patch('src.utils._probe_hdr_metadata', side_effect=slow_probe):
             threads = [threading.Thread(target=worker) for _ in range(4)]
             for t in threads:
                 t.start()
@@ -549,7 +532,7 @@ class TestMaxfallConcurrency(unittest.TestCase):
         )
         self.assertEqual(
             len(call_count), 1,
-            f"_compute_maxfall was called {len(call_count)} time(s); expected exactly 1 "
+            f"_probe_hdr_metadata was called {len(call_count)} time(s); expected exactly 1 "
             "(a threading.Lock must prevent duplicate ffprobe launches)",
         )
 
@@ -691,6 +674,125 @@ class TestSetupDpiAwareness(unittest.TestCase):
             import src.utils as _u
             importlib.reload(_u)
             _u.setup_dpi_awareness()  # must not raise
+
+
+class TestGetVideoPropertiesRobustness(unittest.TestCase):
+    """get_video_properties must handle malformed / unusual ffprobe output gracefully."""
+
+    @patch('src.utils.subprocess.Popen')
+    def test_returns_none_when_format_key_missing(self, mock_popen):
+        """ffprobe output without a 'format' key must return None, not raise KeyError."""
+        proc = mock_popen.return_value
+        proc.returncode = 0
+        proc.communicate.return_value = (json.dumps({
+            "streams": [{"codec_type": "video", "width": 1920, "height": 1080,
+                         "codec_name": "hevc", "avg_frame_rate": "24/1",
+                         "bit_rate": "5000000"}],
+            # 'format' key intentionally absent
+        }).encode(), b'')
+        self.assertIsNone(get_video_properties('exotic.mkv'))
+
+    @patch('src.utils.subprocess.Popen')
+    def test_handles_na_bit_rate_without_crashing(self, mock_popen):
+        """bit_rate='N/A' (returned by ffprobe for some containers) must yield
+        bit_rate=0 in the result dict, not crash with ValueError."""
+        proc = mock_popen.return_value
+        proc.returncode = 0
+        proc.communicate.return_value = (json.dumps({
+            "streams": [{"codec_type": "video", "width": 1920, "height": 1080,
+                         "codec_name": "hevc", "avg_frame_rate": "24/1",
+                         "bit_rate": "N/A"},
+                        {"codec_type": "audio", "codec_name": "aac",
+                         "bit_rate": "N/A"}],
+            "format": {"duration": "120.0"},
+        }).encode(), b'')
+        props = get_video_properties('video.mkv')
+        self.assertIsNotNone(props, "should return valid props, not None")
+        self.assertEqual(props['bit_rate'], 0)
+        self.assertEqual(props['audio_bit_rate'], 0)
+
+
+class TestProbeHdrMetadata(unittest.TestCase):
+    """_probe_hdr_metadata returns MaxCLL, MAXFALL, and mastering peak from the first frame."""
+
+    def setUp(self):
+        import src.utils as _u
+        self._u = _u
+        _u._MAXFALL_CACHE.clear()
+        self.addCleanup(_u._MAXFALL_CACHE.clear)
+
+    def _frame_data(self, maxcll=1000, maxfall=400, mastering_peak='10000000/10000'):
+        side_data = []
+        if maxcll is not None:
+            side_data.append({
+                'side_data_type': 'Content light level metadata',
+                'max_content': maxcll,
+                'max_average': maxfall,
+            })
+        if mastering_peak is not None:
+            side_data.append({
+                'side_data_type': 'Mastering display metadata',
+                'min_luminance': '0/10000',
+                'max_luminance': mastering_peak,
+            })
+        return json.dumps({'frames': [{'side_data_list': side_data}]}).encode()
+
+    @patch('src.utils.subprocess.check_output')
+    def test_reads_maxcll_from_content_light_level(self, mock_out):
+        mock_out.return_value = self._frame_data()
+        result = self._u._probe_hdr_metadata('/fake/hdr.mkv')
+        self.assertEqual(result['maxcll'], 1000.0)
+
+    @patch('src.utils.subprocess.check_output')
+    def test_reads_maxfall_from_content_light_level(self, mock_out):
+        """max_average from Content light level metadata must be stored as maxfall."""
+        mock_out.return_value = self._frame_data(maxfall=400)
+        result = self._u._probe_hdr_metadata('/fake/hdr.mkv')
+        self.assertEqual(result['maxfall'], 400.0)
+
+    @patch('src.utils.subprocess.check_output')
+    def test_reads_mastering_peak_as_fraction(self, mock_out):
+        """max_luminance '40000000/10000' must be parsed to 4000.0 nits."""
+        mock_out.return_value = self._frame_data(mastering_peak='40000000/10000')
+        result = self._u._probe_hdr_metadata('/fake/hdr.mkv')
+        self.assertAlmostEqual(result['mastering_peak'], 4000.0)
+
+    @patch('src.utils.subprocess.check_output')
+    def test_returns_none_values_when_no_metadata(self, mock_out):
+        mock_out.return_value = json.dumps({'frames': [{'side_data_list': []}]}).encode()
+        result = self._u._probe_hdr_metadata('/fake/sdr.mkv')
+        self.assertIsNone(result['maxcll'])
+        self.assertIsNone(result['maxfall'])
+        self.assertIsNone(result['mastering_peak'])
+
+
+class TestGetNpl(unittest.TestCase):
+    """get_npl returns MAXFALL (max_average) → 250 (zscale default)."""
+
+    def setUp(self):
+        import src.utils as _u
+        self._u = _u
+        _u._MAXFALL_CACHE.clear()
+        self.addCleanup(_u._MAXFALL_CACHE.clear)
+
+    @patch('src.utils.subprocess.check_output')
+    def test_uses_maxfall_when_present(self, mock_out):
+        mock_out.return_value = json.dumps({'frames': [{'side_data_list': [
+            {'side_data_type': 'Content light level metadata',
+             'max_content': 1000, 'max_average': 400},
+        ]}]}).encode()
+        self.assertEqual(get_npl('/fake/hdr.mkv'), 400.0)
+
+    @patch('src.utils.subprocess.check_output')
+    def test_falls_back_to_250_when_no_maxfall(self, mock_out):
+        """No metadata → 250 matches zscale's own built-in default."""
+        mock_out.return_value = json.dumps({'frames': []}).encode()
+        self.assertEqual(get_npl('/fake/sdr.mkv'), 250)
+
+    @patch('src.utils.subprocess.check_output')
+    def test_falls_back_to_250_when_no_metadata(self, mock_out):
+        mock_out.return_value = json.dumps({'frames': [{'side_data_list': []}]}).encode()
+        self.assertEqual(get_npl('/fake/sdr.mkv'), 250)
 
 
 if __name__ == '__main__':

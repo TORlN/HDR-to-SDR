@@ -91,9 +91,9 @@ class TestSnappinessGuards(unittest.TestCase):
 
     @patch('src.utils.run_ffmpeg_command')
     @patch('src.utils.get_video_properties', return_value={'duration': 100, 'width': 1920, 'height': 1080})
-    @patch('src.utils._compute_maxfall', return_value=200.0)
-    def test_maxfall_probed_once_across_previews(self, mock_compute, _mock_props, mock_run):
-        # MAXFALL is the dominant cost (~0.5-1.2s ffprobe). Visiting several frame
+    @patch('src.utils._probe_hdr_metadata', return_value={'maxcll': 200.0, 'maxfall': None, 'mastering_peak': None})
+    def test_maxfall_probed_once_across_previews(self, mock_probe, _mock_props, mock_run):
+        # HDR metadata probe (~0.5-1.2s ffprobe). Visiting several frame
         # buttons / tonemappers on one video must probe it once, not per preview.
         clear_maxfall_cache()
         self.addCleanup(clear_maxfall_cache)
@@ -101,7 +101,7 @@ class TestSnappinessGuards(unittest.TestCase):
         for t, tonemap in [(10.0, 'mobius'), (20.0, 'hable'), (30.0, 'reinhard')]:
             extract_frame_with_conversion('clip.mkv', 1.0, 1, tonemap, time_position=t,
                                           width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1])
-        self.assertEqual(mock_compute.call_count, 1)
+        self.assertEqual(mock_probe.call_count, 1)
 
     @patch('src.gui.ImageTk.PhotoImage')
     def test_gamma_change_does_not_resize_window(self, _mock_photo):

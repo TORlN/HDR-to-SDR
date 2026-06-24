@@ -7,7 +7,7 @@ import re
 import logging
 from tkinter import messagebox
 from utils import (get_video_properties, FFMPEG_FILTER, FFMPEG_CONVERT_FILTER,
-                   FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE, get_maxfall,
+                   FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE, get_npl,
                    VULKAN_DEVICE_ARGS, build_libplacebo_filter,
                    vulkan_libplacebo_available)
 from tkinterdnd2 import DND_FILES
@@ -142,9 +142,8 @@ class ConversionManager:
             # replaces and skips the MAXFALL probe the CPU Dynamic path needs.
             filter_str = build_libplacebo_filter(selected_filter_index, gamma, tonemapper)
         elif selected_filter_index == 1:
-            maxfall = get_maxfall(input_path)
             filter_str = FFMPEG_CONVERT_FILTER[selected_filter_index].format(
-                gamma=gamma, npl=maxfall, tonemapper=tonemapper
+                gamma=gamma, npl=get_npl(input_path), tonemapper=tonemapper
             )
         else:
             filter_str = FFMPEG_CONVERT_FILTER[selected_filter_index].format(

@@ -1,4 +1,5 @@
 import os
+import sys
 import tempfile
 import tkinter as tk
 import webbrowser
@@ -232,6 +233,8 @@ class HDRConverterGUI:
         self.root = root
         self._licensed = licensed
         self.root.title("HDR to SDR Converter")
+        self._set_window_icon()
+        self.root.after(0, self._set_window_icon)
         # Color-based dark theme (clam). Applied before create_widgets so the
         # classic Listbox inherits the dark colors via the option database. Not
         # image-based (unlike sv_ttk), so the widget tree doesn't re-render from
@@ -305,6 +308,26 @@ class HDRConverterGUI:
 
         # Check for updates 3 s after startup so it never delays the UI appearing.
         self.root.after(3000, self._start_update_check)
+
+    def _set_window_icon(self) -> None:
+        # PyInstaller sets sys.frozen; Nuitka does not — detect Nuitka by exe name
+        exe_name = os.path.basename(sys.executable).lower()
+        is_compiled = getattr(sys, 'frozen', False) or not exe_name.startswith('python')
+        if is_compiled:
+            # PyInstaller 6.x onedir stores data files under sys._MEIPASS (_internal/).
+            # Nuitka standalone stores them alongside the exe; sys._MEIPASS is not set.
+            meipass: str | None = getattr(sys, '_MEIPASS', None)
+            base_dir = meipass if meipass is not None else os.path.dirname(os.path.abspath(sys.executable))
+            icon_path = os.path.join(base_dir, 'icon.ico')
+        else:
+            src_dir = os.path.dirname(os.path.abspath(__file__))
+            icon_path = os.path.join(src_dir, '..', 'logo', 'icon.ico')
+        if not os.path.exists(icon_path):
+            return
+        try:
+            self.root.iconbitmap(icon_path)
+        except Exception:
+            pass
 
     def check_ffmpeg_available(self):
         """Warn the user if ffmpeg/ffprobe could not be located on startup."""

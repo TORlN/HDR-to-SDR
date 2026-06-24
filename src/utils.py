@@ -523,3 +523,14 @@ def get_video_properties(input_file):
     except (subprocess.SubprocessError, json.JSONDecodeError, ValueError) as e:
         print(f"Error getting video properties: {str(e)}")
         return None
+
+
+def setup_dpi_awareness() -> None:
+    """Enable Per-Monitor DPI awareness so Windows doesn't bitmap-scale the window."""
+    if sys.platform != 'win32':
+        return
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        pass

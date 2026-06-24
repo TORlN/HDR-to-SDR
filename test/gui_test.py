@@ -331,5 +331,100 @@ class TestHDRConverterGUI(TestCase):
         
         self.gui.cancel_button.grid.assert_called_once()
 
+class TestWindowIcon(unittest.TestCase):
+    """_set_window_icon should load icon.png and call root.iconphoto."""
+
+    def _make_gui(self, extra_patches=None):
+        mock_root = MagicMock()
+        patches = {
+            'string_var': patch('src.gui.tk.StringVar', return_value=MagicMock(spec=tk.StringVar, get=MagicMock(return_value=''), set=MagicMock())),
+            'double_var': patch('src.gui.tk.DoubleVar', return_value=MagicMock(spec=tk.DoubleVar)),
+            'bool_var':   patch('src.gui.tk.BooleanVar', return_value=MagicMock(spec=tk.BooleanVar)),
+            'int_var':    patch('src.gui.tk.IntVar', return_value=MagicMock(spec=tk.IntVar)),
+        }
+        if extra_patches:
+            patches.update(extra_patches)
+        mocks = {name: p.start() for name, p in patches.items()}
+        gui = HDRConverterGUI(mock_root, licensed=True)
+        return gui, mock_root, patches, mocks
+
+    @patch('src.gui.os.path.exists', return_value=True)
+    def test_sets_icon_when_file_exists(self, _mock_exists):
+        gui, mock_root, patches, _ = self._make_gui()
+
+        mock_root.iconbitmap.assert_called_once()
+        for p in patches.values():
+            p.stop()
+        gui.on_close()
+
+    @patch('src.gui.os.path.exists', return_value=False)
+    def test_skips_when_file_missing(self, _mock_exists):
+        gui, mock_root, patches, _ = self._make_gui()
+
+        mock_root.iconbitmap.assert_not_called()
+        for p in patches.values():
+            p.stop()
+        gui.on_close()
+
+    @patch('src.gui.os.path.exists', return_value=True)
+    def test_swallows_exceptions(self, _mock_exists):
+        # root.iconbitmap raises; must not propagate
+        gui, mock_root, patches, _ = self._make_gui()
+        mock_root.iconbitmap.side_effect = Exception("bad icon")
+
+        try:
+            gui._set_window_icon()
+        except Exception:
+            self.fail("_set_window_icon must not raise")
+
+        for p in patches.values():
+            p.stop()
+        gui.on_close()
+
+    def test_pyinstaller_uses_meipass_dir(self):
+        """PyInstaller onedir sets sys._MEIPASS to _internal/; icon.ico lives there."""
+        import sys as _sys
+        fake_meipass = r'C:\fake_install\HDR_to_SDR_Converter\_internal'
+        fake_exe = r'C:\fake_install\HDR_to_SDR_Converter\HDR_to_SDR_Converter.exe'
+        with patch.object(_sys, 'frozen', True, create=True), \
+             patch.object(_sys, 'executable', fake_exe), \
+             patch.object(_sys, '_MEIPASS', fake_meipass, create=True), \
+             patch('src.gui.os.path.exists', return_value=True):
+            gui, mock_root, patches, _ = self._make_gui()
+        call_args = mock_root.iconbitmap.call_args
+        self.assertIsNotNone(call_args, "iconbitmap should have been called")
+        icon_path = str(call_args[0][0])
+        self.assertIn('_internal', icon_path)
+        for p in patches.values():
+            p.stop()
+        gui.on_close()
+
+    def test_nuitka_exe_uses_executable_dir(self):
+        """Nuitka does not set sys.frozen; must still use sys.executable dir when exe is not python.exe."""
+        import sys as _sys
+        fake_exe = r'C:\fake_nuitka\HDR_to_SDR_Converter.exe'
+        with patch('src.gui.os.path.exists', return_value=True), \
+             patch.object(_sys, 'executable', fake_exe):
+            gui, mock_root, patches, _ = self._make_gui()
+        call_args = mock_root.iconbitmap.call_args
+        self.assertIsNotNone(call_args, "iconbitmap should have been called")
+        icon_path = str(call_args[0][0])
+        self.assertIn('fake_nuitka', icon_path)
+        for p in patches.values():
+            p.stop()
+        gui.on_close()
+
+    def test_icon_deferred_via_after(self):
+        """Icon must be re-applied via after(0,...) so it takes effect on the visible window."""
+        with patch('src.gui.os.path.exists', return_value=True):
+            gui, mock_root, patches, _ = self._make_gui()
+        after_calls = [c for c in mock_root.after.call_args_list
+                       if c[0][0] == 0 and c[0][1] == gui._set_window_icon]
+        self.assertTrue(after_calls, "after(0, _set_window_icon) must be scheduled in __init__")
+        for p in patches.values():
+            p.stop()
+        gui.on_close()
+
+
 if __name__ == '__main__':
     unittest.main()

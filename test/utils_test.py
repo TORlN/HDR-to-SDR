@@ -659,5 +659,39 @@ class TestStartupinfoConsistency(unittest.TestCase):
         _u._MAXFALL_CACHE.clear()
 
 
+class TestSetupDpiAwareness(unittest.TestCase):
+    """setup_dpi_awareness() should enable Per-Monitor DPI awareness on Windows."""
+
+    @patch('sys.platform', 'win32')
+    def test_calls_set_process_dpi_awareness_on_windows(self):
+        mock_shcore = MagicMock()
+        with patch.dict('sys.modules', {'ctypes': MagicMock(windll=MagicMock(shcore=mock_shcore))}):
+            import importlib
+            import src.utils as _u
+            importlib.reload(_u)
+            _u.setup_dpi_awareness()
+        mock_shcore.SetProcessDpiAwareness.assert_called_once_with(1)
+
+    @patch('sys.platform', 'darwin')
+    def test_no_op_on_non_windows(self):
+        mock_shcore = MagicMock()
+        with patch.dict('sys.modules', {'ctypes': MagicMock(windll=MagicMock(shcore=mock_shcore))}):
+            import importlib
+            import src.utils as _u
+            importlib.reload(_u)
+            _u.setup_dpi_awareness()
+        mock_shcore.SetProcessDpiAwareness.assert_not_called()
+
+    @patch('sys.platform', 'win32')
+    def test_swallows_exceptions(self):
+        mock_shcore = MagicMock()
+        mock_shcore.SetProcessDpiAwareness.side_effect = OSError("unavailable")
+        with patch.dict('sys.modules', {'ctypes': MagicMock(windll=MagicMock(shcore=mock_shcore))}):
+            import importlib
+            import src.utils as _u
+            importlib.reload(_u)
+            _u.setup_dpi_awareness()  # must not raise
+
+
 if __name__ == '__main__':
     unittest.main()

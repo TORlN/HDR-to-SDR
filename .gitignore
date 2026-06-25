@@ -55,6 +55,7 @@ make_comparison.py
 comparison.png
 *.mkv
 old_icon.ico
+old_icon.png
 
 # Secrets — never commit
 src/_secrets.py

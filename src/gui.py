@@ -256,8 +256,6 @@ class HDRConverterGUI:
         self.original_image = None  # Cache for the original frame
         self.converted_image_base = None  # Cache for the converted SDR frame
         self.gpu_accel_var = tk.BooleanVar(value=_s['gpu_accel'])
-        self.filter_options = ['Static', 'Dynamic']
-        self.filter_var = tk.StringVar(value=_s['filter'])
         self.tonemap_var = tk.StringVar(value=_s['tonemapper'])
         self.quality_var = tk.IntVar(value=_s['quality'])
         self.format_var = tk.StringVar(value=_s['filetype'])  # output container; set from input on load
@@ -438,7 +436,6 @@ class HDRConverterGUI:
         try:
             save_settings({
                 'gamma': self.gamma_var.get(),
-                'filter': self.filter_var.get(),
                 'tonemapper': self.tonemap_var.get(),
                 'gpu_accel': self.gpu_accel_var.get(),
                 'open_after_conversion': self.open_after_conversion_var.get(),
@@ -505,36 +502,6 @@ class HDRConverterGUI:
         )
         self.gpu_accel_checkbutton.grid(row=3, column=0, sticky=tk.W, pady=(5, 0))
 
-        # Add Filter Combobox with padding and event binding
-        filter_frame = ttk.Frame(self.control_frame)
-        filter_frame.grid(row=3, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))
-        
-        self.filter_combobox = ttk.Combobox(
-            filter_frame,
-            textvariable=self.filter_var,
-            values=self.filter_options,
-            state='readonly',
-            width=15
-        )
-        self.filter_combobox.grid(row=0, column=0, padx=(0, 5))
-        self.filter_combobox.bind('<<ComboboxSelected>>', self.update_frame_preview)
-
-        # Add info button with tooltip
-        info_button = ttk.Label(
-            filter_frame,
-            text="ⓘ",
-            cursor="hand2"
-        )
-        info_button.grid(row=0, column=1)
-        
-        # Tooltip text
-        tooltip_text = ("Static: Basic HDR to SDR conversion with fixed parameters\n"
-                       "Dynamic: Adaptive conversion that analyzes video brightness")
-
-        # Bind hover events
-        info_button.bind('<Enter>', lambda e: self.show_tooltip(e, tooltip_text))
-        info_button.bind('<Leave>', self.hide_tooltip)
-
         # Display Image Checkbox - col 0
         self.display_image_checkbutton = ttk.Checkbutton(
             self.control_frame,
@@ -546,7 +513,7 @@ class HDRConverterGUI:
 
         # Tonemapper combobox + ⓘ button in a small frame at col 1 (mirrors filter_frame)
         tonemap_frame = ttk.Frame(self.control_frame)
-        tonemap_frame.grid(row=4, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))
+        tonemap_frame.grid(row=3, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))
 
         self.tonemap_combobox = ttk.Combobox(
             tonemap_frame,
@@ -974,7 +941,7 @@ class HDRConverterGUI:
         hdr_tag = 'HDR' if is_hdr else 'SDR'
         fps_str = f"{fps:.3f} fps" if fps else "? fps"
         if is_hdr:
-            maxcll_str = f"  Max Nits: {int(maxcll)} nits" if maxcll is not None else "  Max Nits: N/A"
+            maxcll_str = f"  Max Nits: {int(maxcll)}" if maxcll is not None else "  Max Nits: N/A"
         else:
             maxcll_str = ""
         return f"{w}×{h}  {fps_str}  {codec}  {hdr_tag}{maxcll_str}  Audio: {audio}"
@@ -1264,9 +1231,8 @@ class HDRConverterGUI:
             input_path = os.path.normpath(self.input_path_var.get())
             output_path = os.path.normpath(self.output_path_var.get())
             gamma = self.gamma_var.get()
-            use_gpu = self.gpu_accel_var.get()  # Get GPU acceleration state
-            selected_filter_index = self.filter_options.index(self.filter_var.get())
-            tonemapper = self.tonemap_var.get().lower()  # Convert tonemapper to lowercase
+            use_gpu = self.gpu_accel_var.get()
+            tonemapper = self.tonemap_var.get().lower()
             quality = int(self.quality_var.get())
 
             # The chosen container (format dropdown) governs the output extension,
@@ -1289,15 +1255,14 @@ class HDRConverterGUI:
 
             # Show cancel button and disable interactable elements
             self.cancel_button.grid()
-            
+
             logging.info(f"Starting conversion - Input: {input_path}, Output: {output_path}, Gamma: {gamma}")
-            
-            # Start the conversion using the conversion_manager instance
+
             conversion_manager.start_conversion(
-                input_path, output_path, gamma, use_gpu, selected_filter_index,
+                input_path, output_path, gamma, use_gpu,
                 self.progress_var, self.interactable_elements, self,
                 self.open_after_conversion_var.get(), self.cancel_button,
-                tonemapper=tonemapper,  # Pass tonemapper to the conversion
+                tonemapper=tonemapper,
                 quality=quality
             )
         except Exception as e:
@@ -1468,12 +1433,11 @@ class HDRConverterGUI:
             self._load_input_file(item['input'])
         gamma = self.gamma_var.get()
         use_gpu = self.gpu_accel_var.get()
-        selected_filter_index = self.filter_options.index(self.filter_var.get())
         tonemapper = self.tonemap_var.get().lower()
         quality = int(self.quality_var.get())
 
         conversion_manager.start_conversion(
-            input_path, output_path, gamma, use_gpu, selected_filter_index,
+            input_path, output_path, gamma, use_gpu,
             self.progress_var, self.interactable_elements, self,
             self.open_after_conversion_var.get(), self.cancel_button,
             tonemapper=tonemapper, quality=quality,
@@ -1586,8 +1550,7 @@ class HDRConverterGUI:
         main thread via ``root.after`` for the Tk rendering in
         :meth:`_render_preview_images`.
         """
-        selected_filter_index = self.filter_options.index(self.filter_var.get())
-        tonemapper = self.tonemap_var.get().lower()  # Convert tonemapper to lowercase
+        tonemapper = self.tonemap_var.get().lower()
 
         # Debounce: every request bumps a generation token. A worker only renders
         # if it is still the most recent request, so a slow extraction kicked off
@@ -1600,7 +1563,7 @@ class HDRConverterGUI:
                 duration = self._get_duration(video_path)
                 time_position = self._preview_time_position(duration)
                 original, converted = self._extract_preview_images(
-                    video_path, time_position, selected_filter_index, tonemapper
+                    video_path, time_position, tonemapper
                 )
                 if generation == self._preview_generation:
                     self._schedule_on_main(lambda: self._render_preview_images(
@@ -1608,8 +1571,7 @@ class HDRConverterGUI:
                 # With the visible frame rendered, pre-extract the other seek
                 # buttons in the background so their first click is an instant
                 # cache hit instead of a multi-hundred-ms ffmpeg wait.
-                self._prewarm_other_frames(video_path, duration,
-                                           selected_filter_index, tonemapper, generation)
+                self._prewarm_other_frames(video_path, duration, tonemapper, generation)
             except Exception as e:  # surface failures on the main thread
                 self._schedule_on_main(lambda err=e: self.handle_preview_error(err))
 
@@ -1645,14 +1607,13 @@ class HDRConverterGUI:
 
     _PREVIEW_CACHE_MAX = 48  # bound preview-frame memory (~1.5MB each at 960x540)
 
-    def _extract_preview_images(self, video_path, time_position, filter_index, tonemapper):
+    def _extract_preview_images(self, video_path, time_position, tonemapper):
         """Return (original, converted) preview frames, caching ffmpeg results.
 
         Safe to call off the main thread; must not touch Tk objects. Frames are
-        cached by content key so revisiting a frame/filter/tonemapper combo (e.g.
-        clicking back to frame 2, or toggling a filter and back) is a cache hit
-        with no ffmpeg work. The original HDR frame depends only on the time
-        position, so it is shared across filters/tonemappers.
+        cached by content key so revisiting a frame/tonemapper combo is a cache
+        hit with no ffmpeg work. The original HDR frame depends only on the time
+        position, so it is shared across tonemappers.
         """
         if not hasattr(self, '_preview_cache_original'):  # bare instances (tests)
             self._preview_cache_original = {}
@@ -1666,11 +1627,11 @@ class HDRConverterGUI:
                                      width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1])
             self._cache_store(self._preview_cache_original, original_key, original)
 
-        converted_key = (video_path, time_key, filter_index, tonemapper)
+        converted_key = (video_path, time_key, tonemapper)
         converted = self._preview_cache_converted.get(converted_key)
         if converted is None:
             converted = extract_frame_with_conversion(
-                video_path, gamma=1.0, filter_index=filter_index,
+                video_path, gamma=1.0,
                 tonemapper=tonemapper, time_position=time_position,
                 width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1]
             )
@@ -1690,7 +1651,7 @@ class HDRConverterGUI:
             if len(cache) > self._PREVIEW_CACHE_MAX:
                 cache.pop(next(iter(cache)))
 
-    def _prewarm_other_frames(self, video_path, duration, filter_index, tonemapper, generation):
+    def _prewarm_other_frames(self, video_path, duration, tonemapper, generation):
         """Pre-extract the non-visible seek-button frames into the cache.
 
         Runs on the preview worker thread after the requested frame has been
@@ -1707,7 +1668,7 @@ class HDRConverterGUI:
                 continue  # the visible frame is already extracted
             time_position = (index / (self.total_frames + 1)) * duration
             try:
-                self._extract_preview_images(video_path, time_position, filter_index, tonemapper)
+                self._extract_preview_images(video_path, time_position, tonemapper)
             except Exception:
                 logging.exception("preview pre-warm failed for frame %s", index)
 
@@ -1862,5 +1823,4 @@ class HDRConverterGUI:
             self.converted_title_label.grid_remove()
             self.button_container.grid_remove()  # Hide frame buttons
             self.arrange_widgets(image_frame=False)
-        self.filter_combobox.selection_clear()
         self.tonemap_combobox.selection_clear()

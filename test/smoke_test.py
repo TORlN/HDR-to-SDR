@@ -129,18 +129,9 @@ class TestRealFrameExtraction(unittest.TestCase):
         self.assertGreater(img.width, 0)
         self.assertGreater(img.height, 0)
 
-    def test_static_filter_extraction_produces_image(self):
-        img = extract_frame_with_conversion(
-            SAMPLE_VIDEO, gamma=1.0, filter_index=0,
-            tonemapper='reinhard', time_position=1.0,
-        )
-        self.assertIsInstance(img, Image.Image)
-        self.assertEqual((img.width, img.height), (2560, 1440))
-
     def test_dynamic_filter_extraction_produces_image(self):
-        # filter_index=1 also exercises get_maxfall on real metadata.
         img = extract_frame_with_conversion(
-            SAMPLE_VIDEO, gamma=1.2, filter_index=1,
+            SAMPLE_VIDEO, gamma=1.2,
             tonemapper='mobius', time_position=1.0,
         )
         self.assertIsInstance(img, Image.Image)
@@ -160,7 +151,7 @@ class TestRealConversion(unittest.TestCase):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
             _BO6_CLIP, out_path, gamma=1.0, properties=props,
-            use_gpu=False, selected_filter_index=1, tonemapper='mobius',
+            use_gpu=False, tonemapper='mobius',
         )
 
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -199,7 +190,7 @@ class TestRealMkvWithTrueHDAndSubtitles(unittest.TestCase):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
             _MKV_CLIP, out_path, gamma=1.0, properties=props,
-            use_gpu=False, selected_filter_index=1, tonemapper='mobius',
+            use_gpu=False, tonemapper='mobius',
         )
 
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -228,7 +219,7 @@ class TestRealMkvWithTrueHDAndSubtitles(unittest.TestCase):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
             _MKV_CLIP, out_path, gamma=1.0, properties=props,
-            use_gpu=False, selected_filter_index=1, tonemapper='mobius',
+            use_gpu=False, tonemapper='mobius',
         )
 
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)

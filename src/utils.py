@@ -12,25 +12,33 @@ import threading
 # Constants and initialization
 LOGGING_ENABLED = False
 TONEMAP = ["Reinhard", "Mobius", "Hable"]
-# Preview filter chains. These keep a trailing scale={width}:{height} because the
-# preview pipeline downscales the extracted frame to a thumbnail. Index 0 = Static,
-# 1 = Dynamic.
-FFMPEG_FILTER = [
-    'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap={tonemapper},eq=gamma={gamma},scale={width}:{height}:force_original_aspect_ratio=decrease',
-    'zscale=t=linear:npl={npl},tonemap={tonemapper},zscale=t=bt709:m=bt709:r=tv:p=bt709,eq=gamma={gamma},scale={width}:{height}:force_original_aspect_ratio=decrease'
-]
+# npl=100 is the SDR reference white (100 nits). Lower values push the average
+# frame toward full white and crush highlight detail; higher values darken the
+# output. 100 is the correct target for standard SDR displays.
+FFMPEG_FILTER = (
+    'zscale=t=linear:npl=100,tonemap={tonemapper},zscale=t=bt709:m=bt709:r=tv:p=bt709,'
+    'eq=gamma={gamma},scale={width}:{height}:force_original_aspect_ratio=decrease'
+)
 
-# Conversion filter chains (CPU path). Identical to the preview chains minus the
-# trailing scale: a full conversion always keeps the source resolution, so
-# scale={w}:{h} (to the source's own size) was a per-frame swscale no-op.
-FFMPEG_CONVERT_FILTER = [
-    'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap={tonemapper},eq=gamma={gamma}',
-    'zscale=t=linear:npl={npl},tonemap={tonemapper},zscale=t=bt709:m=bt709:r=tv:p=bt709,eq=gamma={gamma}'
-]
+FFMPEG_CONVERT_FILTER = (
+    'zscale=t=linear:npl=100,tonemap={tonemapper},zscale=t=bt709:m=bt709:r=tv:p=bt709,'
+    'eq=gamma={gamma}'
+)
 
 # Flags that create the Vulkan device libplacebo runs on. Prepended to the ffmpeg
-# command (before -i) when the GPU tonemap path is active.
+# command (before -i) when the GPU tonemap path is active (CPU decode fallback).
 VULKAN_DEVICE_ARGS = ['-init_hw_device', 'vulkan=vk:0', '-filter_hw_device', 'vk']
+
+# NVIDIA fast path: CUDA device for NVDEC hardware decode, linked to a Vulkan
+# device so libplacebo can consume CUDA frames via hwmap without a CPU round-trip.
+# Also sets -hwaccel cuda so ffmpeg routes decode through NVDEC.
+VULKAN_CUDA_DEVICE_ARGS = [
+    '-init_hw_device', 'cuda=cu:0',
+    '-init_hw_device', 'vulkan=vk@cu',
+    '-hwaccel', 'cuda',
+    '-hwaccel_output_format', 'cuda',
+    '-filter_hw_device', 'vk',
+]
 
 FFMPEG_EXECUTABLE = None
 FFPROBE_EXECUTABLE = None
@@ -305,17 +313,6 @@ def get_maxcll(video_path):
     return _get_hdr_metadata(video_path)['maxcll']
 
 
-def get_npl(video_path):
-    """Return the nominal peak luminance for the zscale npl= parameter.
-
-    Uses MAXFALL (max average frame luminance) which sits near zscale's own
-    built-in default of 250, giving bright perceptually pleasing SDR output.
-    Falls back to 250 (zscale default) when no metadata is embedded.
-    """
-    meta = _get_hdr_metadata(video_path)
-    return meta['maxfall'] or 250
-
-
 def get_maxfall(video_path):
     """Backward-compat alias for get_maxcll."""
     return get_maxcll(video_path)
@@ -325,37 +322,58 @@ def _compute_maxfall(video_path):
     """Backward-compat shim — returns the raw probe dict (tests patch this)."""
     return _probe_hdr_metadata(video_path)
 
-def build_libplacebo_filter(filter_index, gamma, tonemapper, width='iw', height='ih'):
+def build_libplacebo_filter(gamma, tonemapper, width='iw', height='ih',
+                            cuda_input: bool = False) -> str:
     """Build the GPU tonemapping filter chain (HDR->SDR) using libplacebo.
 
-    libplacebo does the same HDR->SDR tonemap as the CPU ``tonemap`` filter, but
-    on the GPU (Vulkan) -- offloading the single-threaded tonemap step that
-    dominates a CPU conversion. The user's tonemapper (reinhard/mobius/hable)
-    maps 1:1 to libplacebo's ``tonemapping`` option.
+    Always uses peak_detect=1 (per-scene peak detection).  When cuda_input is
+    False (default / CPU decode path) frames are uploaded from system RAM via
+    format=p010,hwupload.  When cuda_input is True (NVIDIA CUDA→Vulkan interop
+    path) frames arrive in CUDA memory from NVDEC; hwmap=derive_device=vulkan
+    transfers them to Vulkan without touching system RAM.
 
-    Static (``filter_index`` 0) uses a fixed curve; Dynamic (1) enables
-    libplacebo's per-scene ``peak_detect`` -- a better stand-in for the old
-    npl=MAXFALL approach, and it skips the MAXFALL ffprobe entirely. Frames are
-    uploaded as p010, tonemapped to nv12, downloaded, and ``eq=gamma`` is applied
-    on the CPU afterwards so gamma matches the CPU path exactly.
+    For the gamma=1.0 case with CUDA interop the frame never touches the CPU:
+    after libplacebo the Vulkan frame is remapped back to CUDA via hwmap and
+    fed directly to NVENC.  For gamma≠1.0 we still download to CPU for the eq
+    filter since FFmpeg has no GPU-native gamma correction outside libplacebo.
     """
-    peak = 1 if filter_index == 1 else 0
     tm = tonemapper.lower()
-    return (
-        f'format=p010,hwupload,'
+    prefix = ('hwmap=derive_device=vulkan,'
+              if cuda_input else 'format=p010,hwupload,')
+    libplacebo = (
         f'libplacebo=w={width}:h={height}:tonemapping={tm}:'
         f'colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:'
-        f'peak_detect={peak}:format=nv12,'
-        f'hwdownload,format=nv12,eq=gamma={gamma}'
+        f'peak_detect=1:format=nv12'
     )
+    gamma_is_identity = abs(gamma - 1.0) < 1e-9
+    if cuda_input and gamma_is_identity:
+        # Fully-GPU path: remap Vulkan→CUDA after libplacebo; NVENC encodes
+        # CUDA frames directly with no CPU round-trip.
+        suffix = ',hwmap=reverse=1:derive_device=cuda'
+    elif gamma_is_identity:
+        # Plain Vulkan path: NVENC needs CPU frames, so we still download, but
+        # skip the no-op eq=gamma=1 filter to avoid wasted work.
+        suffix = ',hwdownload,format=nv12'
+    else:
+        suffix = f',hwdownload,format=nv12,eq=gamma={gamma}'
+    return f'{prefix}{libplacebo}{suffix}'
 
 # Cached result of the Vulkan/libplacebo capability probe: None = not yet probed.
 _libplacebo_available = None
+# Cached result of the CUDA→Vulkan interop probe.
+_cuda_interop_available = None
+
 
 def reset_libplacebo_probe():
     """Forget the cached probe result (used by tests)."""
     global _libplacebo_available
     _libplacebo_available = None
+
+
+def reset_cuda_interop_probe():
+    """Forget the cached CUDA interop probe result (used by tests)."""
+    global _cuda_interop_available
+    _cuda_interop_available = None
 
 def vulkan_libplacebo_available():
     """Return True if this ffmpeg can tonemap on the GPU via Vulkan + libplacebo.
@@ -391,10 +409,59 @@ def vulkan_libplacebo_available():
         logging.debug(f"libplacebo probe failed to run: {e}")
         _libplacebo_available = False
 
-    logging.debug(f"Vulkan/libplacebo available: {_libplacebo_available}")
+    logging.warning(f"Vulkan/libplacebo available: {_libplacebo_available}")
     return _libplacebo_available
 
-def extract_frame_with_conversion(video_path, gamma, filter_index, tonemapper='reinhard',
+
+def vulkan_cuda_interop_available() -> bool:
+    """Return True if CUDA→Vulkan interop works for hardware-decoded frames.
+
+    Probes once and caches. Validates the full chain NVIDIA uses for the fast
+    path: CUDA frames (from NVDEC) mapped to Vulkan via hwmap, then processed
+    by libplacebo.  A success proves both the driver support and the linked
+    device creation work on this machine.
+    """
+    global _cuda_interop_available
+    if _cuda_interop_available is not None:
+        return _cuda_interop_available
+
+    if not FFMPEG_EXECUTABLE:
+        _cuda_interop_available = False
+        return False
+
+    startupinfo, creationflags = _startupinfo()
+
+    # Simulate CUDA frames going through the interop chain: upload a synthetic
+    # frame to CUDA memory, hwmap to Vulkan, run libplacebo, then download.
+    cmd = [
+        FFMPEG_EXECUTABLE, '-loglevel', 'error',
+        '-init_hw_device', 'cuda=cu:0',
+        '-init_hw_device', 'vulkan=vk@cu',
+        '-filter_hw_device', 'vk',
+        '-f', 'lavfi', '-i', 'color=c=black:s=64x64,format=p010',
+        '-vf', ('hwupload_cuda,'
+                'hwmap=derive_device=vulkan,'
+                'libplacebo=tonemapping=clip:format=nv12,'
+                'hwdownload,format=nv12'),
+        '-frames:v', '1', '-f', 'null', '-',
+    ]
+    try:
+        result = subprocess.run(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            startupinfo=startupinfo, creationflags=creationflags,
+        )
+        _cuda_interop_available = (result.returncode == 0)
+        if not _cuda_interop_available and result.stderr:
+            logging.warning(f"CUDA interop probe stderr: {result.stderr.decode('utf-8', errors='replace').strip()}")
+    except (FileNotFoundError, OSError) as e:
+        logging.warning(f"CUDA→Vulkan interop probe raised: {e}")
+        _cuda_interop_available = False
+
+    logging.warning(f"CUDA/Vulkan interop available: {_cuda_interop_available}")
+    return _cuda_interop_available
+
+
+def extract_frame_with_conversion(video_path, gamma, tonemapper='reinhard',
                                   time_position=None, width: 'int | str' = 'iw',
                                   height: 'int | str' = 'ih'):
     """
@@ -402,7 +469,6 @@ def extract_frame_with_conversion(video_path, gamma, filter_index, tonemapper='r
     Args:
         video_path (str): The path to the video file.
         gamma (float): The gamma correction value.
-        filter_index (int): The index of the filter to use.
         tonemapper (str): The tonemapping algorithm to use.
         time_position (float, optional): The time position to extract the frame from.
         width, height: output scale for the filter chain. Default ('iw'/'ih') keeps
@@ -415,24 +481,14 @@ def extract_frame_with_conversion(video_path, gamma, filter_index, tonemapper='r
     if not properties or properties['duration'] == 0:
         raise ValueError("Invalid video properties or duration.")
 
-    # Calculate target time
     if time_position is None:
-        target_time = properties['duration'] / 3  # Changed from /6 to /3
+        target_time = properties['duration'] / 3
     else:
         target_time = time_position
 
-    tonemapper = tonemapper.lower()  # Ensure tonemapper is lowercase
-
-    if filter_index == 1:
-        filter_str = FFMPEG_FILTER[filter_index].format(
-            gamma=gamma, width=width, height=height,
-            npl=get_npl(video_path),
-            tonemapper=tonemapper
-        )
-    else:
-        filter_str = FFMPEG_FILTER[filter_index].format(
-            gamma=gamma, width=width, height=height, tonemapper=tonemapper
-        )
+    filter_str = FFMPEG_FILTER.format(
+        gamma=gamma, width=width, height=height, tonemapper=tonemapper.lower()
+    )
     cmd = [
         FFMPEG_EXECUTABLE, '-ss', str(target_time), '-i', video_path,
         '-vf', filter_str,

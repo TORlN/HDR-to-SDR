@@ -92,16 +92,16 @@ class TestSnappinessGuards(unittest.TestCase):
     @patch('src.utils.run_ffmpeg_command')
     @patch('src.utils.get_video_properties', return_value={'duration': 100, 'width': 1920, 'height': 1080})
     @patch('src.utils._probe_hdr_metadata', return_value={'maxcll': 200.0, 'maxfall': None, 'mastering_peak': None})
-    def test_maxfall_probed_once_across_previews(self, mock_probe, _mock_props, mock_run):
-        # HDR metadata probe (~0.5-1.2s ffprobe). Visiting several frame
-        # buttons / tonemappers on one video must probe it once, not per preview.
+    def test_maxfall_not_probed_during_preview_extraction(self, mock_probe, _mock_props, mock_run):
+        # extract_frame_with_conversion uses npl=100 (hardcoded SDR reference white),
+        # so HDR metadata probing is never needed during preview extraction.
         clear_maxfall_cache()
         self.addCleanup(clear_maxfall_cache)
         mock_run.return_value = _png_bytes()
         for t, tonemap in [(10.0, 'mobius'), (20.0, 'hable'), (30.0, 'reinhard')]:
-            extract_frame_with_conversion('clip.mkv', 1.0, 1, tonemap, time_position=t,
+            extract_frame_with_conversion('clip.mkv', gamma=1.0, tonemapper=tonemap, time_position=t,
                                           width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1])
-        self.assertEqual(mock_probe.call_count, 1)
+        self.assertEqual(mock_probe.call_count, 0)
 
     @patch('src.gui.ImageTk.PhotoImage')
     def test_gamma_change_does_not_resize_window(self, _mock_photo):
@@ -141,7 +141,7 @@ class TestSnappinessGuards(unittest.TestCase):
     @patch('src.gui.extract_frame', return_value='o')
     def test_preview_extraction_requests_reduced_resolution(self, mock_extract, mock_convert):
         gui = _bare_gui()
-        gui._extract_preview_images('in.mp4', 5.0, 1, 'mobius')
+        gui._extract_preview_images('in.mp4', 5.0, 'mobius')
         self.assertEqual(
             (mock_extract.call_args.kwargs['width'], mock_extract.call_args.kwargs['height']),
             PREVIEW_SIZE)
@@ -153,10 +153,10 @@ class TestSnappinessGuards(unittest.TestCase):
     @patch('src.gui.extract_frame', return_value='o')
     def test_revisiting_cached_frame_spawns_no_ffmpeg(self, mock_extract, mock_convert):
         gui = _bare_gui()
-        gui._extract_preview_images('in.mp4', 5.0, 0, 'reinhard')  # populate cache
+        gui._extract_preview_images('in.mp4', 5.0, 'reinhard')  # populate cache
         mock_extract.reset_mock()
         mock_convert.reset_mock()
-        gui._extract_preview_images('in.mp4', 5.0, 0, 'reinhard')  # revisit
+        gui._extract_preview_images('in.mp4', 5.0, 'reinhard')  # revisit
         mock_extract.assert_not_called()
         mock_convert.assert_not_called()
 
@@ -203,7 +203,7 @@ class TestExtractionPerfAudit(unittest.TestCase):
             runs=2)
         e_dynamic = _best_ms(
             lambda: extract_frame_with_conversion(
-                _SAMPLE, 1.0, 1, 'mobius', time_position=2.0,
+                _SAMPLE, gamma=1.0, tonemapper='mobius', time_position=2.0,
                 width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1]),
             runs=2)
         print(f"\n[perf] real preview extract ({os.path.basename(_SAMPLE)}): "
@@ -212,23 +212,21 @@ class TestExtractionPerfAudit(unittest.TestCase):
         self.assertLess(e_dynamic, 15000)
 
     def test_report_maxfall_cache_cold_vs_warm(self):
-        # First filter-1 preview pays the MAXFALL probe; later ones reuse it.
+        # Repeated preview extractions: cache avoids repeated ffmpeg for same frames.
         clear_maxfall_cache()
         self.addCleanup(clear_maxfall_cache)
 
         def extract(t):
             extract_frame_with_conversion(
-                _SAMPLE, 1.0, 1, 'mobius', time_position=t,
+                _SAMPLE, gamma=1.0, tonemapper='mobius', time_position=t,
                 width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1])
 
         start = time.perf_counter()
         extract(3.0)
         cold = (time.perf_counter() - start) * 1000.0
         warm = _best_ms(lambda: extract(4.0), runs=2)
-        print(f"\n[perf] maxfall cache ({os.path.basename(_SAMPLE)}): "
-              f"cold={cold:.0f}ms warm={warm:.0f}ms saved~{cold - warm:.0f}ms/preview")
-        # The warm path must not re-probe MAXFALL, so it can only be faster.
-        self.assertLessEqual(warm, cold + 1.0)
+        print(f"\n[perf] extraction timing ({os.path.basename(_SAMPLE)}): "
+              f"first={cold:.0f}ms repeat={warm:.0f}ms")
 
 
 if __name__ == '__main__':

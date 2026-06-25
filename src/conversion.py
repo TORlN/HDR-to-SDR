@@ -6,10 +6,11 @@ import multiprocessing
 import re
 import logging
 from tkinter import messagebox
-from utils import (get_video_properties, FFMPEG_FILTER, FFMPEG_CONVERT_FILTER,
-                   FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE, get_npl,
-                   VULKAN_DEVICE_ARGS, build_libplacebo_filter,
-                   vulkan_libplacebo_available)
+from utils import (get_video_properties, FFMPEG_CONVERT_FILTER,
+                   FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE,
+                   VULKAN_DEVICE_ARGS, VULKAN_CUDA_DEVICE_ARGS,
+                   build_libplacebo_filter,
+                   vulkan_libplacebo_available, vulkan_cuda_interop_available)
 from tkinterdnd2 import DND_FILES
 import sys
 import platform  # Add this import at the top
@@ -19,10 +20,9 @@ class ConversionManager:
         self.process = None
         self.cancelled = False
         self.cpu_count = multiprocessing.cpu_count()
-        self.filter_options = ['Static', 'Dynamic']  # Add filter options to ConversionManager
         self._gpu_encoder = None
 
-    def start_conversion(self, input_path, output_path, gamma, use_gpu, selected_filter_index,
+    def start_conversion(self, input_path, output_path, gamma, use_gpu,
                          progress_var, interactable_elements, gui_instance,
                          open_after_conversion, cancel_button, tonemapper='reinhard',
                          quality=23, on_complete=None):
@@ -56,7 +56,7 @@ class ConversionManager:
         cancel_button.grid()
 
         cmd = self.construct_ffmpeg_command(
-            input_path, output_path, gamma, properties, use_gpu, selected_filter_index,
+            input_path, output_path, gamma, properties, use_gpu,
             tonemapper=tonemapper, quality=quality
         )
         self.process = self.start_ffmpeg_process(cmd)
@@ -83,7 +83,7 @@ class ConversionManager:
             element.config(state="normal")
 
     def construct_ffmpeg_command(self, input_path, output_path, gamma, properties, use_gpu,
-                               selected_filter_index, tonemapper='reinhard', quality=23):
+                               tonemapper='reinhard', quality=23):
         cmd = [
             FFMPEG_EXECUTABLE,
             '-loglevel', 'info',
@@ -105,8 +105,6 @@ class ConversionManager:
 
             if active_encoder == 'h264_nvenc':
                 if current_platform in ["windows", "linux"]:
-                    # Skip the cuda decode hwaccel when libplacebo owns the
-                    # frames: the Vulkan filter graph can't ingest cuda surfaces.
                     if not use_libplacebo:
                         cmd += ['-hwaccel', 'cuda', '-hwaccel_device', '0']
                 else:
@@ -128,8 +126,20 @@ class ConversionManager:
                 messagebox.showwarning("Warning", "GPU acceleration is not supported on this platform.")
                 active_encoder = None
 
-        # The Vulkan device libplacebo runs on must be created before the input.
-        if use_libplacebo:
+        # NVIDIA fast path: use CUDA→Vulkan interop so NVDEC handles decode on
+        # the GPU and feeds frames directly into libplacebo without a CPU detour.
+        # Other vendors (AMF, QSV) don't have CUDA; they fall back to CPU decode.
+        use_cuda_interop = (
+            use_libplacebo
+            and active_encoder == 'h264_nvenc'
+            and vulkan_cuda_interop_available()
+        )
+
+        # Device args go before -i. Interop path sets up linked cuda+vulkan
+        # devices and enables -hwaccel cuda; plain Vulkan path sets up vulkan only.
+        if use_cuda_interop:
+            cmd += VULKAN_CUDA_DEVICE_ARGS
+        elif use_libplacebo:
             cmd += VULKAN_DEVICE_ARGS
 
         # Input file
@@ -138,17 +148,10 @@ class ConversionManager:
         # The filter must be applied before mapping streams
         tonemapper = tonemapper.lower()
         if use_libplacebo:
-            # GPU tonemap; Dynamic uses libplacebo peak detection, which both
-            # replaces and skips the MAXFALL probe the CPU Dynamic path needs.
-            filter_str = build_libplacebo_filter(selected_filter_index, gamma, tonemapper)
-        elif selected_filter_index == 1:
-            filter_str = FFMPEG_CONVERT_FILTER[selected_filter_index].format(
-                gamma=gamma, npl=get_npl(input_path), tonemapper=tonemapper
-            )
+            filter_str = build_libplacebo_filter(
+                gamma, tonemapper, cuda_input=use_cuda_interop)
         else:
-            filter_str = FFMPEG_CONVERT_FILTER[selected_filter_index].format(
-                gamma=gamma, tonemapper=tonemapper
-            )
+            filter_str = FFMPEG_CONVERT_FILTER.format(gamma=gamma, tonemapper=tonemapper)
         cmd += [
             '-filter_complex', f'[0:v:0]{filter_str}[vout]',
             '-map', '[vout]'  # Map the filtered video output
@@ -331,15 +334,14 @@ class ConversionManager:
             output_path=gui_instance.output_path_var.get(),
             gamma=gamma,
             use_gpu=False,  # Force CPU encoding
-            selected_filter_index=self.filter_options.index(gui_instance.filter_var.get()),
             progress_var=progress_var,
             interactable_elements=interactable_elements,
             gui_instance=gui_instance,
             open_after_conversion=open_after_conversion,
             cancel_button=cancel_button,
-            tonemapper=tonemapper,  # preserve the user's tonemapper across the retry
-            quality=getattr(self, '_quality', 23),  # and the quality setting
-            on_complete=getattr(self, '_on_complete', None),  # and the batch hook
+            tonemapper=tonemapper,
+            quality=getattr(self, '_quality', 23),
+            on_complete=getattr(self, '_on_complete', None),
         )
 
     def parse_time(self, time_str):

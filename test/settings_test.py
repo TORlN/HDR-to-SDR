@@ -31,7 +31,7 @@ class TestLoadSettings(unittest.TestCase):
 
     def test_returns_saved_values(self):
         data = {
-            'gamma': 2.2, 'filter': 'Static', 'tonemapper': 'Hable',
+            'gamma': 2.2, 'tonemapper': 'Hable',
             'gpu_accel': True, 'open_after_conversion': True, 'display_preview': False,
             'quality': 19, 'filetype': 'MKV',
         }
@@ -56,7 +56,6 @@ class TestLoadSettings(unittest.TestCase):
         finally:
             os.unlink(tmp)
         self.assertEqual(result['gamma'], 2.0)
-        self.assertEqual(result['filter'], DEFAULTS['filter'])
         self.assertEqual(result['tonemapper'], DEFAULTS['tonemapper'])
         self.assertEqual(result['gpu_accel'], DEFAULTS['gpu_accel'])
         self.assertEqual(result['open_after_conversion'], DEFAULTS['open_after_conversion'])
@@ -86,14 +85,14 @@ class TestSaveSettings(unittest.TestCase):
             test_file = os.path.join(tmpdir, 'subdir', 'settings.json')
             with patch('src.settings.SETTINGS_FILE', test_file):
                 save_settings({
-                    'gamma': 2.2, 'filter': 'Static', 'tonemapper': 'Hable',
+                    'gamma': 2.2, 'tonemapper': 'Hable',
                     'gpu_accel': True, 'open_after_conversion': False, 'display_preview': True,
                 })
             self.assertTrue(os.path.exists(test_file))
             with open(test_file, encoding='utf-8') as f:
                 data = json.load(f)
             self.assertEqual(data['gamma'], 2.2)
-            self.assertEqual(data['filter'], 'Static')
+            self.assertNotIn('filter', data)
 
     def test_oserror_on_mkdir_does_not_raise(self):
         with patch('src.settings.os.makedirs', side_effect=OSError('no permission')):

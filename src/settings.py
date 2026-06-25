@@ -11,7 +11,6 @@ SETTINGS_FILE = os.path.join(_SETTINGS_DIR, 'settings.json')
 
 DEFAULTS = {
     'gamma': 1.0,
-    'filter': 'Dynamic',
     'tonemapper': 'Mobius',
     'gpu_accel': False,
     'open_after_conversion': False,

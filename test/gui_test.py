@@ -142,9 +142,6 @@ class TestHDRConverterGUI(TestCase):
         # Mock adjust_gamma method
         self.gui.adjust_gamma = MagicMock(return_value=mock_image)
 
-        # Set the filter_var to return a valid filter option
-        self.mock_string_var.get.return_value = 'Static'
-
         # Preview extraction and rendering are now split so the slow ffmpeg work
         # can run on a worker thread. Exercise both halves directly here; the
         # threading orchestration itself is covered in characterization_test.
@@ -153,7 +150,7 @@ class TestHDRConverterGUI(TestCase):
         time_position = 100.0 / 6  # current_frame_index 1 of (total_frames 5 + 1)
 
         original, converted = self.gui._extract_preview_images(
-            'test_input.mp4', time_position, filter_index=0, tonemapper='mobius'
+            'test_input.mp4', time_position, tonemapper='mobius'
         )
 
         # Get the actual calls made to mock_extract and mock_convert
@@ -174,7 +171,6 @@ class TestHDRConverterGUI(TestCase):
 
         # Verify other convert_call arguments
         self.assertEqual(convert_call[1]['gamma'], 1.0)
-        self.assertEqual(convert_call[1]['filter_index'], 0)
         self.assertEqual(convert_call[1]['tonemapper'], 'mobius')
 
         # Render the extracted frames (main-thread Tk work). Past the first
@@ -311,7 +307,6 @@ class TestHDRConverterGUI(TestCase):
 
         mock_confirm.return_value = True
         self.gui.drop_target_registered = True
-        self.gui.filter_var.get = MagicMock(return_value='Static')
 
     def _assert_conversion_started(self, mock_unregister, mock_start_conversion):
         """Helper method to verify conversion startup."""
@@ -323,12 +318,11 @@ class TestHDRConverterGUI(TestCase):
         self.assertEqual(args[1], 'test_output.mkv')  # output path
         self.assertEqual(args[2], 2.2)  # gamma
         self.assertIs(args[3], False)  # gpu acceleration
-        self.assertEqual(args[4], 0)  # selected_filter_index
-        self.assertIs(args[5], self.gui.progress_var)  # progress var
-        self.assertEqual(args[6], self.gui.interactable_elements)  # interactable elements
-        self.assertIs(args[7], self.gui)  # gui instance
-        self.assertTrue(args[8])  # open after conversion
-        self.assertIs(args[9], self.gui.cancel_button)  # cancel button
+        self.assertIs(args[4], self.gui.progress_var)  # progress var
+        self.assertEqual(args[5], self.gui.interactable_elements)  # interactable elements
+        self.assertIs(args[6], self.gui)  # gui instance
+        self.assertTrue(args[7])  # open after conversion
+        self.assertIs(args[8], self.gui.cancel_button)  # cancel button
         
         self.gui.cancel_button.grid.assert_called_once()
 
@@ -556,9 +550,9 @@ class TestBuildInfoText(TestCase):
         }
 
     def test_hdr_with_maxcll_shows_value(self):
-        """HDR video with MaxCLL metadata should show 'Max Nits: 1000 nits' in the strip."""
+        """HDR video with MaxCLL metadata should show 'Max Nits: 1000' in the strip."""
         text = HDRConverterGUI._build_info_text(self._props(), maxcll=1000.0)
-        self.assertIn('Max Nits: 1000 nits', text)
+        self.assertIn('Max Nits: 1000', text)
 
     def test_hdr_without_maxcll_shows_na(self):
         """HDR video with no embedded MaxCLL (None) should show 'Max Nits: N/A'."""
@@ -574,7 +568,7 @@ class TestBuildInfoText(TestCase):
     def test_maxcll_integer_display(self):
         """Max Nits value should be shown as an integer (no decimals)."""
         text = HDRConverterGUI._build_info_text(self._props(), maxcll=1000.0)
-        self.assertIn('Max Nits: 1000 nits', text)
+        self.assertIn('Max Nits: 1000', text)
         self.assertNotIn('1000.0', text)
 
 

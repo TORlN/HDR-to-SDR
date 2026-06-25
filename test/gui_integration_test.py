@@ -86,16 +86,10 @@ class TestConstruction(_GuiTestBase):
 
     def test_variable_defaults(self):
         self.assertEqual(self.gui.gamma_var.get(), 1.0)
-        self.assertEqual(self.gui.filter_var.get(), 'Dynamic')
         self.assertEqual(self.gui.tonemap_var.get(), 'Mobius')
         self.assertFalse(self.gui.gpu_accel_var.get())
         self.assertTrue(self.gui.display_image_var.get())
         self.assertEqual(self.gui.progress_var.get(), 0)
-
-    def test_filter_combobox_values_and_readonly(self):
-        self.assertEqual(tuple(self.gui.filter_combobox.cget('values')),
-                         ('Static', 'Dynamic'))
-        self.assertEqual(str(self.gui.filter_combobox.cget('state')), 'readonly')
 
     def test_tonemap_combobox_matches_constant(self):
         self.assertEqual(tuple(self.gui.tonemap_combobox.cget('values')),

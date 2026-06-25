@@ -6,15 +6,12 @@ from src.utils import (
     get_video_properties, run_ffmpeg_command, extract_frame,
     extract_frame_with_conversion, get_executable_path, initialize_ffmpeg,
     build_libplacebo_filter, vulkan_libplacebo_available, reset_libplacebo_probe,
-    get_maxfall, get_maxcll, get_npl, verify_ffmpeg_files,
+    vulkan_cuda_interop_available, reset_cuda_interop_probe, VULKAN_CUDA_DEVICE_ARGS,
+    get_maxfall, get_maxcll, verify_ffmpeg_files,
 )
 import subprocess
 from PIL import Image  # Added import
 import json  # Ensure json is imported
-
-# Constants
-FFMPEG_EXECUTABLE = 'c:\\Users\\Torin\\Desktop\\HDR to SDR\\src\\ffmpeg.exe'
-FFMPEG_FILTER = 'zscale=primaries=bt709:transfer=bt709:matrix=bt709,tonemap=reinhard,eq=gamma={gamma},scale={width}:{height}'
 
 class TestGetVideoProperties(unittest.TestCase):
 
@@ -209,22 +206,15 @@ class TestExtractFrame(unittest.TestCase):
 
 class TestExtractFrameWithConversion(unittest.TestCase):
 
-    @patch('src.utils.get_npl', return_value=100.0)
     @patch('src.utils.run_ffmpeg_command')
-    def test_extract_frame_with_conversion_success(self, mock_run_ffmpeg, mock_get_npl):
+    def test_extract_frame_with_conversion_success(self, mock_run_ffmpeg):
         with patch('src.utils.get_video_properties') as mock_get_props:
             mock_get_props.return_value = {
-                "width": 1920,
-                "height": 1080,
-                "bit_rate": 4000000,
-                "codec_name": "h264",
-                "frame_rate": 30.0,
-                "audio_codec": "aac",
-                "audio_bit_rate": 128000,
-                "duration": 90.0,
-                "subtitle_streams": []
+                "width": 1920, "height": 1080, "bit_rate": 4000000,
+                "codec_name": "h264", "frame_rate": 30.0,
+                "audio_codec": "aac", "audio_bit_rate": 128000,
+                "duration": 90.0, "subtitle_streams": []
             }
-
             mock_run_ffmpeg.return_value = (
                 b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01'
                 b'\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00'
@@ -232,40 +222,34 @@ class TestExtractFrameWithConversion(unittest.TestCase):
                 b'\x18\xdd\x8d\x1b\x00\x00\x00\x00IEND\xaeB`\x82'
             )
 
-            gamma = 2.2
-            frame = extract_frame_with_conversion('input.mp4', gamma, filter_index=1)
+            frame = extract_frame_with_conversion('input.mp4', gamma=2.2)
 
-            expected_vf = 'zscale=t=linear:npl=100.0,tonemap=reinhard,zscale=t=bt709:m=bt709:r=tv:p=bt709,eq=gamma=2.2,scale=iw:ih:force_original_aspect_ratio=decrease'
+            expected_vf = (
+                'zscale=t=linear:npl=100,tonemap=reinhard,'
+                'zscale=t=bt709:m=bt709:r=tv:p=bt709,eq=gamma=2.2,'
+                'scale=iw:ih:force_original_aspect_ratio=decrease'
+            )
             self.assertIsInstance(frame, Image.Image)
-
-            expected_time = 90.0 / 3
             mock_run_ffmpeg.assert_called_once()
             actual_args = mock_run_ffmpeg.call_args[0][0]
             self.assertEqual(actual_args[1:], [
-                '-ss', str(expected_time), '-i', 'input.mp4',
+                '-ss', str(90.0 / 3), '-i', 'input.mp4',
                 '-vf', expected_vf, '-vframes', '1', '-f', 'image2pipe', '-'
             ])
 
-    @patch('src.utils.get_npl', return_value=100.0)
     @patch('src.utils.run_ffmpeg_command')
-    def test_extract_frame_with_conversion_failure(self, mock_run_ffmpeg, mock_get_npl):
+    def test_extract_frame_with_conversion_failure(self, mock_run_ffmpeg):
         with patch('src.utils.get_video_properties') as mock_get_props:
             mock_get_props.return_value = {
-                "width": 1920,
-                "height": 1080,
-                "bit_rate": 4000000,
-                "codec_name": "h264",
-                "frame_rate": 30.0,
-                "audio_codec": "aac",
-                "audio_bit_rate": 128000,
-                "duration": 90.0,
-                "subtitle_streams": []
+                "width": 1920, "height": 1080, "bit_rate": 4000000,
+                "codec_name": "h264", "frame_rate": 30.0,
+                "audio_codec": "aac", "audio_bit_rate": 128000,
+                "duration": 90.0, "subtitle_streams": []
             }
-
             mock_run_ffmpeg.side_effect = RuntimeError("FFmpeg conversion failed")
 
             with self.assertRaises(RuntimeError):
-                extract_frame_with_conversion('input.mp4', gamma=2.2, filter_index=1)
+                extract_frame_with_conversion('input.mp4', gamma=2.2)
 
 _VALID_PNG = (
     b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01'
@@ -292,12 +276,10 @@ class TestPreviewScaling(unittest.TestCase):
         extract_frame('in.mp4', time_position=1.0)
         self.assertNotIn('-vf', mock_run.call_args[0][0])  # unchanged default
 
-    @patch('src.utils.get_npl', return_value=100.0)
     @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
     @patch('src.utils.run_ffmpeg_command', return_value=_VALID_PNG)
-    def test_conversion_uses_given_size_in_scale(self, mock_run, _props, _mf):
-        extract_frame_with_conversion('in.mp4', gamma=1.0, filter_index=1,
-                                      width=960, height=540)
+    def test_conversion_uses_given_size_in_scale(self, mock_run, _props):
+        extract_frame_with_conversion('in.mp4', gamma=1.0, width=960, height=540)
         vf = mock_run.call_args[0][0][mock_run.call_args[0][0].index('-vf') + 1]
         self.assertIn('scale=960:540', vf)
 
@@ -312,12 +294,9 @@ class TestPreviewScaling(unittest.TestCase):
                       "scale filter is missing force_original_aspect_ratio=decrease")
 
     def test_ffmpeg_filter_scale_does_not_upscale(self):
-        """Every FFMPEG_FILTER entry must include force_original_aspect_ratio=decrease
-        so preview frames for sub-4K sources are never upscaled."""
+        """FFMPEG_FILTER must include force_original_aspect_ratio=decrease."""
         from src.utils import FFMPEG_FILTER
-        for i, f in enumerate(FFMPEG_FILTER):
-            self.assertIn('force_original_aspect_ratio=decrease', f,
-                          f"FFMPEG_FILTER[{i}] is missing force_original_aspect_ratio=decrease")
+        self.assertIn('force_original_aspect_ratio=decrease', FFMPEG_FILTER)
 
 
 class TestGetVideoPropertiesColorFields(unittest.TestCase):
@@ -423,26 +402,97 @@ class TestInitializeFfmpeg(unittest.TestCase):
 class TestBuildLibplaceboFilter(unittest.TestCase):
     """The libplacebo (GPU) tonemap filter builder."""
 
-    def test_static_disables_peak_detection(self):
-        f = build_libplacebo_filter(0, 2.2, 'reinhard')
+    def test_always_enables_peak_detection(self):
+        f = build_libplacebo_filter(2.2, 'reinhard')
         self.assertIn('libplacebo=', f)
         self.assertIn('tonemapping=reinhard', f)
-        self.assertIn('peak_detect=0', f)
+        self.assertIn('peak_detect=1', f)
         self.assertIn('eq=gamma=2.2', f)
         # Default keeps source resolution (no resize on a full conversion).
         self.assertIn('w=iw:h=ih', f)
 
-    def test_dynamic_enables_peak_detection(self):
-        f = build_libplacebo_filter(1, 1.0, 'mobius')
-        self.assertIn('peak_detect=1', f)
-        self.assertIn('tonemapping=mobius', f)
-
     def test_tonemapper_is_lowercased(self):
-        self.assertIn('tonemapping=hable', build_libplacebo_filter(0, 1.0, 'Hable'))
+        self.assertIn('tonemapping=hable', build_libplacebo_filter(1.0, 'Hable'))
 
     def test_explicit_size_passed_to_libplacebo(self):
-        f = build_libplacebo_filter(0, 1.0, 'reinhard', width=960, height=540)
+        f = build_libplacebo_filter(1.0, 'reinhard', width=960, height=540)
         self.assertIn('w=960:h=540', f)
+
+    def test_cpu_input_uses_format_p010_hwupload(self):
+        """Default (CPU decode) path: filter starts with format=p010,hwupload."""
+        f = build_libplacebo_filter(1.0, 'reinhard')
+        self.assertTrue(f.startswith('format=p010,hwupload,'), f)
+
+    def test_cuda_input_uses_hwmap_derive_device(self):
+        """CUDA interop path: filter starts with hwmap=derive_device=vulkan, not hwupload."""
+        f = build_libplacebo_filter(1.0, 'reinhard', cuda_input=True)
+        self.assertTrue(f.startswith('hwmap=derive_device=vulkan,'), f)
+        self.assertNotIn('format=p010,hwupload', f)
+
+    def test_cuda_input_gamma_1_stays_fully_on_gpu(self):
+        """gamma=1.0 + CUDA interop: remap Vulkan→CUDA after libplacebo, no CPU round-trip."""
+        f = build_libplacebo_filter(1.0, 'reinhard', cuda_input=True)
+        self.assertIn('hwmap=reverse=1:derive_device=cuda', f)
+        self.assertNotIn('hwdownload', f)
+
+    def test_cuda_input_gamma_not_1_still_downloads_for_eq(self):
+        """gamma≠1.0 + CUDA interop: must download to CPU for the eq filter."""
+        f = build_libplacebo_filter(2.2, 'reinhard', cuda_input=True)
+        self.assertIn('hwdownload,format=nv12,eq=gamma=2.2', f)
+        self.assertNotIn('hwmap=reverse=1:derive_device=cuda', f)
+
+    def test_cpu_input_gamma_1_downloads_without_eq(self):
+        """gamma=1.0 on plain Vulkan path: download is still needed for NVENC, but skip the no-op eq."""
+        f = build_libplacebo_filter(1.0, 'reinhard', cuda_input=False)
+        self.assertIn('hwdownload,format=nv12', f)
+        self.assertNotIn('eq=gamma=1.0', f)
+        self.assertNotIn('eq=gamma=1', f)
+
+
+class TestVulkanCudaInteropProbe(unittest.TestCase):
+    """The cached CUDA→Vulkan interop capability probe."""
+
+    def setUp(self):
+        reset_cuda_interop_probe()
+        self.addCleanup(reset_cuda_interop_probe)
+
+    @patch('src.utils.FFMPEG_EXECUTABLE', None)
+    def test_false_without_ffmpeg(self):
+        self.assertFalse(vulkan_cuda_interop_available())
+
+    @patch('src.utils.FFMPEG_EXECUTABLE', 'ffmpeg')
+    @patch('src.utils.subprocess.run')
+    def test_true_when_probe_succeeds(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0)
+        self.assertTrue(vulkan_cuda_interop_available())
+        mock_run.assert_called_once()
+
+    @patch('src.utils.FFMPEG_EXECUTABLE', 'ffmpeg')
+    @patch('src.utils.subprocess.run')
+    def test_false_when_probe_fails(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=1)
+        self.assertFalse(vulkan_cuda_interop_available())
+
+    @patch('src.utils.FFMPEG_EXECUTABLE', 'ffmpeg')
+    @patch('src.utils.subprocess.run', side_effect=OSError('no cuda'))
+    def test_false_when_probe_raises(self, _run):
+        self.assertFalse(vulkan_cuda_interop_available())
+
+    @patch('src.utils.FFMPEG_EXECUTABLE', 'ffmpeg')
+    @patch('src.utils.subprocess.run')
+    def test_result_is_cached(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0)
+        vulkan_cuda_interop_available()
+        vulkan_cuda_interop_available()
+        mock_run.assert_called_once()
+
+    def test_device_args_contains_cuda_and_vulkan_interop(self):
+        """VULKAN_CUDA_DEVICE_ARGS must set up both CUDA and linked Vulkan device."""
+        joined = ' '.join(VULKAN_CUDA_DEVICE_ARGS)
+        self.assertIn('cuda=cu:0', joined)
+        self.assertIn('vulkan=vk@cu', joined)
+        self.assertIn('-hwaccel', VULKAN_CUDA_DEVICE_ARGS)
+        self.assertIn('-hwaccel_output_format', VULKAN_CUDA_DEVICE_ARGS)
 
 
 class TestVulkanLibplaceboProbe(unittest.TestCase):
@@ -544,9 +594,8 @@ class TestMaxfallConcurrency(unittest.TestCase):
 class TestVerifyFfmpegFilesPortability(unittest.TestCase):
     """verify_ffmpeg_files must use extension-free keys ('ffmpeg', not 'ffmpeg.exe').
 
-    The current implementation hard-codes Windows-specific names as dict keys and
-    as the lookup arguments passed to get_executable_path.  Both assertions below
-    are RED today and will turn GREEN once the keys are stripped of the .exe suffix.
+    Regression guards ensuring the implementation uses platform-agnostic names as
+    dict keys and as the lookup arguments passed to get_executable_path.
     """
 
     @patch('src.utils.get_executable_path', return_value='/usr/local/bin/ffmpeg')
@@ -589,11 +638,11 @@ class TestVerifyFfmpegFilesPortability(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestStartupinfoConsistency(unittest.TestCase):
-    """Regression guards for the STARTUPINFO deduplication refactor (issue #4).
+    """Regression guards ensuring every subprocess call hides the console on Windows.
 
-    These tests are already GREEN and must remain GREEN after the duplicate
-    STARTUPINFO blocks in run_ffmpeg_command / _compute_maxfall / get_video_properties
-    / vulkan_libplacebo_available are consolidated into a shared helper.
+    All helpers that shell out (run_ffmpeg_command, get_video_properties,
+    vulkan_libplacebo_available, _compute_maxfall) must pass a STARTUPINFO with
+    SW_HIDE so no console window flashes during conversion or probing.
     """
 
     @patch('src.utils.subprocess.Popen')
@@ -766,33 +815,38 @@ class TestProbeHdrMetadata(unittest.TestCase):
         self.assertIsNone(result['mastering_peak'])
 
 
-class TestGetNpl(unittest.TestCase):
-    """get_npl returns MAXFALL (max_average) → 250 (zscale default)."""
+class TestDynamicOnlyFilter(unittest.TestCase):
+    """After removing Static, there is one filter chain: Dynamic with npl=100."""
 
-    def setUp(self):
-        import src.utils as _u
-        self._u = _u
-        _u._MAXFALL_CACHE.clear()
-        self.addCleanup(_u._MAXFALL_CACHE.clear)
+    def test_ffmpeg_filter_is_string_not_list(self):
+        from src.utils import FFMPEG_FILTER
+        self.assertIsInstance(FFMPEG_FILTER, str, "FFMPEG_FILTER must be a single string, not a list")
 
-    @patch('src.utils.subprocess.check_output')
-    def test_uses_maxfall_when_present(self, mock_out):
-        mock_out.return_value = json.dumps({'frames': [{'side_data_list': [
-            {'side_data_type': 'Content light level metadata',
-             'max_content': 1000, 'max_average': 400},
-        ]}]}).encode()
-        self.assertEqual(get_npl('/fake/hdr.mkv'), 400.0)
+    def test_ffmpeg_filter_has_npl_100(self):
+        from src.utils import FFMPEG_FILTER
+        self.assertIn('npl=100', FFMPEG_FILTER)
 
-    @patch('src.utils.subprocess.check_output')
-    def test_falls_back_to_250_when_no_maxfall(self, mock_out):
-        """No metadata → 250 matches zscale's own built-in default."""
-        mock_out.return_value = json.dumps({'frames': []}).encode()
-        self.assertEqual(get_npl('/fake/sdr.mkv'), 250)
+    def test_ffmpeg_convert_filter_is_string_not_list(self):
+        from src.utils import FFMPEG_CONVERT_FILTER
+        self.assertIsInstance(FFMPEG_CONVERT_FILTER, str)
 
-    @patch('src.utils.subprocess.check_output')
-    def test_falls_back_to_250_when_no_metadata(self, mock_out):
-        mock_out.return_value = json.dumps({'frames': [{'side_data_list': []}]}).encode()
-        self.assertEqual(get_npl('/fake/sdr.mkv'), 250)
+    def test_ffmpeg_convert_filter_has_npl_100(self):
+        from src.utils import FFMPEG_CONVERT_FILTER
+        self.assertIn('npl=100', FFMPEG_CONVERT_FILTER)
+
+    @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
+    @patch('src.utils.run_ffmpeg_command', return_value=_VALID_PNG)
+    def test_extract_frame_with_conversion_no_filter_index(self, mock_run, _props):
+        """extract_frame_with_conversion accepts no filter_index and uses npl=100."""
+        extract_frame_with_conversion('in.mp4', gamma=1.0, tonemapper='reinhard')
+        vf = mock_run.call_args[0][0][mock_run.call_args[0][0].index('-vf') + 1]
+        self.assertIn('npl=100', vf)
+
+    def test_build_libplacebo_filter_no_filter_index_always_peak_detect_1(self):
+        """build_libplacebo_filter takes no filter_index and always enables peak_detect."""
+        from src.utils import build_libplacebo_filter
+        result = build_libplacebo_filter(gamma=1.0, tonemapper='reinhard')
+        self.assertIn('peak_detect=1', result)
 
 
 if __name__ == '__main__':

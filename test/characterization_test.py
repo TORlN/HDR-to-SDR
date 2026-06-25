@@ -175,25 +175,6 @@ class TestGetVideoPropertiesFailure(unittest.TestCase):
         self.assertIsNone(get_video_properties('missing.mp4'))
 
 
-class TestExtractFrameStaticFilter(unittest.TestCase):
-
-    @patch('src.utils.get_maxfall')
-    @patch('src.utils.run_ffmpeg_command', return_value=VALID_PNG)
-    @patch('src.utils.get_video_properties', return_value=PROPS)
-    def test_static_filter_skips_maxfall_and_omits_npl(self, mock_props, mock_run, mock_maxfall):
-        img = extract_frame_with_conversion(
-            'in.mp4', gamma=2.2, filter_index=0, tonemapper='hable'
-        )
-        self.assertIsInstance(img, Image.Image)
-        # Static filter must not probe MAXFALL.
-        mock_maxfall.assert_not_called()
-        args = mock_run.call_args[0][0]
-        vf = args[args.index('-vf') + 1]
-        self.assertIn('tonemap=hable', vf)
-        self.assertIn('scale=iw:ih', vf)
-        self.assertNotIn('npl', vf)
-
-
 class TestMonitorProgress(unittest.TestCase):
 
     def _gui(self):
@@ -240,7 +221,6 @@ class TestMonitorProgress(unittest.TestCase):
         gui = self._gui()
         gui.input_path_var.get.return_value = 'in.mp4'
         gui.output_path_var.get.return_value = 'out.mkv'
-        gui.filter_var.get.return_value = 'Static'
 
         manager.monitor_progress(
             MagicMock(), duration=90.0, gui_instance=gui,
@@ -289,18 +269,14 @@ class TestPreviewWorkerThread(unittest.TestCase):
         gui.total_frames = 5
         gui.original_image = None
         gui.last_time_position = None
-        gui.filter_options = ['Static', 'Dynamic']
-        gui.filter_var = MagicMock()
-        gui.filter_var.get.return_value = 'Static'
         gui.tonemap_var = MagicMock()
         gui.tonemap_var.get.return_value = 'Mobius'
 
         seen = {}
 
-        def fake_extract(video_path, time_position, filter_index, tonemapper):
+        def fake_extract(video_path, time_position, tonemapper):
             seen['thread'] = threading.current_thread()
             seen['time_position'] = time_position
-            seen['filter_index'] = filter_index
             seen['tonemapper'] = tonemapper
             return ('original', 'converted')
 
@@ -317,7 +293,6 @@ class TestPreviewWorkerThread(unittest.TestCase):
         self.assertIsNot(seen['thread'], threading.main_thread())
         # Tk-owned values were read and forwarded correctly.
         self.assertAlmostEqual(seen['time_position'], 100.0 / 6)
-        self.assertEqual(seen['filter_index'], 0)
         self.assertEqual(seen['tonemapper'], 'mobius')
 
         # Rendering is marshalled back onto the main thread via root.after(0, ...).
@@ -335,9 +310,6 @@ class TestPreviewWorkerThread(unittest.TestCase):
         gui.total_frames = 5
         gui.original_image = None
         gui.last_time_position = None
-        gui.filter_options = ['Static', 'Dynamic']
-        gui.filter_var = MagicMock()
-        gui.filter_var.get.return_value = 'Static'
         gui.tonemap_var = MagicMock()
         gui.tonemap_var.get.return_value = 'Mobius'
         gui._render_preview_images = MagicMock()
@@ -388,9 +360,6 @@ class TestPreviewWorkerThread(unittest.TestCase):
         gui.total_frames = 5
         gui.original_image = None
         gui.last_time_position = None
-        gui.filter_options = ['Static', 'Dynamic']
-        gui.filter_var = MagicMock()
-        gui.filter_var.get.return_value = 'Static'
         gui.tonemap_var = MagicMock()
         gui.tonemap_var.get.return_value = 'Mobius'
         gui.handle_preview_error = MagicMock()
@@ -410,8 +379,6 @@ class TestPreviewWorkerThread(unittest.TestCase):
         gui.root = MagicMock()
         gui.current_frame_index = 1
         gui.total_frames = 5
-        gui.filter_options = ['Static', 'Dynamic']
-        gui.filter_var = MagicMock(); gui.filter_var.get.return_value = 'Static'
         gui.tonemap_var = MagicMock(); gui.tonemap_var.get.return_value = 'Mobius'
         gui._extract_preview_images = MagicMock(return_value=('o', 'c'))
         gui._render_preview_images = MagicMock()
@@ -422,8 +389,8 @@ class TestPreviewWorkerThread(unittest.TestCase):
             gui._preview_thread.join(timeout=5)
 
         gui._prewarm_other_frames.assert_called_once()
-        vp, duration, fi, tm, gen = gui._prewarm_other_frames.call_args[0]
-        self.assertEqual((vp, duration, fi, tm), ('in.mp4', 60.0, 0, 'mobius'))
+        vp, duration, tm, gen = gui._prewarm_other_frames.call_args[0]
+        self.assertEqual((vp, duration, tm), ('in.mp4', 60.0, 'mobius'))
 
 
 class TestPreviewPrewarm(unittest.TestCase):
@@ -439,17 +406,17 @@ class TestPreviewPrewarm(unittest.TestCase):
     def test_extracts_every_other_frame_position(self):
         gui = self._gui(current=1)
         calls = []
-        gui._extract_preview_images = lambda vp, t, fi, tm: calls.append((round(t, 3), fi, tm))
-        gui._prewarm_other_frames('in.mkv', 60.0, 1, 'mobius', generation=3)
+        gui._extract_preview_images = lambda vp, t, tm: calls.append((round(t, 3), tm))
+        gui._prewarm_other_frames('in.mkv', 60.0, 'mobius', generation=3)
         # positions index/(total+1)*duration for indexes 2..5 (index 1 = current, skipped)
         self.assertEqual(sorted(c[0] for c in calls), [20.0, 30.0, 40.0, 50.0])
-        self.assertTrue(all(c[1] == 1 and c[2] == 'mobius' for c in calls))
+        self.assertTrue(all(c[1] == 'mobius' for c in calls))
 
     def test_skips_the_currently_displayed_frame(self):
         gui = self._gui(current=3)
         times = []
-        gui._extract_preview_images = lambda vp, t, fi, tm: times.append(round(t, 3))
-        gui._prewarm_other_frames('in.mkv', 60.0, 0, 'reinhard', generation=3)
+        gui._extract_preview_images = lambda vp, t, tm: times.append(round(t, 3))
+        gui._prewarm_other_frames('in.mkv', 60.0, 'reinhard', generation=3)
         self.assertEqual(len(times), 4)
         self.assertNotIn(30.0, times)  # frame 3 -> 3/6*60 = 30 is the visible one
 
@@ -458,7 +425,7 @@ class TestPreviewPrewarm(unittest.TestCase):
         calls = []
         gui._extract_preview_images = lambda *a: calls.append(a)
         # passed generation (1) is stale vs current (3): a newer request supersedes
-        gui._prewarm_other_frames('in.mkv', 60.0, 1, 'mobius', generation=1)
+        gui._prewarm_other_frames('in.mkv', 60.0, 'mobius', generation=1)
         self.assertEqual(calls, [])
 
     def test_extraction_errors_are_swallowed(self):
@@ -468,7 +435,7 @@ class TestPreviewPrewarm(unittest.TestCase):
         gui._extract_preview_images = boom
         # Best-effort background work: a failure must not propagate.
         with patch('src.gui.logging'):  # silence the expected logged traceback
-            gui._prewarm_other_frames('in.mkv', 60.0, 1, 'mobius', generation=3)
+            gui._prewarm_other_frames('in.mkv', 60.0, 'mobius', generation=3)
 
 
 class TestPreviewWorkerThreadRender(unittest.TestCase):
@@ -978,8 +945,6 @@ class TestBatchProcessing(unittest.TestCase):
         gui._refresh_batch_list = MagicMock()
         gui.gamma_var = MagicMock(); gui.gamma_var.get.return_value = 1.0
         gui.gpu_accel_var = MagicMock(); gui.gpu_accel_var.get.return_value = False
-        gui.filter_options = ['Static', 'Dynamic']
-        gui.filter_var = MagicMock(); gui.filter_var.get.return_value = 'Static'
         gui.tonemap_var = MagicMock(); gui.tonemap_var.get.return_value = 'Mobius'
         gui.quality_var = MagicMock(); gui.quality_var.get.return_value = 20
         gui.open_after_conversion_var = MagicMock()
@@ -1123,53 +1088,53 @@ class TestBatchProcessing(unittest.TestCase):
 
 
 class TestPreviewExtractionCache(unittest.TestCase):
-    """Extracted frames are cached by (path, time, filter, tonemapper) so
-    revisiting a frame/filter/tonemapper combo never re-runs ffmpeg."""
+    """Extracted frames are cached by (path, time, tonemapper) so
+    revisiting a frame/tonemapper combo never re-runs ffmpeg."""
 
     @patch('src.gui.extract_frame_with_conversion', return_value='conv')
     @patch('src.gui.extract_frame', return_value='orig')
     def test_repeated_combo_is_a_cache_hit(self, mock_extract, mock_convert):
         gui = _bare_gui()
-        first = gui._extract_preview_images('in.mp4', 5.0, 0, 'reinhard')
-        second = gui._extract_preview_images('in.mp4', 5.0, 0, 'reinhard')
+        first = gui._extract_preview_images('in.mp4', 5.0, 'reinhard')
+        second = gui._extract_preview_images('in.mp4', 5.0, 'reinhard')
         self.assertEqual(mock_extract.call_count, 1)   # original cached
         self.assertEqual(mock_convert.call_count, 1)   # converted cached
         self.assertEqual(first, second)
 
     @patch('src.gui.extract_frame_with_conversion', side_effect=['c0', 'c1'])
     @patch('src.gui.extract_frame', return_value='orig')
-    def test_same_frame_new_filter_reuses_original(self, mock_extract, mock_convert):
+    def test_same_frame_new_tonemapper_reuses_original(self, mock_extract, mock_convert):
         gui = _bare_gui()
-        gui._extract_preview_images('in.mp4', 5.0, 0, 'reinhard')
-        gui._extract_preview_images('in.mp4', 5.0, 1, 'reinhard')
-        self.assertEqual(mock_extract.call_count, 1)   # original shared across filters
-        self.assertEqual(mock_convert.call_count, 2)   # converted differs per filter
+        gui._extract_preview_images('in.mp4', 5.0, 'reinhard')
+        gui._extract_preview_images('in.mp4', 5.0, 'mobius')
+        self.assertEqual(mock_extract.call_count, 1)   # original shared across tonemappers
+        self.assertEqual(mock_convert.call_count, 2)   # converted differs per tonemapper
 
     @patch('src.gui.extract_frame_with_conversion', side_effect=['a', 'b'])
     @patch('src.gui.extract_frame', return_value='orig')
     def test_different_tonemapper_is_a_cache_miss(self, mock_extract, mock_convert):
         gui = _bare_gui()
-        gui._extract_preview_images('in.mp4', 5.0, 1, 'mobius')
-        gui._extract_preview_images('in.mp4', 5.0, 1, 'hable')
+        gui._extract_preview_images('in.mp4', 5.0, 'mobius')
+        gui._extract_preview_images('in.mp4', 5.0, 'hable')
         self.assertEqual(mock_convert.call_count, 2)
 
     @patch('src.gui.extract_frame_with_conversion', return_value='c')
     @patch('src.gui.extract_frame', return_value='o')
     def test_new_frame_position_reextracts_original(self, mock_extract, mock_convert):
         gui = _bare_gui()
-        gui._extract_preview_images('in.mp4', 5.0, 0, 'reinhard')
-        gui._extract_preview_images('in.mp4', 9.0, 0, 'reinhard')
+        gui._extract_preview_images('in.mp4', 5.0, 'reinhard')
+        gui._extract_preview_images('in.mp4', 9.0, 'reinhard')
         self.assertEqual(mock_extract.call_count, 2)
 
     def test_reset_clears_the_cache(self):
         gui = _bare_gui()
         with patch('src.gui.extract_frame', return_value='o'), \
              patch('src.gui.extract_frame_with_conversion', return_value='c'):
-            gui._extract_preview_images('in.mp4', 5.0, 0, 'reinhard')
+            gui._extract_preview_images('in.mp4', 5.0, 'reinhard')
         gui._reset_preview_cache()
         with patch('src.gui.extract_frame', return_value='o2') as me, \
              patch('src.gui.extract_frame_with_conversion', return_value='c2') as mc:
-            gui._extract_preview_images('in.mp4', 5.0, 0, 'reinhard')
+            gui._extract_preview_images('in.mp4', 5.0, 'reinhard')
             me.assert_called_once()   # re-extracted after reset
             mc.assert_called_once()
 
@@ -1178,7 +1143,7 @@ class TestPreviewExtractionCache(unittest.TestCase):
         with patch('src.gui.extract_frame', return_value='o'), \
              patch('src.gui.extract_frame_with_conversion', return_value='c'):
             for i in range(HDRConverterGUI._PREVIEW_CACHE_MAX + 20):
-                gui._extract_preview_images('in.mp4', float(i), 0, 'reinhard')
+                gui._extract_preview_images('in.mp4', float(i), 'reinhard')
         self.assertLessEqual(len(gui._preview_cache_converted),
                              HDRConverterGUI._PREVIEW_CACHE_MAX)
 
@@ -1232,7 +1197,7 @@ class TestPreviewPerformance(unittest.TestCase):
     @patch('src.gui.extract_frame', return_value='original')
     def test_extraction_targets_preview_resolution(self, mock_extract, mock_convert):
         gui = _bare_gui()
-        gui._extract_preview_images('in.mp4', 5.0, 0, 'reinhard')
+        gui._extract_preview_images('in.mp4', 5.0, 'reinhard')
         self.assertEqual(mock_extract.call_args.kwargs.get('width'), PREVIEW_SIZE[0])
         self.assertEqual(mock_extract.call_args.kwargs.get('height'), PREVIEW_SIZE[1])
         self.assertEqual(mock_convert.call_args.kwargs.get('width'), PREVIEW_SIZE[0])
@@ -1245,9 +1210,6 @@ class TestPreviewPerformance(unittest.TestCase):
         gui.total_frames = 5
         gui.original_image = None
         gui.last_time_position = None
-        gui.filter_options = ['Static', 'Dynamic']
-        gui.filter_var = MagicMock()
-        gui.filter_var.get.return_value = 'Static'
         gui.tonemap_var = MagicMock()
         gui.tonemap_var.get.return_value = 'Mobius'
         gui._extract_preview_images = MagicMock(return_value=('o', 'c'))
@@ -1293,8 +1255,6 @@ class TestConvertVideoBranches(unittest.TestCase):
         gui.output_path_var = MagicMock(); gui.output_path_var.get.return_value = 'out.mkv'
         gui.gamma_var = MagicMock(); gui.gamma_var.get.return_value = 1.0
         gui.gpu_accel_var = MagicMock(); gui.gpu_accel_var.get.return_value = False
-        gui.filter_options = ['Static', 'Dynamic']
-        gui.filter_var = MagicMock(); gui.filter_var.get.return_value = 'Static'
         gui.tonemap_var = MagicMock(); gui.tonemap_var.get.return_value = 'Mobius'
         gui.quality_var = MagicMock(); gui.quality_var.get.return_value = 21
         gui.format_var = MagicMock(); gui.format_var.get.return_value = 'MKV'
@@ -1329,13 +1289,6 @@ class TestConvertVideoBranches(unittest.TestCase):
         gui = self._gui()
         gui.convert_video()
         mock_cm.start_conversion.assert_not_called()
-
-    @patch('src.gui.messagebox')
-    def test_unexpected_error_is_caught_and_reported(self, mock_mb):
-        gui = self._gui()
-        gui.filter_var.get.return_value = 'Nonexistent'  # .index() raises ValueError
-        gui.convert_video()  # must not propagate
-        mock_mb.showerror.assert_called_once()
 
     @patch('src.gui.conversion_manager')
     @patch('src.gui.messagebox')
@@ -1729,7 +1682,7 @@ class TestGuiLifecycle(unittest.TestCase):
     @patch('src.gui.save_settings')
     def test_save_current_settings_includes_quality(self, mock_save):
         gui = _bare_gui()
-        for name, val in [('gamma_var', 1.0), ('filter_var', 'Static'),
+        for name, val in [('gamma_var', 1.0),
                           ('tonemap_var', 'Mobius'), ('gpu_accel_var', False),
                           ('open_after_conversion_var', False), ('display_image_var', True),
                           ('quality_var', 21), ('format_var', 'MKV')]:
@@ -2289,15 +2242,14 @@ class TestExtractAndConvertFrameErrorPaths(unittest.TestCase):
     def test_raises_value_error_when_properties_missing(self, _):
         from src.utils import extract_frame_with_conversion
         with self.assertRaises(ValueError):
-            extract_frame_with_conversion('none.mp4', gamma=1.0, filter_index=0)
+            extract_frame_with_conversion('none.mp4', gamma=1.0)
 
-    @patch('src.utils.get_npl', return_value=100.0)
     @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
     @patch('src.utils.run_ffmpeg_command', return_value=b'not-an-image')
-    def test_raises_runtime_error_on_bad_image_bytes(self, _run, _props, _mf):
+    def test_raises_runtime_error_on_bad_image_bytes(self, _run, _props):
         from src.utils import extract_frame_with_conversion
         with self.assertRaises(RuntimeError):
-            extract_frame_with_conversion('clip.mp4', gamma=1.0, filter_index=1)
+            extract_frame_with_conversion('clip.mp4', gamma=1.0)
 
 
 class TestConversionManagerInternals(unittest.TestCase):

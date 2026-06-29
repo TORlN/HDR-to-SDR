@@ -296,7 +296,7 @@ class HDRConverterGUI:
         self.last_time_position = None
         self._preview_generation = 0  # Debounce token for preview worker threads
         self._preview_pool = ThreadPoolExecutor(
-            max_workers=_PREVIEW_POOL_WORKERS, thread_name_prefix='preview')
+            max_workers=_PREVIEW_POOL_WORKERS, thread_name_prefix='frame-fetch')
         self._preview_thread = None
         self._converted_preview_base = None  # display-sized SDR frame; gamma applied on top
         self._duration_path = None           # input path the cached duration belongs to
@@ -1611,7 +1611,7 @@ class HDRConverterGUI:
         # Guard for bare test instances that bypass __init__ (no pool created).
         if not hasattr(self, '_preview_pool'):
             self._preview_pool = ThreadPoolExecutor(
-                max_workers=_PREVIEW_POOL_WORKERS, thread_name_prefix='preview')
+                max_workers=_PREVIEW_POOL_WORKERS, thread_name_prefix='frame-fetch')
         self._preview_thread = _PreviewFuture(self._preview_pool.submit(worker))
 
     def _get_duration(self, video_path):

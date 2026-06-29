@@ -17,6 +17,7 @@ from tkinterdnd2 import DND_FILES
 import logging
 import threading
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 # ── License dialog ─────────────────────────────────────────────────────────────
 _BG       = '#1e1e1e'
@@ -217,7 +218,31 @@ class _UpdateDialog(tk.Toplevel):
 
 
 DEFAULT_MIN_SIZE = (550, 150)
-PREVIEW_SIZE = (3840, 2160)     # ffmpeg render cap; never upscales past source resolution
+PREVIEW_SIZE = (3840, 2160)
+
+# Number of preview pool workers: 1 on low-core / virtualised hosts; up to 4 on
+# a high-end consumer rig (16 cores → 4, 8 cores → 2). The formula keeps the
+# pool lightweight while still letting originals and converted batches run in
+# parallel when hardware allows it.
+_PREVIEW_POOL_WORKERS = max(1, (os.cpu_count() or 1) // 4)
+
+
+class _PreviewFuture:
+    """Thin wrapper around a concurrent.futures.Future that exposes .join().
+
+    Lets callers (and existing tests) treat a pool Future like a Thread without
+    requiring them to know about the executor.
+    """
+    __slots__ = ('_future',)
+
+    def __init__(self, future):
+        self._future = future
+
+    def join(self, timeout=None):
+        try:
+            self._future.result(timeout=timeout)
+        except Exception:
+            pass     # ffmpeg render cap; never upscales past source resolution
 INITIAL_PANE_SIZE = (640, 360)  # comfortable per-pane size on the first preview reveal
 _MIN_PANE_W = 240               # don't shrink a preview pane narrower than this
 _RESIZE_DEBOUNCE_MS = 60        # coalesce a burst of resize events into one rescale
@@ -270,6 +295,8 @@ class HDRConverterGUI:
         self.total_frames = 5
         self.last_time_position = None
         self._preview_generation = 0  # Debounce token for preview worker threads
+        self._preview_pool = ThreadPoolExecutor(
+            max_workers=_PREVIEW_POOL_WORKERS, thread_name_prefix='preview')
         self._preview_thread = None
         self._converted_preview_base = None  # display-sized SDR frame; gamma applied on top
         self._duration_path = None           # input path the cached duration belongs to
@@ -428,9 +455,13 @@ class HDRConverterGUI:
                     self, self.interactable_elements, self.cancel_button
                 )
                 self._save_current_settings()
+                if hasattr(self, '_preview_pool'):
+                    self._preview_pool.shutdown(wait=False, cancel_futures=True)
                 self.root.destroy()
         else:
             self._save_current_settings()
+            if hasattr(self, '_preview_pool'):
+                self._preview_pool.shutdown(wait=False, cancel_futures=True)
             self.root.destroy()
 
     def _save_current_settings(self):
@@ -1577,8 +1608,11 @@ class HDRConverterGUI:
             except Exception as e:  # surface failures on the main thread
                 self._schedule_on_main(lambda err=e: self.handle_preview_error(err))
 
-        self._preview_thread = threading.Thread(target=worker, daemon=True)
-        self._preview_thread.start()
+        # Guard for bare test instances that bypass __init__ (no pool created).
+        if not hasattr(self, '_preview_pool'):
+            self._preview_pool = ThreadPoolExecutor(
+                max_workers=_PREVIEW_POOL_WORKERS, thread_name_prefix='preview')
+        self._preview_thread = _PreviewFuture(self._preview_pool.submit(worker))
 
     def _get_duration(self, video_path):
         """Return the video duration, probing ffprobe only once per file.
@@ -1654,14 +1688,13 @@ class HDRConverterGUI:
                 cache.pop(next(iter(cache)))
 
     def _prewarm_other_frames(self, video_path, duration, tonemapper, generation):
-        """Pre-extract non-visible seek frames using 2 batch ffmpeg calls.
+        """Dispatch pre-warm batch tasks for the non-visible seek frames.
 
-        One call extracts all uncached original frames; a second call extracts
-        the converted (tonemapped) versions. Both run on the preview worker
-        thread after the visible frame has been rendered. If a newer preview
-        request supersedes this one the method bails between the two calls so
-        we never waste a long tonemap run on stale state. Failures are swallowed
-        so the background work never crashes the worker.
+        Collects timestamps that are missing from either preview cache, then
+        submits one task for original frames and one for converted frames so
+        they can run concurrently on a multi-worker pool. On bare test instances
+        (no pool) the tasks execute inline to keep synchronous test assertions
+        working unchanged.
         """
         if generation != self._preview_generation:
             return
@@ -1684,7 +1717,22 @@ class HDRConverterGUI:
         if not positions:
             return
 
-        # Batch 1: all original frames in one ffmpeg process.
+        # Submit originals and converted as independent pool tasks so they run
+        # concurrently when max_workers >= 2. Fall back to inline execution on
+        # bare instances (test environment, no pool).
+        if hasattr(self, '_preview_pool'):
+            self._preview_pool.submit(
+                self._prewarm_batch_originals, video_path, positions, generation)
+            self._preview_pool.submit(
+                self._prewarm_batch_converted, video_path, positions, tonemapper, generation)
+        else:
+            self._prewarm_batch_originals(video_path, positions, generation)
+            self._prewarm_batch_converted(video_path, positions, tonemapper, generation)
+
+    def _prewarm_batch_originals(self, video_path, positions, generation):
+        """Extract all original (HDR) frames for the given positions in one ffmpeg pass."""
+        if generation != self._preview_generation:
+            return
         try:
             originals = extract_frames_batch(
                 video_path, positions, PREVIEW_SIZE[0], PREVIEW_SIZE[1])
@@ -1694,10 +1742,10 @@ class HDRConverterGUI:
         except Exception:
             logging.exception('preview batch original pre-warm failed')
 
+    def _prewarm_batch_converted(self, video_path, positions, tonemapper, generation):
+        """Tonemap-convert all frames for the given positions in one ffmpeg pass."""
         if generation != self._preview_generation:
             return
-
-        # Batch 2: all converted frames in one ffmpeg process.
         try:
             converted = extract_frames_with_conversion_batch(
                 video_path, positions, 1.0, tonemapper,

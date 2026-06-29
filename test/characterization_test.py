@@ -464,6 +464,247 @@ class TestPreviewPrewarm(unittest.TestCase):
             gui._prewarm_other_frames('in.mkv', 60.0, 'mobius', generation=3)
 
 
+class TestPreviewPool(unittest.TestCase):
+    """ThreadPoolExecutor coordinates preview batch tasks with a hardware-aware cap."""
+
+    # ── pool worker cap ─────────────────────────────────────────────────────
+
+    def test_pool_worker_cap_is_at_least_one(self):
+        from src.gui import _PREVIEW_POOL_WORKERS
+        self.assertGreaterEqual(_PREVIEW_POOL_WORKERS, 1)
+
+    def test_pool_worker_cap_formula(self):
+        """max(1, cpu_count // 4) — matches the documented formula."""
+        from src.gui import _PREVIEW_POOL_WORKERS
+        expected = max(1, (os.cpu_count() or 1) // 4)
+        self.assertEqual(_PREVIEW_POOL_WORKERS, expected)
+
+    # ── _PreviewFuture ──────────────────────────────────────────────────────
+
+    def test_preview_future_join_blocks_until_done(self):
+        from src.gui import _PreviewFuture
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            sentinel = []
+            future = pool.submit(lambda: sentinel.append(1))
+            _PreviewFuture(future).join(timeout=5)
+        self.assertEqual(sentinel, [1])
+
+    def test_preview_future_join_swallows_worker_exception(self):
+        from src.gui import _PreviewFuture
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(lambda: 1 / 0)
+            _PreviewFuture(future).join(timeout=5)  # must not raise
+
+    # ── display_frames uses the pool ────────────────────────────────────────
+
+    def test_display_frames_returns_preview_future(self):
+        from src.gui import _PreviewFuture
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui.current_frame_index = 1
+        gui.total_frames = 5
+        gui.original_image = None
+        gui.last_time_position = None
+        gui.tonemap_var = MagicMock()
+        gui.tonemap_var.get.return_value = 'Reinhard'
+        gui._extract_preview_images = MagicMock(return_value=('o', 'c'))
+        gui._render_preview_images = MagicMock()
+        gui._prewarm_other_frames = MagicMock()
+
+        with patch('src.gui.get_video_properties', return_value={'duration': 30.0}):
+            gui.display_frames('v.mp4')
+
+        self.assertIsInstance(gui._preview_thread, _PreviewFuture)
+
+    def test_display_frames_worker_runs_off_main_thread(self):
+        """The pool submits the worker to a background thread, not the caller."""
+        seen = {}
+
+        def fake_extract(*a, **k):
+            seen['thread'] = threading.current_thread()
+            return ('o', 'c')
+
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui.current_frame_index = 1
+        gui.total_frames = 5
+        gui.original_image = None
+        gui.last_time_position = None
+        gui.tonemap_var = MagicMock()
+        gui.tonemap_var.get.return_value = 'Reinhard'
+        gui._extract_preview_images = fake_extract
+        gui._render_preview_images = MagicMock()
+        gui._prewarm_other_frames = MagicMock()
+
+        with patch('src.gui.get_video_properties', return_value={'duration': 30.0}):
+            gui.display_frames('v.mp4')
+            gui._preview_thread.join(timeout=5)
+
+        self.assertIsNot(seen['thread'], threading.main_thread())
+
+    # ── _prewarm_other_frames dispatches to pool ────────────────────────────
+
+    def test_prewarm_submits_two_tasks_to_pool(self):
+        """`_prewarm_other_frames` submits one original task + one converted task."""
+        gui = _bare_gui()
+        gui.current_frame_index = 1
+        gui.total_frames = 5
+        gui._preview_generation = 1
+        gui._preview_cache_original = {}
+        gui._preview_cache_converted = {}
+        gui._preview_pool = MagicMock()
+
+        gui._prewarm_other_frames('v.mkv', 60.0, 'reinhard', generation=1)
+
+        self.assertEqual(gui._preview_pool.submit.call_count, 2)
+        methods_submitted = [c[0][0] for c in gui._preview_pool.submit.call_args_list]
+        self.assertIn(gui._prewarm_batch_originals, methods_submitted)
+        self.assertIn(gui._prewarm_batch_converted, methods_submitted)
+
+    def test_prewarm_does_not_submit_when_stale(self):
+        gui = _bare_gui()
+        gui.current_frame_index = 1
+        gui.total_frames = 5
+        gui._preview_generation = 5
+        gui._preview_cache_original = {}
+        gui._preview_cache_converted = {}
+        gui._preview_pool = MagicMock()
+
+        gui._prewarm_other_frames('v.mkv', 60.0, 'reinhard', generation=1)
+
+        gui._preview_pool.submit.assert_not_called()
+
+    def test_prewarm_does_not_submit_when_all_cached(self):
+        """No pool submissions when every frame is already in both caches."""
+        gui = _bare_gui()
+        gui.current_frame_index = 1
+        gui.total_frames = 5
+        gui._preview_generation = 1
+        duration = 60.0
+        # Pre-populate both caches for all non-current frames.
+        orig = {}
+        conv = {}
+        for idx in range(2, 6):
+            t = round((idx / 6) * duration, 3)
+            orig[('v.mkv', t)] = MagicMock()
+            conv[('v.mkv', t, 'reinhard')] = MagicMock()
+        gui._preview_cache_original = orig
+        gui._preview_cache_converted = conv
+        gui._preview_pool = MagicMock()
+
+        gui._prewarm_other_frames('v.mkv', duration, 'reinhard', generation=1)
+
+        gui._preview_pool.submit.assert_not_called()
+
+    # ── _prewarm_batch_originals ────────────────────────────────────────────
+
+    @patch('src.gui.extract_frames_batch')
+    def test_batch_originals_populates_cache(self, mock_batch):
+        img = MagicMock()
+        mock_batch.return_value = [img]
+        gui = _bare_gui()
+        gui._preview_generation = 1
+        gui._preview_cache_original = {}
+        gui._cache_lock = threading.Lock()
+
+        gui._prewarm_batch_originals('v.mkv', [10.0], generation=1)
+
+        self.assertIn(('v.mkv', 10.0), gui._preview_cache_original)
+        self.assertIs(gui._preview_cache_original[('v.mkv', 10.0)], img)
+
+    @patch('src.gui.extract_frames_batch')
+    def test_batch_originals_bails_when_stale(self, mock_batch):
+        gui = _bare_gui()
+        gui._preview_generation = 5
+
+        gui._prewarm_batch_originals('v.mkv', [10.0], generation=1)
+
+        mock_batch.assert_not_called()
+
+    @patch('src.gui.extract_frames_batch')
+    def test_batch_originals_swallows_error(self, mock_batch):
+        mock_batch.side_effect = RuntimeError('ffmpeg exploded')
+        gui = _bare_gui()
+        gui._preview_generation = 1
+        gui._preview_cache_original = {}
+        gui._cache_lock = threading.Lock()
+        with patch('src.gui.logging'):
+            gui._prewarm_batch_originals('v.mkv', [10.0], generation=1)  # must not raise
+
+    # ── _prewarm_batch_converted ────────────────────────────────────────────
+
+    @patch('src.gui.extract_frames_with_conversion_batch')
+    def test_batch_converted_populates_cache(self, mock_batch):
+        img = MagicMock()
+        mock_batch.return_value = [img]
+        gui = _bare_gui()
+        gui._preview_generation = 1
+        gui._preview_cache_converted = {}
+        gui._cache_lock = threading.Lock()
+
+        gui._prewarm_batch_converted('v.mkv', [10.0], 'mobius', generation=1)
+
+        self.assertIn(('v.mkv', 10.0, 'mobius'), gui._preview_cache_converted)
+        self.assertIs(gui._preview_cache_converted[('v.mkv', 10.0, 'mobius')], img)
+
+    @patch('src.gui.extract_frames_with_conversion_batch')
+    def test_batch_converted_bails_when_stale(self, mock_batch):
+        gui = _bare_gui()
+        gui._preview_generation = 5
+
+        gui._prewarm_batch_converted('v.mkv', [10.0], 'mobius', generation=1)
+
+        mock_batch.assert_not_called()
+
+    @patch('src.gui.extract_frames_with_conversion_batch')
+    def test_batch_converted_swallows_error(self, mock_batch):
+        mock_batch.side_effect = RuntimeError('tonemap exploded')
+        gui = _bare_gui()
+        gui._preview_generation = 1
+        gui._preview_cache_converted = {}
+        gui._cache_lock = threading.Lock()
+        with patch('src.gui.logging'):
+            gui._prewarm_batch_converted('v.mkv', [10.0], 'mobius', generation=1)
+
+    # ── on_close shuts down the pool ────────────────────────────────────────
+
+    def test_on_close_shuts_down_pool_when_no_conversion(self):
+        from unittest.mock import patch as _patch
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui._preview_pool = MagicMock()
+        gui.interactable_elements = []
+        gui.cancel_button = MagicMock()
+
+        with _patch('src.gui.conversion_manager') as mock_cm, \
+             _patch.object(gui, '_save_current_settings'):
+            mock_cm.process = None
+            gui.on_close()
+
+        gui._preview_pool.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+
+    def test_on_close_shuts_down_pool_when_conversion_cancelled(self):
+        from unittest.mock import patch as _patch
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui._preview_pool = MagicMock()
+        gui.interactable_elements = []
+        gui.cancel_button = MagicMock()
+
+        with _patch('src.gui.conversion_manager') as mock_cm, \
+             _patch('src.gui.messagebox') as mock_mb, \
+             _patch.object(gui, '_save_current_settings'):
+            proc = MagicMock()
+            proc.poll.return_value = None
+            mock_cm.process = proc
+            mock_mb.askokcancel.return_value = True
+            gui.on_close()
+
+        gui._preview_pool.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+
+
 class TestPreviewWorkerThreadRender(unittest.TestCase):
     @patch('src.gui.ImageTk.PhotoImage')
     def test_render_updates_labels_and_caches(self, mock_photo):

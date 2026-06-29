@@ -7,7 +7,9 @@ from tkinter import filedialog, messagebox
 from tkinter import ttk
 from dark_theme import apply_dark_theme
 from conversion import conversion_manager  # Import the conversion_manager instance
-from utils import extract_frame_with_conversion, extract_frame, TONEMAP, get_video_properties, get_maxcll, clear_maxfall_cache
+from utils import (extract_frame_with_conversion, extract_frame, TONEMAP,
+                   get_video_properties, get_maxcll, clear_maxfall_cache,
+                   extract_frames_batch, extract_frames_with_conversion_batch)
 from settings import load_settings, save_settings
 from licensing import activate_license, InvalidKeyError, DeviceLimitError, NetworkError, LicenseError
 from PIL import Image, ImageTk
@@ -1652,25 +1654,60 @@ class HDRConverterGUI:
                 cache.pop(next(iter(cache)))
 
     def _prewarm_other_frames(self, video_path, duration, tonemapper, generation):
-        """Pre-extract the non-visible seek-button frames into the cache.
+        """Pre-extract non-visible seek frames using 2 batch ffmpeg calls.
 
-        Runs on the preview worker thread after the requested frame has been
-        rendered. Each frame button maps to a fixed time position; warming them
-        up front turns the first click on each into a cache hit. Best-effort:
-        bails as soon as a newer preview request supersedes this one (so we never
-        keep decoding for a filter/tonemapper/file the user has moved on from),
-        and never lets a failure escape (the real click path reports errors).
+        One call extracts all uncached original frames; a second call extracts
+        the converted (tonemapped) versions. Both run on the preview worker
+        thread after the visible frame has been rendered. If a newer preview
+        request supersedes this one the method bails between the two calls so
+        we never waste a long tonemap run on stale state. Failures are swallowed
+        so the background work never crashes the worker.
         """
+        if generation != self._preview_generation:
+            return
+
+        if not hasattr(self, '_preview_cache_original'):
+            self._preview_cache_original = {}
+            self._preview_cache_converted = {}
+
+        # Collect timestamps for frames not yet in either cache.
+        positions: list[float] = []
         for index in range(1, self.total_frames + 1):
-            if generation != self._preview_generation:
-                return  # superseded: stop wasting ffmpeg on a stale request
             if index == self.current_frame_index:
-                continue  # the visible frame is already extracted
-            time_position = (index / (self.total_frames + 1)) * duration
-            try:
-                self._extract_preview_images(video_path, time_position, tonemapper)
-            except Exception:
-                logging.exception("preview pre-warm failed for frame %s", index)
+                continue
+            t = (index / (self.total_frames + 1)) * duration
+            t_key = round(t, 3)
+            if ((video_path, t_key) not in self._preview_cache_original or
+                    (video_path, t_key, tonemapper) not in self._preview_cache_converted):
+                positions.append(t)
+
+        if not positions:
+            return
+
+        # Batch 1: all original frames in one ffmpeg process.
+        try:
+            originals = extract_frames_batch(
+                video_path, positions, PREVIEW_SIZE[0], PREVIEW_SIZE[1])
+            for t, img in zip(positions, originals):
+                self._cache_store(
+                    self._preview_cache_original, (video_path, round(t, 3)), img)
+        except Exception:
+            logging.exception('preview batch original pre-warm failed')
+
+        if generation != self._preview_generation:
+            return
+
+        # Batch 2: all converted frames in one ffmpeg process.
+        try:
+            converted = extract_frames_with_conversion_batch(
+                video_path, positions, 1.0, tonemapper,
+                PREVIEW_SIZE[0], PREVIEW_SIZE[1])
+            for t, img in zip(positions, converted):
+                self._cache_store(
+                    self._preview_cache_converted,
+                    (video_path, round(t, 3), tonemapper), img)
+        except Exception:
+            logging.exception('preview batch converted pre-warm failed')
 
     def _reset_custom_seek(self):
         """Clear any active custom seek so a newly loaded file starts on frame 1."""

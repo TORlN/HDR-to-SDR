@@ -7,7 +7,9 @@ from src.utils import (
     extract_frame_with_conversion, get_executable_path, initialize_ffmpeg,
     build_libplacebo_filter, vulkan_libplacebo_available, reset_libplacebo_probe,
     vulkan_cuda_interop_available, reset_cuda_interop_probe, VULKAN_CUDA_DEVICE_ARGS,
-    get_maxfall, get_maxcll, verify_ffmpeg_files,
+    get_maxfall, get_maxcll, verify_ffmpeg_files, clear_video_properties_cache,
+    clear_maxfall_cache,
+    extract_frames_batch, extract_frames_with_conversion_batch, _split_png_frames,
 )
 import subprocess
 from PIL import Image  # Added import
@@ -759,6 +761,173 @@ class TestGetVideoPropertiesRobustness(unittest.TestCase):
         self.assertIsNotNone(props, "should return valid props, not None")
         self.assertEqual(props['bit_rate'], 0)
         self.assertEqual(props['audio_bit_rate'], 0)
+
+
+class TestVideoPropertiesCache(unittest.TestCase):
+    """get_video_properties must cache results and only probe once per path."""
+
+    _VALID_PROPS_JSON = json.dumps({
+        "streams": [{"codec_type": "video", "width": 1920, "height": 1080,
+                     "codec_name": "hevc", "avg_frame_rate": "24/1", "bit_rate": "5000000"}],
+        "format": {"duration": "60.0"},
+    }).encode()
+
+    def setUp(self):
+        import src.utils as _u
+        _u._VIDEO_PROPS_CACHE.clear()
+        self.addCleanup(_u._VIDEO_PROPS_CACHE.clear)
+
+    def _mock_popen(self, mock_popen):
+        proc = mock_popen.return_value
+        proc.returncode = 0
+        proc.communicate.return_value = (self._VALID_PROPS_JSON, b'')
+        return proc
+
+    @patch('src.utils.subprocess.Popen')
+    def test_second_call_uses_cache_not_popen(self, mock_popen):
+        """Repeated calls for the same path must not spawn a second ffprobe."""
+        self._mock_popen(mock_popen)
+        first = get_video_properties('cache_test.mkv')
+        second = get_video_properties('cache_test.mkv')
+        self.assertEqual(mock_popen.call_count, 1)
+        self.assertEqual(first, second)
+
+    @patch('src.utils.subprocess.Popen')
+    def test_clear_video_properties_cache_forces_reprobe(self, mock_popen):
+        """After clear_video_properties_cache(), the next call must spawn a fresh ffprobe."""
+        self._mock_popen(mock_popen)
+        get_video_properties('cache_clear_test.mkv')
+        clear_video_properties_cache()
+        get_video_properties('cache_clear_test.mkv')
+        self.assertEqual(mock_popen.call_count, 2)
+
+    @patch('src.utils.subprocess.Popen')
+    def test_clear_maxfall_cache_also_clears_video_props(self, mock_popen):
+        """clear_maxfall_cache() must evict video properties so both caches stay in sync."""
+        self._mock_popen(mock_popen)
+        get_video_properties('sync_clear_test.mkv')
+        clear_maxfall_cache()
+        get_video_properties('sync_clear_test.mkv')
+        self.assertEqual(mock_popen.call_count, 2)
+
+    @patch('src.utils.subprocess.Popen')
+    def test_none_result_not_cached(self, mock_popen):
+        """A None result (bad output) must not be cached; next call must reprobe."""
+        proc = mock_popen.return_value
+        proc.returncode = 1  # ffprobe failure
+        proc.communicate.return_value = (b'', b'error')
+        get_video_properties('bad_file.mkv')
+        get_video_properties('bad_file.mkv')
+        self.assertEqual(mock_popen.call_count, 2)
+
+
+def _minimal_png() -> bytes:
+    """Return a valid 1×1 RGB PNG as bytes (for batch-function tests)."""
+    import struct, zlib
+    def _chunk(name: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(name + data) & 0xffffffff
+        return struct.pack('>I', len(data)) + name + data + struct.pack('>I', crc)
+    sig = b'\x89PNG\r\n\x1a\n'
+    ihdr = _chunk(b'IHDR', struct.pack('>IIBBBBB', 1, 1, 8, 2, 0, 0, 0))
+    idat = _chunk(b'IDAT', zlib.compress(b'\x00\xff\xff\xff'))
+    iend = _chunk(b'IEND', b'')
+    return sig + ihdr + idat + iend
+
+
+class TestSplitPngFrames(unittest.TestCase):
+    """_split_png_frames parses a concatenated PNG stream into PIL Image objects."""
+
+    def test_empty_data_returns_empty_list(self):
+        self.assertEqual(_split_png_frames(b''), [])
+
+    def test_single_png_returns_one_image(self):
+        frames = _split_png_frames(_minimal_png())
+        self.assertEqual(len(frames), 1)
+
+    def test_three_concatenated_pngs_return_three_images(self):
+        frames = _split_png_frames(_minimal_png() * 3)
+        self.assertEqual(len(frames), 3)
+
+    def test_leading_junk_is_skipped(self):
+        frames = _split_png_frames(b'\x00junk' + _minimal_png())
+        self.assertEqual(len(frames), 1)
+
+
+class TestExtractFramesBatch(unittest.TestCase):
+    """extract_frames_batch must extract N frames in exactly 1 ffmpeg process."""
+
+    def _popen_ok(self, mock_popen, n: int):
+        proc = mock_popen.return_value
+        proc.returncode = 0
+        proc.communicate.return_value = (_minimal_png() * n, b'')
+
+    @patch('src.utils.subprocess.Popen')
+    def test_three_positions_spawn_one_process(self, mock_popen):
+        """Three timestamps → exactly 1 Popen call, returns 3 images."""
+        self._popen_ok(mock_popen, 3)
+        result = extract_frames_batch('vid.mkv', [10.0, 20.0, 30.0], 960, 540)
+        self.assertEqual(mock_popen.call_count, 1)
+        self.assertEqual(len(result), 3)
+
+    @patch('src.utils.subprocess.Popen')
+    def test_empty_positions_returns_empty_without_popen(self, mock_popen):
+        result = extract_frames_batch('vid.mkv', [], 960, 540)
+        self.assertEqual(result, [])
+        mock_popen.assert_not_called()
+
+    @patch('src.utils.subprocess.Popen')
+    def test_single_position_works(self, mock_popen):
+        self._popen_ok(mock_popen, 1)
+        result = extract_frames_batch('vid.mkv', [5.0], 960, 540)
+        self.assertEqual(mock_popen.call_count, 1)
+        self.assertEqual(len(result), 1)
+
+    @patch('src.utils.subprocess.Popen')
+    def test_ffmpeg_error_raises_runtime_error(self, mock_popen):
+        proc = mock_popen.return_value
+        proc.returncode = 1
+        proc.communicate.return_value = (b'', b'some ffmpeg error')
+        with self.assertRaises(RuntimeError):
+            extract_frames_batch('vid.mkv', [10.0], 960, 540)
+
+
+class TestExtractFramesWithConversionBatch(unittest.TestCase):
+    """extract_frames_with_conversion_batch must tonemap N frames in 1 ffmpeg process."""
+
+    def _popen_ok(self, mock_popen, n: int):
+        proc = mock_popen.return_value
+        proc.returncode = 0
+        proc.communicate.return_value = (_minimal_png() * n, b'')
+
+    @patch('src.utils.subprocess.Popen')
+    def test_two_positions_spawn_one_process(self, mock_popen):
+        self._popen_ok(mock_popen, 2)
+        result = extract_frames_with_conversion_batch('vid.mkv', [5.0, 15.0], 1.0, 'reinhard', 960, 540)
+        self.assertEqual(mock_popen.call_count, 1)
+        self.assertEqual(len(result), 2)
+
+    @patch('src.utils.subprocess.Popen')
+    def test_empty_positions_returns_empty_without_popen(self, mock_popen):
+        result = extract_frames_with_conversion_batch('vid.mkv', [], 1.0, 'reinhard', 960, 540)
+        self.assertEqual(result, [])
+        mock_popen.assert_not_called()
+
+    @patch('src.utils.subprocess.Popen')
+    def test_ffmpeg_error_raises_runtime_error(self, mock_popen):
+        proc = mock_popen.return_value
+        proc.returncode = 1
+        proc.communicate.return_value = (b'', b'tonemap failed')
+        with self.assertRaises(RuntimeError):
+            extract_frames_with_conversion_batch('vid.mkv', [5.0], 1.0, 'reinhard', 960, 540)
+
+    @patch('src.utils.subprocess.Popen')
+    def test_tonemapper_name_is_lowercased_in_filter(self, mock_popen):
+        self._popen_ok(mock_popen, 1)
+        extract_frames_with_conversion_batch('vid.mkv', [5.0], 1.0, 'Reinhard', 960, 540)
+        cmd = mock_popen.call_args[0][0]
+        filter_arg = ' '.join(cmd)
+        self.assertIn('reinhard', filter_arg)
+        self.assertNotIn('Reinhard', filter_arg)
 
 
 class TestProbeHdrMetadata(unittest.TestCase):

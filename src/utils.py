@@ -243,11 +243,23 @@ def run_ffmpeg_command(cmd):
 _MAXFALL_CACHE: dict[str, dict] = {}
 _MAXFALL_CACHE_LOCK = threading.Lock()
 
+# Video properties (streams, duration, codec) are also static per file; caching
+# eliminates the extra ffprobe spawned inside each extract_frame / extract_frame_with_conversion call.
+_VIDEO_PROPS_CACHE: dict[str, dict] = {}
+_VIDEO_PROPS_CACHE_LOCK = threading.Lock()
+
+
+def clear_video_properties_cache() -> None:
+    """Drop cached video properties (call when loading a new/replaced file)."""
+    with _VIDEO_PROPS_CACHE_LOCK:
+        _VIDEO_PROPS_CACHE.clear()
+
 
 def clear_maxfall_cache():
-    """Drop cached HDR metadata (call when loading a new/replaced file)."""
+    """Drop cached HDR metadata and video properties (call when loading a new/replaced file)."""
     with _MAXFALL_CACHE_LOCK:
         _MAXFALL_CACHE.clear()
+    clear_video_properties_cache()
 
 
 def _probe_hdr_metadata(video_path):
@@ -461,6 +473,115 @@ def vulkan_cuda_interop_available() -> bool:
     return _cuda_interop_available
 
 
+_PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
+
+
+def _split_png_frames(data: bytes) -> 'list[Image.Image]':
+    """Split a byte stream of back-to-back PNG files into PIL Image objects."""
+    frames: list[Image.Image] = []
+    pos = 0
+    while pos < len(data):
+        if data[pos:pos + 8] != _PNG_SIGNATURE:
+            pos += 1
+            continue
+        next_sig = data.find(_PNG_SIGNATURE, pos + 8)
+        chunk = data[pos:] if next_sig == -1 else data[pos:next_sig]
+        frames.append(Image.open(io.BytesIO(chunk)))
+        if next_sig == -1:
+            break
+        pos = next_sig
+    return frames
+
+
+def _batch_ffmpeg_filter_complex(n: int, per_input_filter: str) -> str:
+    """Build a filter_complex that applies per_input_filter to each of N inputs and concats."""
+    if n == 1:
+        return f'[0:v]trim=end_frame=1,setpts=PTS-STARTPTS,{per_input_filter}[out]'
+    parts = ';'.join(
+        f'[{i}:v]trim=end_frame=1,setpts=PTS-STARTPTS,{per_input_filter}[v{i}]'
+        for i in range(n)
+    )
+    concat_in = ''.join(f'[v{i}]' for i in range(n))
+    return f'{parts};{concat_in}concat=n={n}:v=1:a=0[out]'
+
+
+def extract_frames_batch(
+    video_path: str,
+    time_positions: 'list[float]',
+    width: int,
+    height: int,
+) -> 'list[Image.Image]':
+    """Extract multiple original frames in a single ffmpeg process.
+
+    Uses N -ss/-i pairs with filter_complex concat so the file is opened N
+    times internally but only one process is spawned, capping the burst at 1
+    process instead of N.
+    """
+    if not time_positions:
+        return []
+    n = len(time_positions)
+    startupinfo, creationflags = _startupinfo()
+    scale = f'scale={width}:{height}:force_original_aspect_ratio=decrease'
+    cmd = [FFMPEG_EXECUTABLE]
+    for t in time_positions:
+        cmd += ['-ss', str(t), '-i', os.path.normpath(video_path)]
+    cmd += [
+        '-filter_complex', _batch_ffmpeg_filter_complex(n, scale),
+        '-map', '[out]',
+        '-f', 'image2pipe', '-vcodec', 'png', '-',
+    ]
+    process = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        startupinfo=startupinfo, creationflags=creationflags,
+    )
+    out, err = process.communicate()
+    if process.returncode != 0:
+        raise RuntimeError(
+            f'FFmpeg batch frame extraction failed: {err.decode("utf-8", errors="replace")}'
+        )
+    return _split_png_frames(out)
+
+
+def extract_frames_with_conversion_batch(
+    video_path: str,
+    time_positions: 'list[float]',
+    gamma: float,
+    tonemapper: str,
+    width: int,
+    height: int,
+) -> 'list[Image.Image]':
+    """Tonemap-convert multiple frames in a single ffmpeg process.
+
+    Applies the same CPU tonemap filter chain as extract_frame_with_conversion
+    but to all N frames in one pass, reducing process count from N to 1.
+    """
+    if not time_positions:
+        return []
+    n = len(time_positions)
+    startupinfo, creationflags = _startupinfo()
+    tone_filter = FFMPEG_FILTER.format(
+        gamma=gamma, width=width, height=height, tonemapper=tonemapper.lower()
+    )
+    cmd = [FFMPEG_EXECUTABLE]
+    for t in time_positions:
+        cmd += ['-ss', str(t), '-i', os.path.normpath(video_path)]
+    cmd += [
+        '-filter_complex', _batch_ffmpeg_filter_complex(n, tone_filter),
+        '-map', '[out]',
+        '-f', 'image2pipe', '-vcodec', 'png', '-',
+    ]
+    process = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        startupinfo=startupinfo, creationflags=creationflags,
+    )
+    out, err = process.communicate()
+    if process.returncode != 0:
+        raise RuntimeError(
+            f'FFmpeg batch conversion failed: {err.decode("utf-8", errors="replace")}'
+        )
+    return _split_png_frames(out)
+
+
 def extract_frame_with_conversion(video_path, gamma, tonemapper='reinhard',
                                   time_position=None, width: 'int | str' = 'iw',
                                   height: 'int | str' = 'ih'):
@@ -545,6 +666,9 @@ def _int_or_zero(v) -> int:
 
 
 def get_video_properties(input_file):
+    if input_file in _VIDEO_PROPS_CACHE:
+        return _VIDEO_PROPS_CACHE[input_file]
+
     startupinfo, creationflags = _startupinfo()
 
     command = [
@@ -597,8 +721,8 @@ def get_video_properties(input_file):
         if 'format' not in data:
             return None
         duration = float(data['format'].get('duration', 0))
-            
-        return {
+
+        props = {
             "width": int(video_stream.get('width', 0)),
             "height": int(video_stream.get('height', 0)),
             "bit_rate": _int_or_zero(video_stream.get('bit_rate')),
@@ -611,6 +735,9 @@ def get_video_properties(input_file):
             "color_primaries": video_stream.get('color_primaries', ''),
             "color_transfer": video_stream.get('color_transfer', ''),
         }
+        with _VIDEO_PROPS_CACHE_LOCK:
+            _VIDEO_PROPS_CACHE[input_file] = props
+        return props
         
     except (subprocess.SubprocessError, json.JSONDecodeError, ValueError) as e:
         print(f"Error getting video properties: {str(e)}")

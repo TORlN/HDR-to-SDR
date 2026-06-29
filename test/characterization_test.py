@@ -394,47 +394,70 @@ class TestPreviewWorkerThread(unittest.TestCase):
 
 
 class TestPreviewPrewarm(unittest.TestCase):
-    """Other seek-button frames are pre-extracted so the first click is instant."""
+    """Non-visible seek frames are pre-extracted in 2 batch ffmpeg calls (not 8 individual ones)."""
 
     def _gui(self, current=1, total=5, generation=3):
         gui = _bare_gui()
         gui.current_frame_index = current
         gui.total_frames = total
         gui._preview_generation = generation
+        gui._preview_cache_original = {}
+        gui._preview_cache_converted = {}
         return gui
 
-    def test_extracts_every_other_frame_position(self):
+    @patch('src.gui.extract_frames_with_conversion_batch', return_value=[])
+    @patch('src.gui.extract_frames_batch', return_value=[])
+    def test_two_batch_calls_for_four_frames(self, mock_orig, mock_conv):
+        """Whole prewarm uses exactly 1 original batch call + 1 converted batch call."""
         gui = self._gui(current=1)
-        calls = []
-        gui._extract_preview_images = lambda vp, t, tm: calls.append((round(t, 3), tm))
-        gui._prewarm_other_frames('in.mkv', 60.0, 'mobius', generation=3)
-        # positions index/(total+1)*duration for indexes 2..5 (index 1 = current, skipped)
-        self.assertEqual(sorted(c[0] for c in calls), [20.0, 30.0, 40.0, 50.0])
-        self.assertTrue(all(c[1] == 'mobius' for c in calls))
-
-    def test_skips_the_currently_displayed_frame(self):
-        gui = self._gui(current=3)
-        times = []
-        gui._extract_preview_images = lambda vp, t, tm: times.append(round(t, 3))
         gui._prewarm_other_frames('in.mkv', 60.0, 'reinhard', generation=3)
-        self.assertEqual(len(times), 4)
-        self.assertNotIn(30.0, times)  # frame 3 -> 3/6*60 = 30 is the visible one
+        self.assertEqual(mock_orig.call_count, 1)
+        self.assertEqual(mock_conv.call_count, 1)
 
-    def test_stops_immediately_when_superseded(self):
-        gui = self._gui()
-        calls = []
-        gui._extract_preview_images = lambda *a: calls.append(a)
-        # passed generation (1) is stale vs current (3): a newer request supersedes
+    @patch('src.gui.extract_frames_with_conversion_batch', return_value=[])
+    @patch('src.gui.extract_frames_batch', return_value=[])
+    def test_extracts_every_other_frame_position(self, mock_orig, mock_conv):
+        """Batch receives the 4 non-current time positions."""
+        gui = self._gui(current=1)
+        gui._prewarm_other_frames('in.mkv', 60.0, 'mobius', generation=3)
+        positions = mock_orig.call_args[0][1]
+        # index/(total+1)*duration for indices 2..5 (index 1 = current, skipped)
+        self.assertEqual(sorted(round(t, 3) for t in positions), [20.0, 30.0, 40.0, 50.0])
+
+    @patch('src.gui.extract_frames_with_conversion_batch', return_value=[])
+    @patch('src.gui.extract_frames_batch', return_value=[])
+    def test_skips_the_currently_displayed_frame(self, mock_orig, mock_conv):
+        """Frame at the current index is never included in the batch positions."""
+        gui = self._gui(current=3)
+        gui._prewarm_other_frames('in.mkv', 60.0, 'reinhard', generation=3)
+        positions = mock_orig.call_args[0][1]
+        self.assertEqual(len(positions), 4)
+        self.assertNotIn(30.0, [round(t, 3) for t in positions])  # 3/6*60 = 30
+
+    @patch('src.gui.extract_frames_with_conversion_batch')
+    @patch('src.gui.extract_frames_batch')
+    def test_stops_immediately_when_superseded(self, mock_orig, mock_conv):
+        """Stale generation → batch functions never called."""
+        gui = self._gui()  # _preview_generation=3
         gui._prewarm_other_frames('in.mkv', 60.0, 'mobius', generation=1)
-        self.assertEqual(calls, [])
+        mock_orig.assert_not_called()
+        mock_conv.assert_not_called()
 
-    def test_extraction_errors_are_swallowed(self):
+    @patch('src.gui.extract_frames_with_conversion_batch', return_value=[])
+    @patch('src.gui.extract_frames_batch')
+    def test_original_batch_errors_are_swallowed(self, mock_orig, mock_conv):
+        """A batch failure must not propagate out of the background worker."""
+        mock_orig.side_effect = RuntimeError('batch decode fail')
         gui = self._gui()
-        def boom(*a):
-            raise RuntimeError('decode fail')
-        gui._extract_preview_images = boom
-        # Best-effort background work: a failure must not propagate.
-        with patch('src.gui.logging'):  # silence the expected logged traceback
+        with patch('src.gui.logging'):
+            gui._prewarm_other_frames('in.mkv', 60.0, 'mobius', generation=3)
+
+    @patch('src.gui.extract_frames_with_conversion_batch')
+    @patch('src.gui.extract_frames_batch', return_value=[])
+    def test_converted_batch_errors_are_swallowed(self, mock_orig, mock_conv):
+        mock_conv.side_effect = RuntimeError('tonemap batch fail')
+        gui = self._gui()
+        with patch('src.gui.logging'):
             gui._prewarm_other_frames('in.mkv', 60.0, 'mobius', generation=3)
 
 

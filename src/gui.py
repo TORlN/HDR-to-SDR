@@ -1806,6 +1806,12 @@ class HDRConverterGUI:
 
     def _show_preview_loading(self):
         """Show the loading spinner and hide the preview until frames are ready."""
+        # Freeze the window at its current size so removing the image labels
+        # doesn't cause a visible shrink while the spinner is shown.
+        if hasattr(self, 'root'):
+            w, h = self.root.winfo_width(), self.root.winfo_height()
+            if w > 1 and h > 1:
+                self.root.minsize(w, h)
         self.original_title_label.grid_remove()
         self.converted_title_label.grid_remove()
         self.button_container.grid_remove()
@@ -1818,6 +1824,8 @@ class HDRConverterGUI:
         """Stop and hide the loading spinner."""
         self.loading_bar.stop()
         self.loading_frame.grid_remove()
+        if hasattr(self, 'root'):
+            self._apply_min_window_size()  # restore the real minsize
 
     def _reveal_preview(self):
         """Reveal the titles, frame buttons and images once frames have rendered."""
@@ -1839,16 +1847,32 @@ class HDRConverterGUI:
         else:
             self.update_frame_preview()
 
+    def _preview_in_cache(self, video_path: str) -> bool:
+        """Return True if both frames for the current state are already cached."""
+        if not hasattr(self, '_preview_cache_original'):
+            return False
+        duration = getattr(self, '_duration_value', None)
+        if getattr(self, '_duration_path', None) != video_path or not duration:
+            return False
+        time_position = self._preview_time_position(duration)
+        time_key = round(time_position, 3)
+        tonemapper = self.tonemap_var.get().lower()
+        return (
+            (video_path, time_key) in self._preview_cache_original
+            and (video_path, time_key, tonemapper) in self._preview_cache_converted
+        )
+
     def update_frame_preview(self, event=None):
         """Update the frame preview without blocking the UI."""
         if self.display_image_var.get() and self.input_path_var.get():
             try:
                 video_path = self.input_path_var.get()
                 self.error_label.config(text="")
-                # Show the spinner and hide titles/buttons/images now; they are
-                # revealed in _render_preview_images once the frames are ready
-                # (display_frames runs the slow extraction asynchronously).
-                self._show_preview_loading()
+                # Only show the spinner when both frames aren't already cached;
+                # cached hits return in <1 ms so no spinner is needed and
+                # skipping it prevents the one-frame flash when switching buttons.
+                if not self._preview_in_cache(video_path):
+                    self._show_preview_loading()
                 self.display_frames(video_path)
                 self.arrange_widgets(image_frame=True)
             except Exception as e:

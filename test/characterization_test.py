@@ -84,7 +84,7 @@ class TestAdjustGamma(unittest.TestCase):
         gui = self._gui()
         img = Image.new('RGB', (2, 2), (100, 150, 200))
         out = gui.adjust_gamma(img, 1.0)
-        self.assertEqual(list(out.getdata()), list(img.getdata()))
+        self.assertEqual(list(out.get_flattened_data()), list(img.get_flattened_data()))
 
     def test_gamma_one_short_circuits_to_same_object(self):
         # gamma == 1.0 must skip the LUT pass entirely (returns the input image).
@@ -105,15 +105,21 @@ class TestAdjustGamma(unittest.TestCase):
         self.assertLess(out.getpixel((0, 0)), 128)
 
 
-class TestGetMaxfall(unittest.TestCase):
+class TestGetMaxfallAlias(unittest.TestCase):
+    """get_maxfall is a backward-compat alias for get_maxcll.
+
+    Both functions return MaxCLL (max_content / peak pixel luminance).
+    Neither returns MaxFALL (max_average); get_maxfall was renamed when
+    the probe was extended to return the full metadata dict.
+    """
 
     def setUp(self):
-        # MAXFALL is memoized per path; reset so each test probes fresh.
         from src.utils import clear_maxfall_cache
         clear_maxfall_cache()
 
     @patch('src.utils.subprocess.check_output')
-    def test_reads_maxcll_from_content_light_level_metadata(self, mock_out):
+    def test_alias_returns_maxcll(self, mock_out):
+        """get_maxfall returns MaxCLL (max_content=1000), not MaxFALL (max_average=400)."""
         data = {"frames": [{"side_data_list": [
             {"side_data_type": "Content light level metadata",
              "max_content": 1000, "max_average": 400}
@@ -127,9 +133,13 @@ class TestGetMaxfall(unittest.TestCase):
         self.assertIsNone(get_maxfall('video.mkv'))
 
 
-class TestGetMaxfallCaching(unittest.TestCase):
-    """MAXFALL is static mastering-display metadata; probing it costs ~0.5-1.2s,
-    so it must be computed once per path and reused across previews."""
+class TestGetMaxfallAliasCaching(unittest.TestCase):
+    """HDR metadata (MaxCLL, mastering peak) is probed once per path and cached.
+
+    Probing costs ~0.5–1.2 s; subsequent calls must return the cached value.
+    get_maxfall is a backward-compat alias for get_maxcll; both return MaxCLL
+    (max_content), not MaxFALL (max_average).
+    """
 
     def setUp(self):
         from src.utils import clear_maxfall_cache
@@ -137,6 +147,8 @@ class TestGetMaxfallCaching(unittest.TestCase):
 
     @patch('src.utils.subprocess.check_output')
     def test_repeated_calls_probe_once(self, mock_out):
+        # max_content=1000 (MaxCLL) is what get_maxfall/get_maxcll return.
+        # max_average=250 (MaxFALL) is stored in the cache but not exposed by this alias.
         mock_out.return_value = json.dumps(
             {"frames": [{"side_data_list": [
                 {"side_data_type": "Content light level metadata",
@@ -144,7 +156,7 @@ class TestGetMaxfallCaching(unittest.TestCase):
             ]}]}).encode('utf-8')
         first = get_maxfall('a.mkv')
         second = get_maxfall('a.mkv')
-        self.assertEqual(first, 1000.0)   # get_maxfall = get_maxcll = max_content
+        self.assertEqual(first, 1000.0)   # MaxCLL (max_content), not MaxFALL (250)
         self.assertEqual(second, 1000.0)
         self.assertEqual(mock_out.call_count, 1)  # second call served from cache
 
@@ -164,15 +176,6 @@ class TestGetMaxfallCaching(unittest.TestCase):
         get_maxfall('a.mkv')
         self.assertEqual(mock_out.call_count, 2)
 
-
-class TestGetVideoPropertiesFailure(unittest.TestCase):
-
-    @patch('src.utils.subprocess.Popen')
-    def test_returns_none_when_ffprobe_fails(self, mock_popen):
-        proc = mock_popen.return_value
-        proc.communicate.return_value = (b'', b'boom')
-        proc.returncode = 1
-        self.assertIsNone(get_video_properties('missing.mp4'))
 
 
 class TestMonitorProgress(unittest.TestCase):

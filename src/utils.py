@@ -519,6 +519,8 @@ def extract_frames_batch(
     """
     if not time_positions:
         return []
+    if not FFMPEG_EXECUTABLE:
+        return []
     n = len(time_positions)
     startupinfo, creationflags = _startupinfo()
     scale = f'scale={width}:{height}:force_original_aspect_ratio=decrease'
@@ -556,6 +558,8 @@ def extract_frames_with_conversion_batch(
     but to all N frames in one pass, reducing process count from N to 1.
     """
     if not time_positions:
+        return []
+    if not FFMPEG_EXECUTABLE:
         return []
     n = len(time_positions)
     startupinfo, creationflags = _startupinfo()

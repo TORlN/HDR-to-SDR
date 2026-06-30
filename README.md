@@ -1,8 +1,6 @@
 This is a desktop GUI application to convert HDR videos to SDR using FFmpeg. The application lets you select an input video (or drag and drop one), live-preview the tonemapped result frame by frame, fine-tune the conversion, and convert single files or a whole queue while monitoring progress.
 
-The [latest release](https://github.com/TORlN/HDR-to-SDR/releases) is the **free Community Edition**. Download and run it with no account required. Entering a **Pro license key** inside the app unlocks the additional features listed below.
-
-> **Note:** Pro license key sales are a work in progress and not yet publicly available. Watch this repo or [hdrtosdr.com](https://hdrtosdr.com) for updates.
+The [latest release](https://github.com/TORlN/HDR-to-SDR/releases) is free to download with no account required. **Pro is now available**, purchase a license key at [hdrtosdr.com/#pricing](https://hdrtosdr.com/#pricing) to unlock the additional features listed below. More Pro features are actively in development and will be rolled out in upcoming releases.
 
 ## Features
 
@@ -30,11 +28,13 @@ All free features, plus:
 - **Batch Conversion Queue**: Add multiple files (via "Add Files" or by dropping several at once) and convert them sequentially. The queue shows a per-file status (pending / converting / done / failed), lets you click an entry to preview it, remove or clear entries, and reports a summary when it finishes.
 - **Persistent Settings**: Gamma, conversion method, tonemapper, quality, GPU toggle, preview toggle, and "open after conversion" are saved between sessions.
 
+More Pro features are on the way — follow this repo or check [hdrtosdr.com](https://hdrtosdr.com) for updates.
+
 ## Licensing
 
-The Pro version uses a **node-locked license** issued via [Keygen.sh](https://keygen.sh). Activation requires an internet connection the first time a key is entered on a new device. After activation, the app works offline indefinitely. It re-validates against the server at most once every 30 days. If the server is unreachable at that point, the local token is trusted so paid users are never blocked by network failures.
+Pro licenses are sold through [Lemon Squeezy](https://hdrtosdr.com/#pricing) and are **node-locked** to the machine they are activated on. Activation requires an internet connection the first time a key is entered on a new device. After activation, the app works offline indefinitely. It re-validates against the server at most once every 30 days. If the server is unreachable at that point, the local token is trusted so paid users are never blocked by network failures.
 
-The license key is stored in `%APPDATA%\HDR-to-SDR\license.dat` as an HMAC-signed, hardware-bound token. Copying the file to another machine will not work; the HMAC is keyed to the machine's hardware fingerprint.
+The license token is stored in `%APPDATA%\HDR-to-SDR\license.dat` as an HMAC-signed, hardware-bound file. Copying the file to another machine will not work; the HMAC is keyed to the machine's hardware fingerprint.
 
 ## Requirements
 

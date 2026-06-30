@@ -54,7 +54,11 @@ class _LicenseDialog(tk.Toplevel):
         tk.Label(self, text='Activate HDR to SDR Converter',
                  bg=_BG, fg=_FG, font=_FONT_BOLD).pack(pady=(28, 4))
         tk.Label(self, text='Enter your license key to unlock Pro features.',
-                 bg=_BG, fg='#aaaaaa', font=_FONT_SM).pack(pady=(0, 10))
+                 bg=_BG, fg='#aaaaaa', font=_FONT_SM).pack(pady=(0, 4))
+        link = tk.Label(self, text="Don't have a key? Get Pro at hdrtosdr.com",
+                        bg=_BG, fg=_ACCENT, font=_FONT_SM, cursor='hand2')
+        link.pack(pady=(0, 10))
+        link.bind('<Button-1>', lambda _: webbrowser.open('https://hdrtosdr.com/#pricing'))
         self._key_var = tk.StringVar()
         entry = tk.Entry(self, textvariable=self._key_var, width=44,
                          bg=_ENTRY_BG, fg=_FG, insertbackground=_FG,

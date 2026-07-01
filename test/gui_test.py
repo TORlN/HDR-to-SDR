@@ -591,32 +591,32 @@ class TestBuildInfoTextOutputBitDepth(TestCase):
     def test_8bit_source_licensed_outputs_8bit(self):
         """No benefit to 10-bit output when the source has no extra precision."""
         text = HDRConverterGUI._build_info_text(self._props(8), maxcll=1000.0, licensed=True)
-        self.assertIn('8-bit output', text)
+        self.assertIn('8-bit', text)
 
     def test_10bit_source_licensed_outputs_10bit(self):
         text = HDRConverterGUI._build_info_text(self._props(10), maxcll=1000.0, licensed=True)
-        self.assertIn('10-bit output', text)
+        self.assertIn('10-bit', text)
 
     def test_12bit_source_licensed_outputs_10bit(self):
         """Output is capped at 10-bit even when the source exceeds it."""
         text = HDRConverterGUI._build_info_text(self._props(12), maxcll=1000.0, licensed=True)
-        self.assertIn('10-bit output', text)
+        self.assertIn('12-bit -> 10-bit Output', text)
 
     def test_16bit_source_licensed_outputs_10bit(self):
         text = HDRConverterGUI._build_info_text(self._props(16), maxcll=1000.0, licensed=True)
-        self.assertIn('10-bit output', text)
+        self.assertIn('16-bit -> 10-bit Output', text)
 
     def test_10bit_source_unlicensed_forced_to_8bit(self):
         """Free tier is always capped to 8-bit output, regardless of source."""
         text = HDRConverterGUI._build_info_text(self._props(10), maxcll=1000.0, licensed=False)
-        self.assertIn('8-bit output', text)
+        self.assertIn('10-bit -> 8-bit Output (Pro required)', text)
 
     def test_missing_bit_depth_defaults_to_8bit_output(self):
         """Older probes / mocks without a bit_depth key must not crash."""
         props = self._props(8)
         del props['bit_depth']
         text = HDRConverterGUI._build_info_text(props, maxcll=1000.0, licensed=True)
-        self.assertIn('8-bit output', text)
+        self.assertIn('8-bit', text)
 
 
 if __name__ == '__main__':

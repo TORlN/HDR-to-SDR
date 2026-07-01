@@ -17,7 +17,6 @@ DEFAULTS = {
     'display_preview': True,
     'quality': 23,  # encoder quality (CRF for CPU / CQ for GPU); lower = better
     'filetype': 'MP4',
-    'color_depth': '8-bit',  # Premium: '8-bit' or '10-bit' output pixel depth
 }
 
 

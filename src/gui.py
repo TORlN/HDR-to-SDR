@@ -90,7 +90,6 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.tonemap_var = tk.StringVar(value=_s['tonemapper'])
         self.quality_var = tk.IntVar(value=_s['quality'])
         self.format_var = tk.StringVar(value=_s['filetype'])
-        self.color_depth_var = tk.StringVar(value=_s['color_depth'])
         self.custom_time_var = tk.StringVar()
         self.custom_time_position: float | None = None
         self.batch_items: list[dict] = []  # type: ignore[type-arg]
@@ -106,6 +105,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._converted_preview_base: Image.Image | None = None
         self._duration_path: str | None = None
         self._duration_value: float | None = None
+        self._source_bit_depth: int = 8
         self._preview_cache_original: dict = {}
         self._preview_cache_converted: dict = {}
         self._cache_lock = threading.Lock()
@@ -221,7 +221,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.browse_button, self.convert_button, self.gamma_slider,
             self.open_after_conversion_checkbutton, self.display_image_checkbutton,
             self.input_entry, self.output_entry, self.gamma_entry,
-            self.gpu_accel_checkbutton, self.color_depth_combobox,
+            self.gpu_accel_checkbutton,
         ]
         premium = [
             self.quality_slider, self.format_combobox,
@@ -260,7 +260,6 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 'display_preview': self.display_image_var.get(),
                 'quality': self.quality_var.get(),
                 'filetype': self.format_var.get(),
-                'color_depth': self.color_depth_var.get(),
             })
         except AttributeError:
             pass  # bare/partially-initialized instance (test contexts only)
@@ -342,16 +341,6 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                   foreground='gray').grid(row=1, column=1, columnspan=2, sticky=tk.W, padx=(10, 0))
         quality_frame.columnconfigure(1, weight=1)
 
-        color_depth_frame = ttk.Frame(self.control_frame)
-        color_depth_frame.grid(row=6, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
-        ttk.Label(color_depth_frame, text="Output Color Depth:").grid(
-            row=0, column=0, sticky=tk.W)
-        self.color_depth_combobox = ttk.Combobox(
-            color_depth_frame, textvariable=self.color_depth_var,
-            values=['8-bit', '10-bit'], state='readonly', width=8)
-        self.color_depth_combobox.grid(row=0, column=1, padx=(10, 0))
-        self.color_depth_combobox.bind('<<ComboboxSelected>>', self._on_color_depth_change)
-
         self.image_frame = ttk.Frame(self.root, padding="10")
         self.image_frame.grid(row=1, column=0, sticky=tk.W + tk.E + tk.N + tk.S)
         self.image_frame.grid_remove()
@@ -408,14 +397,14 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.loading_frame.grid_remove()
 
         self.info_label = ttk.Label(self.control_frame, text='', foreground='gray')
-        self.info_label.grid(row=7, column=0, columnspan=3, sticky=tk.W, padx=(0, 10))
+        self.info_label.grid(row=6, column=0, columnspan=3, sticky=tk.W, padx=(0, 10))
         self.info_label.grid_remove()
 
         self.error_label = ttk.Label(self.control_frame, text='', foreground='red')
-        self.error_label.grid(row=8, column=0, columnspan=3, sticky=tk.W)
+        self.error_label.grid(row=7, column=0, columnspan=3, sticky=tk.W)
 
         self._pro_banner = ttk.Frame(self.control_frame)
-        self._pro_banner.grid(row=9, column=0, columnspan=3,
+        self._pro_banner.grid(row=8, column=0, columnspan=3,
                                sticky=tk.W + tk.E, pady=(6, 2))
         self._pro_banner.grid_remove()
         ttk.Label(
@@ -490,7 +479,6 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.gpu_accel_checkbutton, self.quality_slider, self.format_combobox,
             self.custom_time_entry, self.custom_seek_button,
             self.add_files_button, self.clear_batch_button, self.remove_batch_button,
-            self.color_depth_combobox,
         ]
 
         self._apply_quality_range()
@@ -593,13 +581,11 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
 
     # ── Output Color Depth ──────────────────────────────────────────────────────
 
-    def _on_color_depth_change(self, event: object = None) -> None:
-        """10-bit output is a Pro feature; unlicensed selections revert to 8-bit
-        and surface the upsell instead of leaving the widget inertly disabled,
-        so an unlicensed user can discover the feature by trying it."""
-        if self.color_depth_var.get() == '10-bit' and not self._licensed:
-            self.color_depth_var.set('8-bit')
-            self._open_license_dialog()
+    def _auto_ten_bit(self) -> bool:
+        """Automatically choose the output bit depth: 10-bit (Pro) only when the
+        source actually has more than 8 bits of data to preserve, otherwise
+        8-bit -- there is no user-facing toggle for this."""
+        return self._licensed and getattr(self, '_source_bit_depth', 8) > 8
 
     # ── Quality slider ─────────────────────────────────────────────────────────
 
@@ -625,7 +611,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
     # ── Info strip ─────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _build_info_text(properties: dict, maxcll: float | None = None) -> str:  # type: ignore[type-arg]
+    def _build_info_text(
+            properties: dict, maxcll: float | None = None,  # type: ignore[type-arg]
+            licensed: bool = False) -> str:
         """Format key video metadata as a compact one-line string."""
         w = properties.get('width', '?')
         h = properties.get('height', '?')
@@ -641,20 +629,28 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             maxcll_str = f"  Max Nits: {int(maxcll)}" if maxcll is not None else "  Max Nits: N/A"
         else:
             maxcll_str = ""
-        # Output is always capped to 8-bit (free) / 10-bit (Pro); call out sources
-        # above that so higher-bit-depth masters aren't silently downsampled unnoticed.
-        bit_depth = properties.get('bit_depth', 0)
-        bit_depth_str = f"  {bit_depth}-bit source" if bit_depth > 10 else ""
-        return f"{w}×{h}  {fps_str}  {codec}  {hdr_tag}{maxcll_str}{bit_depth_str}  Audio: {audio}"
+        # Output bit depth is chosen automatically (never a user toggle): 10-bit
+        # only when licensed and the source has more than 8 bits to preserve,
+        # 8-bit otherwise -- always shown so the choice is visible at a glance.
+        source_bit_depth = properties.get('bit_depth', 8)
+        bit_depth_str = f"{source_bit_depth}-bit"
+        if source_bit_depth > 8 and not licensed:
+            bit_depth_str += " -> 8-bit Output (Pro required)"
+        elif source_bit_depth > 10 and licensed:
+            bit_depth_str += " -> 10-bit Output"
+        return f"{w}×{h} | {fps_str} | {codec} | {hdr_tag}{maxcll_str} | {bit_depth_str} | Audio: {audio}"
 
     def _update_info_label(self, file_path: str) -> None:
         """Probe file metadata and update the info strip below the output path."""
         if not hasattr(self, 'info_label'):
             return
         props = get_video_properties(file_path)
+        self._source_bit_depth = props.get('bit_depth', 8) if props else 8
         if props:
             maxcll = get_maxcll(file_path)
-            self.info_label.config(text=self._build_info_text(props, maxcll=maxcll))
+            self.info_label.config(
+                text=self._build_info_text(
+                    props, maxcll=maxcll, licensed=getattr(self, '_licensed', False)))
             self.info_label.grid()
         else:
             self.info_label.config(text='')
@@ -704,7 +700,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             use_gpu = self.gpu_accel_var.get()
             tonemapper = self.tonemap_var.get().lower()
             quality = int(self.quality_var.get())
-            ten_bit = self._licensed and self.color_depth_var.get() == '10-bit'
+            ten_bit = self._auto_ten_bit()
 
             output_path = self._output_path_with_format(output_path, self.format_var.get())
             self.output_path_var.set(output_path)

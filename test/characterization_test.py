@@ -1214,7 +1214,7 @@ class TestBatchProcessing(unittest.TestCase):
         gui.gpu_accel_var = MagicMock(); gui.gpu_accel_var.get.return_value = False
         gui.tonemap_var = MagicMock(); gui.tonemap_var.get.return_value = 'Mobius'
         gui.quality_var = MagicMock(); gui.quality_var.get.return_value = 20
-        gui.color_depth_var = MagicMock(); gui.color_depth_var.get.return_value = '8-bit'
+        gui._source_bit_depth = 8
         gui._licensed = True
         gui.open_after_conversion_var = MagicMock()
         gui.open_after_conversion_var.get.return_value = False
@@ -1243,6 +1243,26 @@ class TestBatchProcessing(unittest.TestCase):
         self.assertEqual(kwargs['on_complete'], gui._on_batch_item_complete)
         self.assertEqual(kwargs['quality'], 20)
         gui.unregister_drop_target.assert_called_once()  # like a single-file convert
+
+    @patch('src.batch.conversion_manager')
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_start_batch_auto_selects_ten_bit_for_high_bit_depth_source(self, _isfile, mock_cm):
+        gui = self._gui()
+        gui._source_bit_depth = 10
+        gui.batch_items = [self._item('a')]
+        gui.start_batch()
+        kwargs = mock_cm.start_conversion.call_args.kwargs
+        self.assertTrue(kwargs['ten_bit'])
+
+    @patch('src.batch.conversion_manager')
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_start_batch_stays_8bit_for_8bit_source(self, _isfile, mock_cm):
+        gui = self._gui()
+        gui._source_bit_depth = 8
+        gui.batch_items = [self._item('a')]
+        gui.start_batch()
+        kwargs = mock_cm.start_conversion.call_args.kwargs
+        self.assertFalse(kwargs['ten_bit'])
 
     @patch('src.batch.conversion_manager')
     @patch('src.gui.os.path.isfile', return_value=True)
@@ -1527,7 +1547,7 @@ class TestConvertVideoBranches(unittest.TestCase):
         gui.tonemap_var = MagicMock(); gui.tonemap_var.get.return_value = 'Mobius'
         gui.quality_var = MagicMock(); gui.quality_var.get.return_value = 21
         gui.format_var = MagicMock(); gui.format_var.get.return_value = 'MKV'
-        gui.color_depth_var = MagicMock(); gui.color_depth_var.get.return_value = '8-bit'
+        gui._source_bit_depth = 8
         gui._licensed = True
         return gui
 
@@ -1603,6 +1623,67 @@ class TestConvertVideoBranches(unittest.TestCase):
         _, kwargs = mock_cm.start_conversion.call_args
         self.assertEqual(kwargs['quality'], 19)
         gui.output_path_var.set.assert_called_with('out.mp4')  # MP4 container forced
+
+    @patch('src.gui.conversion_manager')
+    @patch('src.gui.messagebox')
+    @patch('src.gui.os.path.exists', return_value=False)
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_convert_auto_selects_ten_bit_for_high_bit_depth_source(
+            self, _isfile, _exists, _mock_mb, mock_cm):
+        gui = self._gui()
+        gui._source_bit_depth = 12
+        gui.drop_target_registered = False
+        gui.cancel_button = MagicMock()
+        gui.progress_var = MagicMock()
+        gui.interactable_elements = []
+        gui.open_after_conversion_var = MagicMock()
+        gui.open_after_conversion_var.get.return_value = False
+
+        gui.convert_video()
+
+        _, kwargs = mock_cm.start_conversion.call_args
+        self.assertTrue(kwargs['ten_bit'])
+
+    @patch('src.gui.conversion_manager')
+    @patch('src.gui.messagebox')
+    @patch('src.gui.os.path.exists', return_value=False)
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_convert_stays_8bit_for_8bit_source(
+            self, _isfile, _exists, _mock_mb, mock_cm):
+        gui = self._gui()
+        gui._source_bit_depth = 8
+        gui.drop_target_registered = False
+        gui.cancel_button = MagicMock()
+        gui.progress_var = MagicMock()
+        gui.interactable_elements = []
+        gui.open_after_conversion_var = MagicMock()
+        gui.open_after_conversion_var.get.return_value = False
+
+        gui.convert_video()
+
+        _, kwargs = mock_cm.start_conversion.call_args
+        self.assertFalse(kwargs['ten_bit'])
+
+    @patch('src.gui.conversion_manager')
+    @patch('src.gui.messagebox')
+    @patch('src.gui.os.path.exists', return_value=False)
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_convert_forces_8bit_when_unlicensed_even_with_high_bit_depth_source(
+            self, _isfile, _exists, _mock_mb, mock_cm):
+        gui = self._gui()
+        gui._licensed = False
+        gui._source_bit_depth = 12
+        gui.drop_target_registered = False
+        gui.cancel_button = MagicMock()
+        gui.progress_var = MagicMock()
+        gui.interactable_elements = []
+        gui.open_after_conversion_var = MagicMock()
+        gui.open_after_conversion_var.get.return_value = False
+
+        gui.convert_video()
+
+        _, kwargs = mock_cm.start_conversion.call_args
+        self.assertFalse(kwargs['ten_bit'])
 
 
 class TestGuiErrorAndResizePaths(unittest.TestCase):
@@ -1956,14 +2037,12 @@ class TestGuiLifecycle(unittest.TestCase):
         for name, val in [('gamma_var', 1.0),
                           ('tonemap_var', 'Mobius'), ('gpu_accel_var', False),
                           ('open_after_conversion_var', False), ('display_image_var', True),
-                          ('quality_var', 21), ('format_var', 'MKV'),
-                          ('color_depth_var', '10-bit')]:
+                          ('quality_var', 21), ('format_var', 'MKV')]:
             m = MagicMock(); m.get.return_value = val
             setattr(gui, name, m)
         gui._save_current_settings()
         self.assertEqual(mock_save.call_args[0][0]['quality'], 21)
         self.assertEqual(mock_save.call_args[0][0]['filetype'], 'MKV')
-        self.assertEqual(mock_save.call_args[0][0]['color_depth'], '10-bit')
 
     @patch('src.gui.conversion_manager')
     def test_cancel_conversion_delegates_to_manager(self, mock_cm):
@@ -2268,6 +2347,29 @@ class TestUpdateInfoLabel(unittest.TestCase):
         with patch('src.gui.get_video_properties', return_value=None):
             gui._update_info_label('bad.mkv')
         gui.info_label.grid_remove.assert_called_once()
+
+    def test_stores_source_bit_depth_for_later_auto_ten_bit_decision(self):
+        """The probed bit depth is remembered so convert_video/start_batch can
+        pick the output bit depth automatically without re-probing the file."""
+        gui = _bare_gui()
+        gui.info_label = MagicMock()
+        props = {
+            'width': 3840, 'height': 2160, 'frame_rate': 23.976,
+            'codec_name': 'hevc', 'audio_codec': 'truehd',
+            'color_primaries': 'bt2020', 'color_transfer': 'smpte2084',
+            'bit_depth': 12,
+        }
+        with patch('src.gui.get_video_properties', return_value=props), \
+             patch('src.gui.get_maxcll', return_value=400.0):
+            gui._update_info_label('clip.mkv')
+        self.assertEqual(gui._source_bit_depth, 12)
+
+    def test_source_bit_depth_defaults_to_8_when_probe_fails(self):
+        gui = _bare_gui()
+        gui.info_label = MagicMock()
+        with patch('src.gui.get_video_properties', return_value=None):
+            gui._update_info_label('bad.mkv')
+        self.assertEqual(gui._source_bit_depth, 8)
 
 
 class TestHandleFileDropGuards(unittest.TestCase):

@@ -10,7 +10,7 @@ from utils import get_video_properties, get_maxcll, TONEMAP, clear_maxfall_cache
 from settings import load_settings, save_settings
 from licensing import InvalidKeyError, DeviceLimitError, NetworkError, LicenseError
 from PIL import Image, ImageTk
-from tkinterdnd2 import DND_FILES
+from tkinterdnd2 import DND_FILES, TkinterDnD
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -30,10 +30,22 @@ from batch import _BatchMixin
 # Without this, Python would load a second copy under each dotted name.
 import sys as _sys
 _sys.modules.update({
-    'src.dialogs': _sys.modules.get('dialogs'),
-    'src.preview': _sys.modules.get('preview'),
-    'src.batch':   _sys.modules.get('batch'),
+    'src.dialogs': _sys.modules['dialogs'],
+    'src.preview': _sys.modules['preview'],
+    'src.batch':   _sys.modules['batch'],
 })
+# mock.patch() looks up 'src.batch' via getattr(sys.modules['src'], 'batch')
+# before falling back to sys.modules — and that fallback is a no-op when the
+# key is already present, so it never links the attribute. Set it directly so
+# patch() finds it on the first getattr, both when running under the 'src'
+# package (tests) and when 'src' isn't imported at all (production, gui.py
+# loaded as a bare top-level module).
+if 'src' in _sys.modules:
+    _src_pkg = _sys.modules['src']
+    _src_pkg.dialogs = _sys.modules['dialogs']
+    _src_pkg.preview = _sys.modules['preview']
+    _src_pkg.batch = _sys.modules['batch']
+    del _src_pkg
 del _sys
 
 # Re-export webbrowser so existing patches (patch('src.gui.webbrowser')) still resolve.
@@ -54,7 +66,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
     _CRF_RANGE = (28, 17)
     _CQ_RANGE = (30, 15)
 
-    def __init__(self, root: tk.Misc, licensed: bool = False) -> None:
+    def __init__(self, root: "TkinterDnD.Tk", licensed: bool = False) -> None:
         """Initialize the GUI and set up all components."""
         self.root = root
         self._licensed = licensed
@@ -78,6 +90,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.tonemap_var = tk.StringVar(value=_s['tonemapper'])
         self.quality_var = tk.IntVar(value=_s['quality'])
         self.format_var = tk.StringVar(value=_s['filetype'])
+        self.color_depth_var = tk.StringVar(value=_s['color_depth'])
         self.custom_time_var = tk.StringVar()
         self.custom_time_position: float | None = None
         self.batch_items: list[dict] = []  # type: ignore[type-arg]
@@ -208,7 +221,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.browse_button, self.convert_button, self.gamma_slider,
             self.open_after_conversion_checkbutton, self.display_image_checkbutton,
             self.input_entry, self.output_entry, self.gamma_entry,
-            self.gpu_accel_checkbutton,
+            self.gpu_accel_checkbutton, self.color_depth_combobox,
         ]
         premium = [
             self.quality_slider, self.format_combobox,
@@ -247,6 +260,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 'display_preview': self.display_image_var.get(),
                 'quality': self.quality_var.get(),
                 'filetype': self.format_var.get(),
+                'color_depth': self.color_depth_var.get(),
             })
         except AttributeError:
             pass  # bare/partially-initialized instance (test contexts only)
@@ -328,6 +342,16 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                   foreground='gray').grid(row=1, column=1, columnspan=2, sticky=tk.W, padx=(10, 0))
         quality_frame.columnconfigure(1, weight=1)
 
+        color_depth_frame = ttk.Frame(self.control_frame)
+        color_depth_frame.grid(row=6, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
+        ttk.Label(color_depth_frame, text="Output Color Depth:").grid(
+            row=0, column=0, sticky=tk.W)
+        self.color_depth_combobox = ttk.Combobox(
+            color_depth_frame, textvariable=self.color_depth_var,
+            values=['8-bit', '10-bit'], state='readonly', width=8)
+        self.color_depth_combobox.grid(row=0, column=1, padx=(10, 0))
+        self.color_depth_combobox.bind('<<ComboboxSelected>>', self._on_color_depth_change)
+
         self.image_frame = ttk.Frame(self.root, padding="10")
         self.image_frame.grid(row=1, column=0, sticky=tk.W + tk.E + tk.N + tk.S)
         self.image_frame.grid_remove()
@@ -384,14 +408,14 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.loading_frame.grid_remove()
 
         self.info_label = ttk.Label(self.control_frame, text='', foreground='gray')
-        self.info_label.grid(row=6, column=0, columnspan=3, sticky=tk.W, padx=(0, 10))
+        self.info_label.grid(row=7, column=0, columnspan=3, sticky=tk.W, padx=(0, 10))
         self.info_label.grid_remove()
 
         self.error_label = ttk.Label(self.control_frame, text='', foreground='red')
-        self.error_label.grid(row=7, column=0, columnspan=3, sticky=tk.W)
+        self.error_label.grid(row=8, column=0, columnspan=3, sticky=tk.W)
 
         self._pro_banner = ttk.Frame(self.control_frame)
-        self._pro_banner.grid(row=8, column=0, columnspan=3,
+        self._pro_banner.grid(row=9, column=0, columnspan=3,
                                sticky=tk.W + tk.E, pady=(6, 2))
         self._pro_banner.grid_remove()
         ttk.Label(
@@ -466,6 +490,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.gpu_accel_checkbutton, self.quality_slider, self.format_combobox,
             self.custom_time_entry, self.custom_seek_button,
             self.add_files_button, self.clear_batch_button, self.remove_batch_button,
+            self.color_depth_combobox,
         ]
 
         self._apply_quality_range()
@@ -475,7 +500,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.control_frame.columnconfigure(0, weight=0)
         self.control_frame.columnconfigure(1, weight=1)
         self.control_frame.columnconfigure(2, weight=0)
-        for i in range(9):
+        for i in range(10):
             self.control_frame.rowconfigure(i, weight=0)
 
         self.image_frame.columnconfigure(0, weight=1)
@@ -566,6 +591,16 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         if hasattr(self, 'format_combobox'):
             self.format_combobox.selection_clear()
 
+    # ── Output Color Depth ──────────────────────────────────────────────────────
+
+    def _on_color_depth_change(self, event: object = None) -> None:
+        """10-bit output is a Pro feature; unlicensed selections revert to 8-bit
+        and surface the upsell instead of leaving the widget inertly disabled,
+        so an unlicensed user can discover the feature by trying it."""
+        if self.color_depth_var.get() == '10-bit' and not self._licensed:
+            self.color_depth_var.set('8-bit')
+            self._open_license_dialog()
+
     # ── Quality slider ─────────────────────────────────────────────────────────
 
     def _apply_quality_range(self) -> None:
@@ -606,7 +641,11 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             maxcll_str = f"  Max Nits: {int(maxcll)}" if maxcll is not None else "  Max Nits: N/A"
         else:
             maxcll_str = ""
-        return f"{w}×{h}  {fps_str}  {codec}  {hdr_tag}{maxcll_str}  Audio: {audio}"
+        # Output is always capped to 8-bit (free) / 10-bit (Pro); call out sources
+        # above that so higher-bit-depth masters aren't silently downsampled unnoticed.
+        bit_depth = properties.get('bit_depth', 0)
+        bit_depth_str = f"  {bit_depth}-bit source" if bit_depth > 10 else ""
+        return f"{w}×{h}  {fps_str}  {codec}  {hdr_tag}{maxcll_str}{bit_depth_str}  Audio: {audio}"
 
     def _update_info_label(self, file_path: str) -> None:
         """Probe file metadata and update the info strip below the output path."""
@@ -628,7 +667,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         try:
             if not self.drop_target_registered:
                 return
-            paths = self._parse_drop_paths(event.data)
+            paths = self._parse_drop_paths(getattr(event, 'data', ''))
             if not paths:
                 return
             if len(paths) > 1:
@@ -665,6 +704,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             use_gpu = self.gpu_accel_var.get()
             tonemapper = self.tonemap_var.get().lower()
             quality = int(self.quality_var.get())
+            ten_bit = self._licensed and self.color_depth_var.get() == '10-bit'
 
             output_path = self._output_path_with_format(output_path, self.format_var.get())
             self.output_path_var.set(output_path)
@@ -693,7 +733,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 input_path, output_path, gamma, use_gpu,
                 self.progress_var, self.interactable_elements, self,
                 self.open_after_conversion_var.get(), self.cancel_button,
-                tonemapper=tonemapper, quality=quality,
+                tonemapper=tonemapper, quality=quality, ten_bit=ten_bit,
             )
         except Exception as e:
             logging.error(f"Conversion error: {str(e)}", exc_info=True)

@@ -4,6 +4,7 @@ import subprocess
 import os
 import io
 import logging
+import re
 import sys
 import json
 import shutil
@@ -669,6 +670,21 @@ def _int_or_zero(v) -> int:
         return 0
 
 
+def _parse_bit_depth(video_stream: dict) -> int:
+    """Determine the source's actual bit depth (8/10/12/16), independent of the
+    output color depth we ultimately encode to (always capped to 8-bit free /
+    10-bit Pro). Prefers ffprobe's ``bits_per_raw_sample``; falls back to the
+    trailing digits in ``pix_fmt`` (e.g. ``yuv420p10le`` -> 10); defaults to 8."""
+    raw_sample = _int_or_zero(video_stream.get('bits_per_raw_sample'))
+    if raw_sample:
+        return raw_sample
+    pix_fmt = video_stream.get('pix_fmt') or ''
+    match = re.search(r'(\d+)(?:le|be)$', pix_fmt)
+    if match:
+        return int(match.group(1))
+    return 8
+
+
 def get_video_properties(input_file):
     if input_file in _VIDEO_PROPS_CACHE:
         return _VIDEO_PROPS_CACHE[input_file]
@@ -738,6 +754,7 @@ def get_video_properties(input_file):
             "subtitle_streams": subtitle_streams,
             "color_primaries": video_stream.get('color_primaries', ''),
             "color_transfer": video_stream.get('color_transfer', ''),
+            "bit_depth": _parse_bit_depth(video_stream),
         }
         with _VIDEO_PROPS_CACHE_LOCK:
             _VIDEO_PROPS_CACHE[input_file] = props

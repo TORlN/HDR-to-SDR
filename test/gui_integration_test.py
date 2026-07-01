@@ -110,6 +110,12 @@ class TestConstruction(_GuiTestBase):
         self.assertAlmostEqual(float(self.gui.quality_slider.cget('from')), 28)
         self.assertAlmostEqual(float(self.gui.quality_slider.cget('to')), 17)
 
+    def test_color_depth_combobox_values_and_readonly(self):
+        self.assertEqual(tuple(self.gui.color_depth_combobox.cget('values')),
+                         ('8-bit', '10-bit'))
+        self.assertEqual(str(self.gui.color_depth_combobox.cget('state')), 'readonly')
+        self.assertEqual(self.gui.color_depth_var.get(), '8-bit')
+
     def test_five_numbered_frame_buttons(self):
         self.assertEqual(len(self.gui.frame_buttons), 5)
         self.assertEqual([b.cget('text') for b in self.gui.frame_buttons],
@@ -156,7 +162,7 @@ class TestConstruction(_GuiTestBase):
             self.gui.quality_slider, self.gui.format_combobox,
             self.gui.custom_time_entry, self.gui.custom_seek_button,
             self.gui.add_files_button, self.gui.clear_batch_button,
-            self.gui.remove_batch_button,
+            self.gui.remove_batch_button, self.gui.color_depth_combobox,
         }
         self.assertEqual(set(self.gui.interactable_elements), expected)
 
@@ -677,6 +683,19 @@ class TestUnlicensedState(_LicensingBase):
         mock_info.assert_called_once()
         self.assertEqual(self.gui.batch_items, [])
 
+    def test_color_depth_combobox_enabled_when_unlicensed(self):
+        # Unlike quality/format/etc, this widget must stay enabled even without
+        # a license -- an unlicensed user needs to be able to click '10-bit' to
+        # discover the upsell, rather than the option being inertly greyed out.
+        self.assertFalse(self.gui.color_depth_combobox.instate(['disabled']))
+
+    def test_selecting_ten_bit_when_unlicensed_reverts_and_opens_upsell(self):
+        self.gui.color_depth_var.set('10-bit')
+        with patch.object(self.gui, '_open_license_dialog') as mock_open:
+            self.gui._on_color_depth_change()
+        mock_open.assert_called_once()
+        self.assertEqual(self.gui.color_depth_var.get(), '8-bit')
+
 
 @unittest.skipUnless(_TK_OK, _SKIP)
 class TestLicensedState(_LicensingBase):
@@ -728,6 +747,17 @@ class TestLicensedState(_LicensingBase):
         with patch.object(self.gui, 'add_batch_files') as mock_add:
             self.gui.handle_file_drop(event)
         mock_add.assert_called_once()
+
+    def test_selecting_ten_bit_when_licensed_is_kept(self):
+        self.gui.color_depth_var.set('10-bit')
+        try:
+            with patch.object(self.gui, '_open_license_dialog') as mock_open:
+                self.gui._on_color_depth_change()
+            mock_open.assert_not_called()
+            self.assertEqual(self.gui.color_depth_var.get(), '10-bit')
+        finally:
+            # This class shares one GUI instance across tests -- restore state.
+            self.gui.color_depth_var.set('8-bit')
 
 
 @unittest.skipUnless(_TK_OK, _SKIP)

@@ -59,6 +59,7 @@ class TestGetVideoProperties(unittest.TestCase):
             "subtitle_streams": [],
             "color_primaries": "",
             "color_transfer": "",
+            "bit_depth": 8,
         }
 
         properties = get_video_properties(input_file)
@@ -120,6 +121,7 @@ class TestGetVideoProperties(unittest.TestCase):
             ],
             "color_primaries": "",
             "color_transfer": "",
+            "bit_depth": 8,
         }
         self.assertEqual(properties, expected_properties)
 
@@ -335,6 +337,52 @@ class TestGetVideoPropertiesColorFields(unittest.TestCase):
         props = get_video_properties('sdr.mp4')
         self.assertEqual(props.get('color_primaries'), '')
         self.assertEqual(props.get('color_transfer'), '')
+
+
+class TestGetVideoPropertiesBitDepth(unittest.TestCase):
+    """get_video_properties must surface the source's actual bit depth, even
+    when it's above the 8/10-bit output options (e.g. 12-bit or 16-bit masters)."""
+
+    @staticmethod
+    def _probe(mock_popen, video_stream):
+        proc = mock_popen.return_value
+        proc.returncode = 0
+        proc.communicate.return_value = (json.dumps({
+            "streams": [{"codec_type": "video", "width": 1920, "height": 1080,
+                         "codec_name": "hevc", "avg_frame_rate": "24/1",
+                         "bit_rate": "10000000", **video_stream}],
+            "format": {"duration": "60.0"},
+        }).encode(), b'')
+
+    @patch('src.utils.subprocess.Popen')
+    def test_bit_depth_from_bits_per_raw_sample(self, mock_popen):
+        self._probe(mock_popen, {"bits_per_raw_sample": "12", "pix_fmt": "yuv420p12le"})
+        props = get_video_properties('bitdepth_raw.mkv')
+        self.assertEqual(props['bit_depth'], 12)
+
+    @patch('src.utils.subprocess.Popen')
+    def test_bit_depth_falls_back_to_pix_fmt(self, mock_popen):
+        self._probe(mock_popen, {"pix_fmt": "yuv420p10le"})
+        props = get_video_properties('bitdepth_pixfmt.mkv')
+        self.assertEqual(props['bit_depth'], 10)
+
+    @patch('src.utils.subprocess.Popen')
+    def test_bit_depth_16_from_pix_fmt(self, mock_popen):
+        self._probe(mock_popen, {"pix_fmt": "yuv444p16le"})
+        props = get_video_properties('bitdepth_16.mkv')
+        self.assertEqual(props['bit_depth'], 16)
+
+    @patch('src.utils.subprocess.Popen')
+    def test_bit_depth_defaults_to_8_when_undeterminable(self, mock_popen):
+        self._probe(mock_popen, {"pix_fmt": "yuv420p"})
+        props = get_video_properties('bitdepth_default.mp4')
+        self.assertEqual(props['bit_depth'], 8)
+
+    @patch('src.utils.subprocess.Popen')
+    def test_bit_depth_defaults_to_8_when_no_pix_fmt_or_raw_sample(self, mock_popen):
+        self._probe(mock_popen, {})
+        props = get_video_properties('bitdepth_missing.mp4')
+        self.assertEqual(props['bit_depth'], 8)
 
 
 class TestGetVideoPropertiesErrors(unittest.TestCase):

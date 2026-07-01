@@ -820,6 +820,150 @@ class TestGpuEncoderCommandConstruction(unittest.TestCase):
         self.assertIn('h264_nvenc', cmd)
 
 
+class TestTenBitPixelFormat(unittest.TestCase):
+    """Output Color Depth (Premium): -pix_fmt selection on the CPU (libx264) path.
+
+    This app's bundled ffmpeg is compiled with high-bit-depth libx264 support
+    (verified: 'ffmpeg -h encoder=libx264' lists yuv420p10le among supported
+    pixel formats), so the CPU path can honor 10-bit without switching codecs.
+    """
+
+    def setUp(self):
+        patcher = patch('src.conversion.vulkan_libplacebo_available', return_value=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    _PROPS = {
+        "width": 1920, "height": 1080, "bit_rate": 4000000, "codec_name": 'h264',
+        "frame_rate": 30.0, "audio_codec": 'aac', "audio_bit_rate": 128000,
+        "duration": 120.0, "subtitle_streams": [],
+    }
+
+    def test_eight_bit_appends_yuv420p(self):
+        manager = ConversionManager()
+        cmd = manager.construct_ffmpeg_command(
+            'in.mp4', 'out.mkv', 2.2, self._PROPS, False,
+            tonemapper='reinhard', ten_bit=False)
+        self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p')
+        self.assertEqual(cmd[cmd.index('-c:v') + 1], 'libx264')
+
+    def test_ten_bit_appends_yuv420p10le_and_keeps_libx264(self):
+        manager = ConversionManager()
+        cmd = manager.construct_ffmpeg_command(
+            'in.mp4', 'out.mkv', 2.2, self._PROPS, False,
+            tonemapper='reinhard', ten_bit=True)
+        self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p10le')
+        self.assertEqual(cmd[cmd.index('-c:v') + 1], 'libx264')
+
+    def test_ten_bit_defaults_to_false(self):
+        """Omitting ten_bit entirely must not change the existing 8-bit behavior."""
+        manager = ConversionManager()
+        cmd = manager.construct_ffmpeg_command(
+            'in.mp4', 'out.mkv', 2.2, self._PROPS, False, tonemapper='reinhard')
+        self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p')
+
+
+class TestTenBitHardwareEncoderMapping(unittest.TestCase):
+    """10-bit output on a hardware encoder must swap to its HEVC counterpart.
+
+    None of the vendor H.264 hardware encoders (nvenc/amf/qsv) support 10-bit;
+    the HEVC variants do, using the semi-planar p010le pixel format.
+    """
+
+    def setUp(self):
+        patcher = patch('src.conversion.vulkan_libplacebo_available', return_value=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    _BASE_PROPS = {
+        "width": 1920, "height": 1080, "bit_rate": 4000000,
+        "frame_rate": 30.0, "audio_codec": "aac", "audio_bit_rate": 128000,
+        "subtitle_streams": [],
+    }
+
+    def _cmd(self, encoder, ten_bit):
+        m = ConversionManager()
+        m._gpu_encoder = encoder
+        return m.construct_ffmpeg_command(
+            'in.mp4', 'out.mkv', 1.0, self._BASE_PROPS,
+            use_gpu=True, tonemapper='reinhard', ten_bit=ten_bit
+        )
+
+    def test_nvenc_maps_to_hevc_nvenc_p010le(self):
+        cmd = self._cmd('h264_nvenc', ten_bit=True)
+        self.assertEqual(cmd[cmd.index('-c:v') + 1], 'hevc_nvenc')
+        self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'p010le')
+        # The CUDA decode hwaccel dispatch is keyed on the NVIDIA vendor, not
+        # on the H.264-vs-HEVC encode target, so it must still be present.
+        self.assertIn('-hwaccel', cmd)
+        self.assertIn('cuda', cmd)
+
+    def test_amf_maps_to_hevc_amf_p010le(self):
+        cmd = self._cmd('h264_amf', ten_bit=True)
+        self.assertEqual(cmd[cmd.index('-c:v') + 1], 'hevc_amf')
+        self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'p010le')
+
+    def test_qsv_maps_to_hevc_qsv_p010le(self):
+        cmd = self._cmd('h264_qsv', ten_bit=True)
+        self.assertEqual(cmd[cmd.index('-c:v') + 1], 'hevc_qsv')
+        self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'p010le')
+        self.assertIn('-hwaccel', cmd)
+        self.assertIn('qsv', cmd)
+
+    def test_nvenc_eight_bit_is_unaffected(self):
+        """ten_bit=False must not disturb the existing H.264 hardware path."""
+        cmd = self._cmd('h264_nvenc', ten_bit=False)
+        self.assertEqual(cmd[cmd.index('-c:v') + 1], 'h264_nvenc')
+        self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p')
+
+
+class TestTenBitContainerGuardrail(unittest.TestCase):
+    """Defensive validation: some legacy containers can never carry 10-bit video.
+
+    The .m4v profile (Apple's legacy "iPod video" MPEG-4 variant) predates
+    HEVC/10-bit entirely and only ever allowed 8-bit H.264 Baseline/Main/High.
+    Selecting it with 10-bit enabled must be caught before ffmpeg is ever
+    launched -- not discovered via a failing subprocess.
+    """
+
+    def setUp(self):
+        self.manager = ConversionManager()
+
+    def test_rejects_legacy_m4v_with_ten_bit(self):
+        error = self.manager.validate_ten_bit_output('C:/out/movie.m4v', True)
+        self.assertIsNotNone(error)
+        self.assertIn('m4v', error.lower())
+
+    def test_allows_modern_containers_with_ten_bit(self):
+        for path in ('out.mp4', 'out.mkv', 'out.mov'):
+            self.assertIsNone(self.manager.validate_ten_bit_output(path, True),
+                              msg=f'{path} should be allowed with 10-bit')
+
+    def test_skips_validation_when_ten_bit_not_requested(self):
+        # An 8-bit .m4v output is perfectly normal; only 10-bit is the problem.
+        self.assertIsNone(self.manager.validate_ten_bit_output('legacy.m4v', False))
+
+    @patch('src.conversion.messagebox.showwarning')
+    @patch('src.conversion.subprocess.Popen')
+    @patch('src.conversion.get_video_properties')
+    def test_start_conversion_blocks_before_launching_ffmpeg(
+            self, mock_get_props, mock_popen, mock_showwarning):
+        """The GUI/batch entry point must warn and bail out -- never hand an
+        invalid 10-bit + .m4v combination to subprocess.Popen."""
+        mock_gui = MagicMock()
+        progress_var = MagicMock()
+
+        manager = ConversionManager()
+        manager.start_conversion(
+            'input.mp4', 'output.m4v', 2.2, False,
+            progress_var, [], mock_gui, False, MagicMock(), ten_bit=True)
+
+        mock_showwarning.assert_called_once()
+        mock_popen.assert_not_called()
+        mock_get_props.assert_not_called()  # bail out before even probing the file
+        self.assertIsNone(manager.process)
+
+
 class TestContainerStreamArgs(unittest.TestCase):
     """Container-aware audio/subtitle handling in construct_ffmpeg_command."""
 

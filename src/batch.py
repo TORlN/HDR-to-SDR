@@ -33,6 +33,7 @@ class _BatchMixin:
         gpu_accel_var: tk.BooleanVar
         tonemap_var: tk.StringVar
         quality_var: tk.IntVar
+        color_depth_var: tk.StringVar
         open_after_conversion_var: tk.BooleanVar
         progress_var: tk.DoubleVar
         interactable_elements: list  # type: ignore[type-arg]
@@ -177,12 +178,13 @@ class _BatchMixin:
         use_gpu = self.gpu_accel_var.get()
         tonemapper = self.tonemap_var.get().lower()
         quality = int(self.quality_var.get())
+        ten_bit = self._licensed and self.color_depth_var.get() == '10-bit'
 
         conversion_manager.start_conversion(
             input_path, output_path, gamma, use_gpu,
             self.progress_var, self.interactable_elements, self,
             self.open_after_conversion_var.get(), self.cancel_button,
-            tonemapper=tonemapper, quality=quality,
+            tonemapper=tonemapper, quality=quality, ten_bit=ten_bit,
             on_complete=self._on_batch_item_complete
         )
         return True

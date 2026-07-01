@@ -33,7 +33,7 @@ class TestLoadSettings(unittest.TestCase):
         data = {
             'gamma': 2.2, 'tonemapper': 'Hable',
             'gpu_accel': True, 'open_after_conversion': True, 'display_preview': False,
-            'quality': 19, 'filetype': 'MKV',
+            'quality': 19, 'filetype': 'MKV', 'color_depth': '10-bit',
         }
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
             json.dump(data, f)

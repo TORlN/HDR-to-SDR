@@ -572,5 +572,45 @@ class TestBuildInfoText(TestCase):
         self.assertNotIn('1000.0', text)
 
 
+class TestBuildInfoTextSourceBitDepth(TestCase):
+    """Source bit depth above 10-bit (12-bit, 16-bit masters) must be called out,
+    since output is always capped to 8-bit (free) or 10-bit (Pro) regardless."""
+
+    def _props(self, bit_depth):
+        return {
+            'width': 3840, 'height': 2160,
+            'frame_rate': 23.976,
+            'codec_name': 'hevc',
+            'audio_codec': 'eac3',
+            'color_primaries': 'bt2020',
+            'color_transfer': 'smpte2084',
+            'bit_depth': bit_depth,
+        }
+
+    def test_12bit_source_is_called_out(self):
+        text = HDRConverterGUI._build_info_text(self._props(12), maxcll=1000.0)
+        self.assertIn('12-bit source', text)
+
+    def test_16bit_source_is_called_out(self):
+        text = HDRConverterGUI._build_info_text(self._props(16), maxcll=1000.0)
+        self.assertIn('16-bit source', text)
+
+    def test_10bit_source_not_called_out(self):
+        """10-bit is already the best available output, so no extra note is needed."""
+        text = HDRConverterGUI._build_info_text(self._props(10), maxcll=1000.0)
+        self.assertNotIn('-bit source', text)
+
+    def test_8bit_source_not_called_out(self):
+        text = HDRConverterGUI._build_info_text(self._props(8), maxcll=1000.0)
+        self.assertNotIn('-bit source', text)
+
+    def test_missing_bit_depth_not_called_out(self):
+        """Older probes / mocks without a bit_depth key must not crash or show a note."""
+        props = self._props(8)
+        del props['bit_depth']
+        text = HDRConverterGUI._build_info_text(props, maxcll=1000.0)
+        self.assertNotIn('-bit source', text)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -5,7 +5,7 @@ import logging
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageTk
@@ -66,7 +66,8 @@ class _HDRPreviewMixin:
     """
 
     if TYPE_CHECKING:
-        root: tk.Misc
+        from tkinterdnd2 import TkinterDnD
+        root: TkinterDnD.Tk
         original_image: Image.Image | None
         converted_image_base: Image.Image | None
         _converted_preview_base: Image.Image | None
@@ -83,7 +84,7 @@ class _HDRPreviewMixin:
         image_frame: ttk.Frame
         control_frame: ttk.Frame
         action_frame: ttk.Frame
-        batch_frame: ttk.Frame
+        batch_frame: ttk.LabelFrame
         error_label: ttk.Label
         display_image_var: tk.BooleanVar
         input_path_var: tk.StringVar
@@ -262,7 +263,7 @@ class _HDRPreviewMixin:
             return
         if getattr(self, 'original_image', None) is None:
             return
-        if getattr(self, '_resize_job', None) is not None:
+        if self._resize_job is not None:
             try:
                 self.root.after_cancel(self._resize_job)
             except Exception:
@@ -501,7 +502,7 @@ class _HDRPreviewMixin:
         self._duration_value = properties['duration']
         return self._duration_value  # type: ignore[return-value]
 
-    def _schedule_on_main(self, callback: object) -> None:
+    def _schedule_on_main(self, callback: Callable[[], object]) -> None:
         """Run a callback on the Tk main thread, tolerating shutdown races."""
         try:
             self.root.after(0, callback)

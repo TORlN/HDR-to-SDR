@@ -1214,6 +1214,8 @@ class TestBatchProcessing(unittest.TestCase):
         gui.gpu_accel_var = MagicMock(); gui.gpu_accel_var.get.return_value = False
         gui.tonemap_var = MagicMock(); gui.tonemap_var.get.return_value = 'Mobius'
         gui.quality_var = MagicMock(); gui.quality_var.get.return_value = 20
+        gui.color_depth_var = MagicMock(); gui.color_depth_var.get.return_value = '8-bit'
+        gui._licensed = True
         gui.open_after_conversion_var = MagicMock()
         gui.open_after_conversion_var.get.return_value = False
         gui.progress_var = MagicMock()
@@ -1525,6 +1527,8 @@ class TestConvertVideoBranches(unittest.TestCase):
         gui.tonemap_var = MagicMock(); gui.tonemap_var.get.return_value = 'Mobius'
         gui.quality_var = MagicMock(); gui.quality_var.get.return_value = 21
         gui.format_var = MagicMock(); gui.format_var.get.return_value = 'MKV'
+        gui.color_depth_var = MagicMock(); gui.color_depth_var.get.return_value = '8-bit'
+        gui._licensed = True
         return gui
 
     @patch('src.gui.conversion_manager')
@@ -1952,12 +1956,14 @@ class TestGuiLifecycle(unittest.TestCase):
         for name, val in [('gamma_var', 1.0),
                           ('tonemap_var', 'Mobius'), ('gpu_accel_var', False),
                           ('open_after_conversion_var', False), ('display_image_var', True),
-                          ('quality_var', 21), ('format_var', 'MKV')]:
+                          ('quality_var', 21), ('format_var', 'MKV'),
+                          ('color_depth_var', '10-bit')]:
             m = MagicMock(); m.get.return_value = val
             setattr(gui, name, m)
         gui._save_current_settings()
         self.assertEqual(mock_save.call_args[0][0]['quality'], 21)
         self.assertEqual(mock_save.call_args[0][0]['filetype'], 'MKV')
+        self.assertEqual(mock_save.call_args[0][0]['color_depth'], '10-bit')
 
     @patch('src.gui.conversion_manager')
     def test_cancel_conversion_delegates_to_manager(self, mock_cm):

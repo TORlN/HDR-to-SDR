@@ -287,7 +287,7 @@ class TestPreviewWorkerThread(unittest.TestCase):
         gui._render_preview_images = MagicMock()
         gui._prewarm_other_frames = MagicMock()  # isolate the visible-frame extraction
 
-        with patch('src.gui.get_video_properties', return_value={'duration': 100.0}):
+        with patch('src.preview.get_video_properties', return_value={'duration': 100.0}):
             gui.display_frames('in.mp4')
             gui._preview_thread.join(timeout=5)
 
@@ -324,7 +324,7 @@ class TestPreviewWorkerThread(unittest.TestCase):
 
         gui._extract_preview_images = fake_extract
 
-        with patch('src.gui.get_video_properties', return_value={'duration': 100.0}):
+        with patch('src.preview.get_video_properties', return_value={'duration': 100.0}):
             gui.display_frames('in.mp4')
             gui._preview_thread.join(timeout=5)
 
@@ -368,7 +368,7 @@ class TestPreviewWorkerThread(unittest.TestCase):
         gui.handle_preview_error = MagicMock()
 
         # get_video_properties returning None makes the worker raise.
-        with patch('src.gui.get_video_properties', return_value=None):
+        with patch('src.preview.get_video_properties', return_value=None):
             gui.display_frames('in.mp4')
             gui._preview_thread.join(timeout=5)
 
@@ -387,7 +387,7 @@ class TestPreviewWorkerThread(unittest.TestCase):
         gui._render_preview_images = MagicMock()
         gui._prewarm_other_frames = MagicMock()
 
-        with patch('src.gui.get_video_properties', return_value={'duration': 60.0}):
+        with patch('src.preview.get_video_properties', return_value={'duration': 60.0}):
             gui.display_frames('in.mp4')
             gui._preview_thread.join(timeout=5)
 
@@ -408,8 +408,8 @@ class TestPreviewPrewarm(unittest.TestCase):
         gui._preview_cache_converted = {}
         return gui
 
-    @patch('src.gui.extract_frames_with_conversion_batch', return_value=[])
-    @patch('src.gui.extract_frames_batch', return_value=[])
+    @patch('src.preview.extract_frames_with_conversion_batch', return_value=[])
+    @patch('src.preview.extract_frames_batch', return_value=[])
     def test_two_batch_calls_for_four_frames(self, mock_orig, mock_conv):
         """Whole prewarm uses exactly 1 original batch call + 1 converted batch call."""
         gui = self._gui(current=1)
@@ -417,8 +417,8 @@ class TestPreviewPrewarm(unittest.TestCase):
         self.assertEqual(mock_orig.call_count, 1)
         self.assertEqual(mock_conv.call_count, 1)
 
-    @patch('src.gui.extract_frames_with_conversion_batch', return_value=[])
-    @patch('src.gui.extract_frames_batch', return_value=[])
+    @patch('src.preview.extract_frames_with_conversion_batch', return_value=[])
+    @patch('src.preview.extract_frames_batch', return_value=[])
     def test_extracts_every_other_frame_position(self, mock_orig, mock_conv):
         """Batch receives the 4 non-current time positions."""
         gui = self._gui(current=1)
@@ -427,8 +427,8 @@ class TestPreviewPrewarm(unittest.TestCase):
         # index/(total+1)*duration for indices 2..5 (index 1 = current, skipped)
         self.assertEqual(sorted(round(t, 3) for t in positions), [20.0, 30.0, 40.0, 50.0])
 
-    @patch('src.gui.extract_frames_with_conversion_batch', return_value=[])
-    @patch('src.gui.extract_frames_batch', return_value=[])
+    @patch('src.preview.extract_frames_with_conversion_batch', return_value=[])
+    @patch('src.preview.extract_frames_batch', return_value=[])
     def test_skips_the_currently_displayed_frame(self, mock_orig, mock_conv):
         """Frame at the current index is never included in the batch positions."""
         gui = self._gui(current=3)
@@ -437,8 +437,8 @@ class TestPreviewPrewarm(unittest.TestCase):
         self.assertEqual(len(positions), 4)
         self.assertNotIn(30.0, [round(t, 3) for t in positions])  # 3/6*60 = 30
 
-    @patch('src.gui.extract_frames_with_conversion_batch')
-    @patch('src.gui.extract_frames_batch')
+    @patch('src.preview.extract_frames_with_conversion_batch')
+    @patch('src.preview.extract_frames_batch')
     def test_stops_immediately_when_superseded(self, mock_orig, mock_conv):
         """Stale generation → batch functions never called."""
         gui = self._gui()  # _preview_generation=3
@@ -446,21 +446,21 @@ class TestPreviewPrewarm(unittest.TestCase):
         mock_orig.assert_not_called()
         mock_conv.assert_not_called()
 
-    @patch('src.gui.extract_frames_with_conversion_batch', return_value=[])
-    @patch('src.gui.extract_frames_batch')
+    @patch('src.preview.extract_frames_with_conversion_batch', return_value=[])
+    @patch('src.preview.extract_frames_batch')
     def test_original_batch_errors_are_swallowed(self, mock_orig, mock_conv):
         """A batch failure must not propagate out of the background worker."""
         mock_orig.side_effect = RuntimeError('batch decode fail')
         gui = self._gui()
-        with patch('src.gui.logging'):
+        with patch('src.preview.logging'):
             gui._prewarm_other_frames('in.mkv', 60.0, 'mobius', generation=3)
 
-    @patch('src.gui.extract_frames_with_conversion_batch')
-    @patch('src.gui.extract_frames_batch', return_value=[])
+    @patch('src.preview.extract_frames_with_conversion_batch')
+    @patch('src.preview.extract_frames_batch', return_value=[])
     def test_converted_batch_errors_are_swallowed(self, mock_orig, mock_conv):
         mock_conv.side_effect = RuntimeError('tonemap batch fail')
         gui = self._gui()
-        with patch('src.gui.logging'):
+        with patch('src.preview.logging'):
             gui._prewarm_other_frames('in.mkv', 60.0, 'mobius', generation=3)
 
 
@@ -513,7 +513,7 @@ class TestPreviewPool(unittest.TestCase):
         gui._render_preview_images = MagicMock()
         gui._prewarm_other_frames = MagicMock()
 
-        with patch('src.gui.get_video_properties', return_value={'duration': 30.0}):
+        with patch('src.preview.get_video_properties', return_value={'duration': 30.0}):
             gui.display_frames('v.mp4')
 
         self.assertIsInstance(gui._preview_thread, _PreviewFuture)
@@ -538,7 +538,7 @@ class TestPreviewPool(unittest.TestCase):
         gui._render_preview_images = MagicMock()
         gui._prewarm_other_frames = MagicMock()
 
-        with patch('src.gui.get_video_properties', return_value={'duration': 30.0}):
+        with patch('src.preview.get_video_properties', return_value={'duration': 30.0}):
             gui.display_frames('v.mp4')
             gui._preview_thread.join(timeout=5)
 
@@ -600,7 +600,7 @@ class TestPreviewPool(unittest.TestCase):
 
     # ── _prewarm_batch_originals ────────────────────────────────────────────
 
-    @patch('src.gui.extract_frames_batch')
+    @patch('src.preview.extract_frames_batch')
     def test_batch_originals_populates_cache(self, mock_batch):
         img = MagicMock()
         mock_batch.return_value = [img]
@@ -614,7 +614,7 @@ class TestPreviewPool(unittest.TestCase):
         self.assertIn(('v.mkv', 10.0), gui._preview_cache_original)
         self.assertIs(gui._preview_cache_original[('v.mkv', 10.0)], img)
 
-    @patch('src.gui.extract_frames_batch')
+    @patch('src.preview.extract_frames_batch')
     def test_batch_originals_bails_when_stale(self, mock_batch):
         gui = _bare_gui()
         gui._preview_generation = 5
@@ -623,19 +623,19 @@ class TestPreviewPool(unittest.TestCase):
 
         mock_batch.assert_not_called()
 
-    @patch('src.gui.extract_frames_batch')
+    @patch('src.preview.extract_frames_batch')
     def test_batch_originals_swallows_error(self, mock_batch):
         mock_batch.side_effect = RuntimeError('ffmpeg exploded')
         gui = _bare_gui()
         gui._preview_generation = 1
         gui._preview_cache_original = {}
         gui._cache_lock = threading.Lock()
-        with patch('src.gui.logging'):
+        with patch('src.preview.logging'):
             gui._prewarm_batch_originals('v.mkv', [10.0], generation=1)  # must not raise
 
     # ── _prewarm_batch_converted ────────────────────────────────────────────
 
-    @patch('src.gui.extract_frames_with_conversion_batch')
+    @patch('src.preview.extract_frames_with_conversion_batch')
     def test_batch_converted_populates_cache(self, mock_batch):
         img = MagicMock()
         mock_batch.return_value = [img]
@@ -649,7 +649,7 @@ class TestPreviewPool(unittest.TestCase):
         self.assertIn(('v.mkv', 10.0, 'mobius'), gui._preview_cache_converted)
         self.assertIs(gui._preview_cache_converted[('v.mkv', 10.0, 'mobius')], img)
 
-    @patch('src.gui.extract_frames_with_conversion_batch')
+    @patch('src.preview.extract_frames_with_conversion_batch')
     def test_batch_converted_bails_when_stale(self, mock_batch):
         gui = _bare_gui()
         gui._preview_generation = 5
@@ -658,14 +658,14 @@ class TestPreviewPool(unittest.TestCase):
 
         mock_batch.assert_not_called()
 
-    @patch('src.gui.extract_frames_with_conversion_batch')
+    @patch('src.preview.extract_frames_with_conversion_batch')
     def test_batch_converted_swallows_error(self, mock_batch):
         mock_batch.side_effect = RuntimeError('tonemap exploded')
         gui = _bare_gui()
         gui._preview_generation = 1
         gui._preview_cache_converted = {}
         gui._cache_lock = threading.Lock()
-        with patch('src.gui.logging'):
+        with patch('src.preview.logging'):
             gui._prewarm_batch_converted('v.mkv', [10.0], 'mobius', generation=1)
 
     # ── on_close shuts down the pool ────────────────────────────────────────
@@ -1229,7 +1229,7 @@ class TestBatchProcessing(unittest.TestCase):
         return {'input': f'{name}.mkv', 'output': f'{name}_sdr.mkv',
                 'format': 'MKV', 'status': status}
 
-    @patch('src.gui.conversion_manager')
+    @patch('src.batch.conversion_manager')
     @patch('src.gui.os.path.isfile', return_value=True)
     def test_start_batch_starts_first_pending_item(self, _isfile, mock_cm):
         gui = self._gui()
@@ -1242,7 +1242,7 @@ class TestBatchProcessing(unittest.TestCase):
         self.assertEqual(kwargs['quality'], 20)
         gui.unregister_drop_target.assert_called_once()  # like a single-file convert
 
-    @patch('src.gui.conversion_manager')
+    @patch('src.batch.conversion_manager')
     @patch('src.gui.os.path.isfile', return_value=True)
     def test_start_batch_requeues_a_fully_processed_queue(self, _isfile, mock_cm):
         # Re-running a queue whose items are all Done/Failed must requeue them and
@@ -1254,7 +1254,7 @@ class TestBatchProcessing(unittest.TestCase):
         self.assertEqual(gui.batch_items[1]['status'], 'Pending')
         mock_cm.start_conversion.assert_called_once()
 
-    @patch('src.gui.conversion_manager')
+    @patch('src.batch.conversion_manager')
     @patch('src.gui.os.path.isfile', return_value=True)
     def test_start_batch_keeps_done_items_when_pending_remain(self, _isfile, mock_cm):
         # A partially-run queue (some Done, some Pending) must resume the pending
@@ -1266,7 +1266,7 @@ class TestBatchProcessing(unittest.TestCase):
         self.assertEqual(gui.batch_items[1]['status'], 'Converting')
         mock_cm.start_conversion.assert_called_once()
 
-    @patch('src.gui.conversion_manager')
+    @patch('src.batch.conversion_manager')
     @patch('src.gui.os.path.isfile', return_value=True)
     def test_complete_advances_to_next_item(self, _isfile, mock_cm):
         mock_cm.cancelled = False
@@ -1278,8 +1278,8 @@ class TestBatchProcessing(unittest.TestCase):
         self.assertEqual(gui.batch_items[1]['status'], 'Converting')
         mock_cm.start_conversion.assert_called_once()  # next item kicked off
 
-    @patch('src.gui.messagebox')
-    @patch('src.gui.conversion_manager')
+    @patch('src.batch.messagebox')
+    @patch('src.batch.conversion_manager')
     def test_complete_finishes_when_no_pending_left(self, mock_cm, mock_mb):
         mock_cm.cancelled = False
         gui = self._gui()
@@ -1292,8 +1292,8 @@ class TestBatchProcessing(unittest.TestCase):
         gui.cancel_button.grid_remove.assert_called_once()
         gui.register_drop_target.assert_called_once()
 
-    @patch('src.gui.messagebox')
-    @patch('src.gui.conversion_manager')
+    @patch('src.batch.messagebox')
+    @patch('src.batch.conversion_manager')
     def test_missing_input_is_failed_and_skipped(self, mock_cm, mock_mb):
         gui = self._gui()
         gui.batch_items = [self._item('gone'), self._item('b')]
@@ -1312,7 +1312,7 @@ class TestBatchProcessing(unittest.TestCase):
         gui.start_batch.assert_called_once()
         mock_cm.start_conversion.assert_not_called()  # single-file path skipped
 
-    @patch('src.gui.conversion_manager')
+    @patch('src.batch.conversion_manager')
     @patch('src.gui.os.path.isfile', return_value=True)
     def test_start_loads_converting_file_into_preview(self, _isfile, mock_cm):
         # The preview should switch to whichever file is currently converting.
@@ -1321,7 +1321,7 @@ class TestBatchProcessing(unittest.TestCase):
         gui.start_batch()
         gui._load_input_file.assert_called_once_with('a.mkv')
 
-    @patch('src.gui.conversion_manager')
+    @patch('src.batch.conversion_manager')
     @patch('src.gui.os.path.isfile', return_value=True)
     def test_start_does_not_reload_already_previewed_file(self, _isfile, mock_cm):
         # The top file was already loaded when added; starting the batch must not
@@ -1333,7 +1333,7 @@ class TestBatchProcessing(unittest.TestCase):
         gui._load_input_file.assert_not_called()
         mock_cm.start_conversion.assert_called_once()  # conversion still starts
 
-    @patch('src.gui.conversion_manager')
+    @patch('src.batch.conversion_manager')
     @patch('src.gui.os.path.isfile', return_value=True)
     def test_advance_loads_next_file_into_preview(self, _isfile, mock_cm):
         mock_cm.cancelled = False
@@ -1343,8 +1343,8 @@ class TestBatchProcessing(unittest.TestCase):
         gui._on_batch_item_complete(True)
         gui._load_input_file.assert_called_once_with('b.mkv')  # moved on to file b
 
-    @patch('src.gui.messagebox')
-    @patch('src.gui.conversion_manager')
+    @patch('src.batch.messagebox')
+    @patch('src.batch.conversion_manager')
     @patch('src.gui.os.path.isfile', return_value=True)
     def test_finished_batch_does_not_reload_preview(self, _isfile, mock_cm, _mb):
         gui = self._gui()
@@ -1358,8 +1358,8 @@ class TestPreviewExtractionCache(unittest.TestCase):
     """Extracted frames are cached by (path, time, tonemapper) so
     revisiting a frame/tonemapper combo never re-runs ffmpeg."""
 
-    @patch('src.gui.extract_frame_with_conversion', return_value='conv')
-    @patch('src.gui.extract_frame', return_value='orig')
+    @patch('src.preview.extract_frame_with_conversion', return_value='conv')
+    @patch('src.preview.extract_frame', return_value='orig')
     def test_repeated_combo_is_a_cache_hit(self, mock_extract, mock_convert):
         gui = _bare_gui()
         first = gui._extract_preview_images('in.mp4', 5.0, 'reinhard')
@@ -1368,8 +1368,8 @@ class TestPreviewExtractionCache(unittest.TestCase):
         self.assertEqual(mock_convert.call_count, 1)   # converted cached
         self.assertEqual(first, second)
 
-    @patch('src.gui.extract_frame_with_conversion', side_effect=['c0', 'c1'])
-    @patch('src.gui.extract_frame', return_value='orig')
+    @patch('src.preview.extract_frame_with_conversion', side_effect=['c0', 'c1'])
+    @patch('src.preview.extract_frame', return_value='orig')
     def test_same_frame_new_tonemapper_reuses_original(self, mock_extract, mock_convert):
         gui = _bare_gui()
         gui._extract_preview_images('in.mp4', 5.0, 'reinhard')
@@ -1377,16 +1377,16 @@ class TestPreviewExtractionCache(unittest.TestCase):
         self.assertEqual(mock_extract.call_count, 1)   # original shared across tonemappers
         self.assertEqual(mock_convert.call_count, 2)   # converted differs per tonemapper
 
-    @patch('src.gui.extract_frame_with_conversion', side_effect=['a', 'b'])
-    @patch('src.gui.extract_frame', return_value='orig')
+    @patch('src.preview.extract_frame_with_conversion', side_effect=['a', 'b'])
+    @patch('src.preview.extract_frame', return_value='orig')
     def test_different_tonemapper_is_a_cache_miss(self, mock_extract, mock_convert):
         gui = _bare_gui()
         gui._extract_preview_images('in.mp4', 5.0, 'mobius')
         gui._extract_preview_images('in.mp4', 5.0, 'hable')
         self.assertEqual(mock_convert.call_count, 2)
 
-    @patch('src.gui.extract_frame_with_conversion', return_value='c')
-    @patch('src.gui.extract_frame', return_value='o')
+    @patch('src.preview.extract_frame_with_conversion', return_value='c')
+    @patch('src.preview.extract_frame', return_value='o')
     def test_new_frame_position_reextracts_original(self, mock_extract, mock_convert):
         gui = _bare_gui()
         gui._extract_preview_images('in.mp4', 5.0, 'reinhard')
@@ -1395,20 +1395,20 @@ class TestPreviewExtractionCache(unittest.TestCase):
 
     def test_reset_clears_the_cache(self):
         gui = _bare_gui()
-        with patch('src.gui.extract_frame', return_value='o'), \
-             patch('src.gui.extract_frame_with_conversion', return_value='c'):
+        with patch('src.preview.extract_frame', return_value='o'), \
+             patch('src.preview.extract_frame_with_conversion', return_value='c'):
             gui._extract_preview_images('in.mp4', 5.0, 'reinhard')
         gui._reset_preview_cache()
-        with patch('src.gui.extract_frame', return_value='o2') as me, \
-             patch('src.gui.extract_frame_with_conversion', return_value='c2') as mc:
+        with patch('src.preview.extract_frame', return_value='o2') as me, \
+             patch('src.preview.extract_frame_with_conversion', return_value='c2') as mc:
             gui._extract_preview_images('in.mp4', 5.0, 'reinhard')
             me.assert_called_once()   # re-extracted after reset
             mc.assert_called_once()
 
     def test_cache_is_bounded(self):
         gui = _bare_gui()
-        with patch('src.gui.extract_frame', return_value='o'), \
-             patch('src.gui.extract_frame_with_conversion', return_value='c'):
+        with patch('src.preview.extract_frame', return_value='o'), \
+             patch('src.preview.extract_frame_with_conversion', return_value='c'):
             for i in range(HDRConverterGUI._PREVIEW_CACHE_MAX + 20):
                 gui._extract_preview_images('in.mp4', float(i), 'reinhard')
         self.assertLessEqual(len(gui._preview_cache_converted),
@@ -1460,8 +1460,8 @@ class TestPreviewPerformance(unittest.TestCase):
         gui.adjust_gamma.assert_called_once_with(base, 1.5)
         gui.converted_image_label.config.assert_called_once()
 
-    @patch('src.gui.extract_frame_with_conversion', return_value='converted')
-    @patch('src.gui.extract_frame', return_value='original')
+    @patch('src.preview.extract_frame_with_conversion', return_value='converted')
+    @patch('src.preview.extract_frame', return_value='original')
     def test_extraction_targets_preview_resolution(self, mock_extract, mock_convert):
         gui = _bare_gui()
         gui._extract_preview_images('in.mp4', 5.0, 'reinhard')
@@ -1482,7 +1482,7 @@ class TestPreviewPerformance(unittest.TestCase):
         gui._extract_preview_images = MagicMock(return_value=('o', 'c'))
         gui._render_preview_images = MagicMock()
 
-        with patch('src.gui.get_video_properties',
+        with patch('src.preview.get_video_properties',
                    return_value={'duration': 100.0}) as mock_props:
             gui.display_frames('in.mp4')
             gui._preview_thread.join(timeout=5)
@@ -2313,11 +2313,11 @@ class TestApplyLicenseStateUnlicensed(unittest.TestCase):
         gui._pro_banner = MagicMock()
         return gui
 
-    def test_disables_gpu_and_reapplies_quality_range(self):
+    def test_gpu_not_disabled_when_unlicensed(self):
+        # GPU acceleration is free; unlicensed state must not force it off.
         gui = self._gui()
         gui._apply_license_state(False)
-        gui.gpu_accel_var.set.assert_called_once_with(False)
-        gui._apply_quality_range.assert_called_once()
+        gui.gpu_accel_var.set.assert_not_called()
 
     def test_resets_format_to_mp4(self):
         gui = self._gui()

@@ -633,8 +633,9 @@ class TestUnlicensedState(_LicensingBase):
             w.destroy()
         cls._class_gui = HDRConverterGUI(_probe_root, licensed=False)
 
-    def test_disables_gpu_checkbox(self):
-        self.assertTrue(self.gui.gpu_accel_checkbutton.instate(['disabled']))
+    def test_gpu_checkbox_enabled_when_unlicensed(self):
+        # GPU acceleration is free; the checkbox must stay enabled without a license.
+        self.assertFalse(self.gui.gpu_accel_checkbutton.instate(['disabled']))
 
     def test_disables_quality_slider(self):
         self.assertTrue(self.gui.quality_slider.instate(['disabled']))
@@ -656,8 +657,9 @@ class TestUnlicensedState(_LicensingBase):
         self.assertNotEqual(self.gui._pro_banner.grid_info(), {})
 
     def test_excludes_premium_from_interactable_elements(self):
+        # GPU is free, so gpu_accel_checkbutton IS included even when unlicensed.
         premium = [
-            self.gui.gpu_accel_checkbutton, self.gui.quality_slider,
+            self.gui.quality_slider,
             self.gui.format_combobox, self.gui.custom_time_entry,
             self.gui.custom_seek_button, self.gui.add_files_button,
             self.gui.clear_batch_button, self.gui.remove_batch_button,
@@ -665,6 +667,7 @@ class TestUnlicensedState(_LicensingBase):
         for widget in premium:
             self.assertNotIn(widget, self.gui.interactable_elements,
                              msg=f'{widget} must not be in interactable_elements when unlicensed')
+        self.assertIn(self.gui.gpu_accel_checkbutton, self.gui.interactable_elements)
 
     def test_multifile_drop_blocked(self):
         event = MagicMock()
@@ -747,8 +750,9 @@ class TestLicenseTransition(unittest.TestCase):
         return HDRConverterGUI(_probe_root, licensed=licensed)
 
     def test_apply_license_state_unlocks_all_premium_features(self):
+        # GPU stays enabled at all times; only quality/batch/format are Pro-gated.
         gui = self._make_gui(licensed=False)
-        self.assertTrue(gui.gpu_accel_checkbutton.instate(['disabled']))
+        self.assertFalse(gui.gpu_accel_checkbutton.instate(['disabled']))
         gui._apply_license_state(True)
         self.assertFalse(gui.gpu_accel_checkbutton.instate(['disabled']))
         self.assertFalse(gui.quality_slider.instate(['disabled']))
@@ -822,7 +826,7 @@ class TestLicenseDialog(unittest.TestCase):
     def test_submit_valid_key_sets_activated_true(self):
         dlg = self._make_dialog()
         dlg._key_var.set('VALID-KEY-1234')
-        with patch('src.gui.activate_license'):
+        with patch('src.dialogs.activate_license'):
             dlg._submit()
         self.assertTrue(dlg._activated)
 
@@ -830,7 +834,7 @@ class TestLicenseDialog(unittest.TestCase):
         import src.gui as _gm
         dlg = self._make_dialog()
         dlg._key_var.set('BAD-KEY')
-        with patch('src.gui.activate_license', side_effect=_gm.InvalidKeyError('bad')):
+        with patch('src.dialogs.activate_license', side_effect=_gm.InvalidKeyError('bad')):
             dlg._submit()
         self.assertIn('invalid', dlg._status_var.get().lower())
         self.assertFalse(dlg._activated)
@@ -840,7 +844,7 @@ class TestLicenseDialog(unittest.TestCase):
         import src.gui as _gm
         dlg = self._make_dialog()
         dlg._key_var.set('LIMIT-KEY')
-        with patch('src.gui.activate_license', side_effect=_gm.DeviceLimitError('limit')):
+        with patch('src.dialogs.activate_license', side_effect=_gm.DeviceLimitError('limit')):
             dlg._submit()
         self.assertIn('limit', dlg._status_var.get().lower())
         dlg.destroy()
@@ -849,7 +853,7 @@ class TestLicenseDialog(unittest.TestCase):
         import src.gui as _gm
         dlg = self._make_dialog()
         dlg._key_var.set('NET-KEY')
-        with patch('src.gui.activate_license', side_effect=_gm.NetworkError('offline')):
+        with patch('src.dialogs.activate_license', side_effect=_gm.NetworkError('offline')):
             dlg._submit()
         self.assertIn('connection', dlg._status_var.get().lower())
         dlg.destroy()
@@ -858,7 +862,7 @@ class TestLicenseDialog(unittest.TestCase):
         import src.gui as _gm
         dlg = self._make_dialog()
         dlg._key_var.set('ERR-KEY')
-        with patch('src.gui.activate_license', side_effect=_gm.LicenseError('custom message')):
+        with patch('src.dialogs.activate_license', side_effect=_gm.LicenseError('custom message')):
             dlg._submit()
         self.assertIn('custom message', dlg._status_var.get())
         dlg.destroy()
@@ -866,7 +870,7 @@ class TestLicenseDialog(unittest.TestCase):
     def test_manage_activations_link_opens_lemon_squeezy(self):
         """_open_manage_url must open the LS orders page in the default browser."""
         dlg = self._make_dialog()
-        with patch('src.gui.webbrowser') as mock_wb:
+        with patch('src.dialogs.webbrowser') as mock_wb:
             dlg._open_manage_url()
         mock_wb.open.assert_called_once_with('https://app.lemonsqueezy.com/my-orders')
         dlg.destroy()

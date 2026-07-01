@@ -111,9 +111,9 @@ class TestHDRConverterGUI(TestCase):
         ])
 
     @patch('src.gui.ImageTk.PhotoImage')
-    @patch('src.gui.extract_frame_with_conversion')
-    @patch('src.gui.extract_frame')
-    @patch('src.gui.get_video_properties')
+    @patch('src.preview.extract_frame_with_conversion')
+    @patch('src.preview.extract_frame')
+    @patch('src.preview.get_video_properties')
     def test_frame_preview_update(self, mock_get_properties, mock_extract, mock_convert, mock_photo_image):
         """Test frame preview update functionality."""
         # Setup mock video properties
@@ -462,7 +462,7 @@ class TestBatchCancel(TestCase):
                 pass
         self.gui.on_close()
 
-    @patch('src.gui.conversion_manager')
+    @patch('src.batch.conversion_manager')
     def test_cancel_does_not_advance_queue(self, mock_cm):
         """_on_batch_item_complete must not call _start_next_batch_item when cancelled."""
         mock_cm.cancelled = True

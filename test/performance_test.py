@@ -69,9 +69,9 @@ class TestSnappinessGuards(unittest.TestCase):
     """Deterministic invariants: the interactions that must stay subprocess-free."""
 
     @patch('src.gui.ImageTk.PhotoImage')
-    @patch('src.gui.get_video_properties')
-    @patch('src.gui.extract_frame_with_conversion')
-    @patch('src.gui.extract_frame')
+    @patch('src.preview.get_video_properties')
+    @patch('src.preview.extract_frame_with_conversion')
+    @patch('src.preview.extract_frame')
     def test_gamma_change_spawns_no_ffmpeg(self, mock_extract, mock_convert,
                                            mock_props, _mock_photo):
         gui = _bare_gui()
@@ -137,8 +137,8 @@ class TestSnappinessGuards(unittest.TestCase):
 
         self.assertEqual(gui._converted_preview_base.size, PREVIEW_SIZE)
 
-    @patch('src.gui.extract_frame_with_conversion', return_value='c')
-    @patch('src.gui.extract_frame', return_value='o')
+    @patch('src.preview.extract_frame_with_conversion', return_value='c')
+    @patch('src.preview.extract_frame', return_value='o')
     def test_preview_extraction_requests_reduced_resolution(self, mock_extract, mock_convert):
         gui = _bare_gui()
         gui._extract_preview_images('in.mp4', 5.0, 'mobius')
@@ -149,8 +149,8 @@ class TestSnappinessGuards(unittest.TestCase):
             (mock_convert.call_args.kwargs['width'], mock_convert.call_args.kwargs['height']),
             PREVIEW_SIZE)
 
-    @patch('src.gui.extract_frame_with_conversion', return_value='c')
-    @patch('src.gui.extract_frame', return_value='o')
+    @patch('src.preview.extract_frame_with_conversion', return_value='c')
+    @patch('src.preview.extract_frame', return_value='o')
     def test_revisiting_cached_frame_spawns_no_ffmpeg(self, mock_extract, mock_convert):
         gui = _bare_gui()
         gui._extract_preview_images('in.mp4', 5.0, 'reinhard')  # populate cache

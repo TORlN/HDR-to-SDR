@@ -42,9 +42,9 @@ _sys.modules.update({
 # loaded as a bare top-level module).
 if 'src' in _sys.modules:
     _src_pkg = _sys.modules['src']
-    _src_pkg.dialogs = _sys.modules['dialogs']
-    _src_pkg.preview = _sys.modules['preview']
-    _src_pkg.batch = _sys.modules['batch']
+    setattr(_src_pkg, 'dialogs', _sys.modules['dialogs'])
+    setattr(_src_pkg, 'preview', _sys.modules['preview'])
+    setattr(_src_pkg, 'batch', _sys.modules['batch'])
     del _src_pkg
 del _sys
 

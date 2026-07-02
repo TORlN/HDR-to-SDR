@@ -25,11 +25,11 @@ class ConversionManager:
     def start_conversion(self, input_path, output_path, gamma, use_gpu,
                          progress_var, interactable_elements, gui_instance,
                          open_after_conversion, cancel_button, tonemapper='reinhard',
-                         quality=23, on_complete=None, ten_bit=False):
+                         quality=23, on_complete=None, bit_depth=8):
         if not self.verify_paths(input_path, output_path):
             return
 
-        incompatibility = self.validate_ten_bit_output(output_path, ten_bit)
+        incompatibility = self.validate_bit_depth_output(output_path, bit_depth)
         if incompatibility:
             messagebox.showwarning("Warning", incompatibility)
             return
@@ -39,7 +39,7 @@ class ConversionManager:
         self.cancelled = False
         self.use_gpu = use_gpu  # Store the use_gpu state
         self._quality = quality  # remembered so a GPU->CPU retry keeps the same quality
-        self._ten_bit = ten_bit  # remembered so a GPU->CPU retry keeps the same color depth
+        self._bit_depth = bit_depth  # remembered so a GPU->CPU retry keeps the same color depth
         # When set (batch/queue runs), the per-file success/error dialog is
         # suppressed and this callback drives queue progression instead.
         self._on_complete = on_complete
@@ -63,7 +63,7 @@ class ConversionManager:
 
         cmd = self.construct_ffmpeg_command(
             input_path, output_path, gamma, properties, use_gpu,
-            tonemapper=tonemapper, quality=quality, ten_bit=ten_bit
+            tonemapper=tonemapper, quality=quality, bit_depth=bit_depth
         )
         self.process = self.start_ffmpeg_process(cmd)
 
@@ -88,15 +88,23 @@ class ConversionManager:
         for element in elements:
             element.config(state="normal")
 
-    # Hardware H.264 encoders can't do 10-bit; their HEVC counterparts can.
-    _HW_TEN_BIT_ENCODER_MAP = {
+    # Hardware H.264 encoders can't do 10-bit at all; their HEVC counterparts
+    # can. Also used to preserve an already-HEVC source's codec on GPU (see
+    # the "want_hevc" dispatch below), not just the mandatory 10-bit case.
+    _HW_HEVC_ENCODER_MAP = {
         'h264_nvenc': 'hevc_nvenc',
         'h264_amf':   'hevc_amf',
         'h264_qsv':   'hevc_qsv',
     }
 
     def construct_ffmpeg_command(self, input_path, output_path, gamma, properties, use_gpu,
-                               tonemapper='reinhard', quality=23, ten_bit=False):
+                               tonemapper='reinhard', quality=23, bit_depth=8):
+        # No hardware encoder (any vendor/generation) has a 12-bit HEVC profile
+        # in its API -- it's a fixed silicon limitation, not a driver gap.
+        # 12-bit always forces the full CPU pipeline (tonemap + encode).
+        if bit_depth >= 12:
+            use_gpu = False
+
         cmd = [
             FFMPEG_EXECUTABLE,
             '-loglevel', 'info',
@@ -177,17 +185,35 @@ class ConversionManager:
         cmd += ['-map', '0:a?']   # Map all audio streams if they exist
         cmd += subtitle_map_args
 
-        # Output Color Depth (Premium): 10-bit avoids the banding that gradient-heavy
-        # HDR sources produce once crushed down to 8-bit. Hardware H.264 encoders have
-        # no 10-bit mode at all, so they're swapped for their HEVC counterpart, which
-        # uses the semi-planar p010le format instead of a 10-bit planar YUV format.
-        pix_fmt = 'yuv420p'
-        if ten_bit:
-            if active_encoder in self._HW_TEN_BIT_ENCODER_MAP:
-                active_encoder = self._HW_TEN_BIT_ENCODER_MAP[active_encoder]
+        # Output Color Depth: 10-bit (free) / 12-bit (Pro, CPU-only) avoids the
+        # banding that gradient-heavy HDR sources produce once crushed down to
+        # 8-bit. Hardware H.264 encoders have no 10-bit mode at all, so they're
+        # swapped for their HEVC counterpart, which uses the semi-planar p010le
+        # format instead of a 10-bit planar YUV format. 12-bit forces the CPU
+        # path (see the use_gpu guard above), so it never reaches this swap.
+        codec_name = (properties.get('codec_name') or '').lower()
+        source_is_hevc = codec_name == 'hevc'
+
+        if bit_depth >= 12:
+            pix_fmt = 'yuv420p12le'
+        elif bit_depth == 10:
+            pix_fmt = 'yuv420p10le'
+        else:
+            pix_fmt = 'yuv420p'
+
+        # GPU: H.264 hardware encoders can't do 10-bit at all (mandatory
+        # swap); an already-HEVC source also swaps at 8-bit purely to
+        # preserve the source codec, since libx264/h264_* could otherwise
+        # handle 8-bit just fine.
+        if (bit_depth >= 10 or source_is_hevc) and active_encoder in self._HW_HEVC_ENCODER_MAP:
+            active_encoder = self._HW_HEVC_ENCODER_MAP[active_encoder]
+            if bit_depth == 10:
                 pix_fmt = 'p010le'
-            else:
-                pix_fmt = 'yuv420p10le'
+
+        # CPU: libx264 tops out at 10-bit, so 12-bit must switch to libx265;
+        # an already-HEVC source also switches (preservation) even at 8/10-bit,
+        # where libx264 could otherwise still handle the bit depth.
+        want_libx265 = bit_depth >= 12 or source_is_hevc
 
         # Encoding settings. `quality` is the user's quality slider value: CRF for
         # libx264, CQ/global_quality/QP for the GPU encoders (lower = better).
@@ -220,6 +246,17 @@ class ConversionManager:
                 '-global_quality', quality,
                 '-b:v', str(_bv),
             ]
+        elif want_libx265:
+            # libx264 tops out at 10-bit -- feeding it 12-bit silently
+            # downgrades to yuv420p10le instead of erroring, so 12-bit (and
+            # HEVC-source preservation in general) must switch codecs
+            # explicitly. libx265 has no 'film' tune (x264's -tune film
+            # fails encoder init on x265), so it's omitted here.
+            cmd += [
+                '-c:v', 'libx265',
+                '-preset', 'veryfast',
+                '-crf', quality,
+            ]
         else:
             # No -b:v here: libx264 in CRF (constant-quality) mode ignores a
             # target bitrate, so it was dead weight.
@@ -229,6 +266,18 @@ class ConversionManager:
                 '-tune', 'film',
                 '-crf', quality,
             ]
+
+        # HEVC in MP4/MOV must be tagged 'hvc1': ffmpeg's default sample entry
+        # is 'hev1', which QuickTime/Apple devices (and some Windows players)
+        # refuse to recognize even though the stream is fine. Matroska has no
+        # such codec tag, so MKV is left alone.
+        produces_hevc = (
+            active_encoder in self._HW_HEVC_ENCODER_MAP.values()
+            or (active_encoder is None and want_libx265)
+        )
+        out_ext = os.path.splitext(output_path)[1].lower().lstrip('.')
+        if produces_hevc and out_ext in ('mp4', 'mov'):
+            cmd += ['-tag:v', 'hvc1']
 
         # Common settings
         cmd += [
@@ -250,20 +299,20 @@ class ConversionManager:
 
     # .m4v is Apple's legacy "iPod video" MPEG-4 profile: it predates HEVC/10-bit
     # entirely and only ever allowed 8-bit H.264 Baseline/Main/High. Unlike plain
-    # .mp4/.mov it can never carry a 10-bit stream, regardless of encoder.
-    _TEN_BIT_INCOMPATIBLE_EXTS = {'m4v'}
+    # .mp4/.mov it can never carry a higher-bit-depth stream, regardless of encoder.
+    _HIGH_BIT_DEPTH_INCOMPATIBLE_EXTS = {'m4v'}
 
-    def validate_ten_bit_output(self, output_path, ten_bit):
-        """Return a user-facing error string if *ten_bit* can't be honored for
+    def validate_bit_depth_output(self, output_path, bit_depth):
+        """Return a user-facing error string if *bit_depth* can't be honored for
         this output container, else None. Callers must check this before
         constructing/launching ffmpeg so an invalid combination is caught with
         a warning instead of a failing subprocess."""
-        if not ten_bit:
+        if bit_depth <= 8:
             return None
         ext = os.path.splitext(output_path)[1].lower().lstrip('.')
-        if ext in self._TEN_BIT_INCOMPATIBLE_EXTS:
+        if ext in self._HIGH_BIT_DEPTH_INCOMPATIBLE_EXTS:
             return (
-                f"10-bit output is not supported for the legacy .{ext} container. "
+                f"{bit_depth}-bit output is not supported for the legacy .{ext} container. "
                 "Choose MP4, MOV, or MKV instead."
             )
         return None
@@ -387,7 +436,7 @@ class ConversionManager:
             tonemapper=tonemapper,
             quality=getattr(self, '_quality', 23),
             on_complete=getattr(self, '_on_complete', None),
-            ten_bit=getattr(self, '_ten_bit', False),
+            bit_depth=getattr(self, '_bit_depth', 8),
         )
 
     def parse_time(self, time_str):

@@ -90,6 +90,11 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.tonemap_var = tk.StringVar(value=_s['tonemapper'])
         self.quality_var = tk.IntVar(value=_s['quality'])
         self.format_var = tk.StringVar(value=_s['filetype'])
+        # Not persisted to settings -- resets per file load, since it's only
+        # meaningful for the current source (see _update_bit_depth_choice).
+        # Queued files keep their own choice via the item's 'bit_depth_choice'
+        # key, restored on (re)load (see _on_bit_depth_toggle).
+        self.bit_depth_var = tk.StringVar(value='10-bit')
         self.custom_time_var = tk.StringVar()
         self.custom_time_position: float | None = None
         self.batch_items: list[dict] = []  # type: ignore[type-arg]
@@ -208,6 +213,12 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.remove_batch_button.config(state=pro)
         self.clear_batch_button.config(state=pro)
 
+        # Refresh the 12-bit toggle's label/enabled state and the info strip's
+        # Pro hint immediately, in case a >10-bit file is already loaded when
+        # the license is activated.
+        self._update_bit_depth_choice()
+        self._refresh_info_label_text()
+
         self._rebuild_interactable_elements()
 
         if licensed:
@@ -221,12 +232,13 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.browse_button, self.convert_button, self.gamma_slider,
             self.open_after_conversion_checkbutton, self.display_image_checkbutton,
             self.input_entry, self.output_entry, self.gamma_entry,
-            self.gpu_accel_checkbutton,
+            self.gpu_accel_checkbutton, self.bit_depth_10_radio,
         ]
         premium = [
             self.quality_slider, self.format_combobox,
             self.custom_time_entry, self.custom_seek_button,
             self.add_files_button, self.clear_batch_button, self.remove_batch_button,
+            self.bit_depth_12_radio,
         ]
         self.interactable_elements = free + premium if self._licensed else free
 
@@ -325,6 +337,24 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         info_button_tonemap.bind('<Enter>',
                                   lambda e: self.show_tooltip(e, tooltip_text_tonemap))
         info_button_tonemap.bind('<Leave>', self.hide_tooltip)
+
+        # Conditional 10/12-bit toggle: hidden unless the loaded source has
+        # more than 10 bits to preserve (see _update_bit_depth_choice). Placed
+        # next to the tonemapper selector on the same row.
+        self.bit_depth_frame = ttk.Frame(self.control_frame)
+        self.bit_depth_frame.grid(row=3, column=2, sticky=tk.W, padx=(10, 0), pady=(5, 0))
+        ttk.Label(self.bit_depth_frame, text="Bit Depth:").grid(row=0, column=0, sticky=tk.W)
+        self.bit_depth_10_radio = ttk.Radiobutton(
+            self.bit_depth_frame, text='10-bit',
+            variable=self.bit_depth_var, value='10-bit',
+            command=self._on_bit_depth_toggle)
+        self.bit_depth_10_radio.grid(row=0, column=1, padx=(5, 0))
+        self.bit_depth_12_radio = ttk.Radiobutton(
+            self.bit_depth_frame, text='12-bit (CPU Only)',
+            variable=self.bit_depth_var, value='12-bit',
+            command=self._on_bit_depth_toggle)
+        self.bit_depth_12_radio.grid(row=0, column=2, padx=(5, 0))
+        self.bit_depth_frame.grid_remove()
 
         quality_frame = ttk.Frame(self.control_frame)
         quality_frame.grid(row=5, column=0, columnspan=3, sticky=tk.W + tk.E, pady=(5, 0))
@@ -479,6 +509,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.gpu_accel_checkbutton, self.quality_slider, self.format_combobox,
             self.custom_time_entry, self.custom_seek_button,
             self.add_files_button, self.clear_batch_button, self.remove_batch_button,
+            self.bit_depth_10_radio, self.bit_depth_12_radio,
         ]
 
         self._apply_quality_range()
@@ -549,6 +580,12 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._converted_preview_base = None
         self._reset_custom_seek()
         self._reset_preview_cache()
+        # Drop the probe state so nothing (info strip, bit-depth toggle) can be
+        # re-rendered later from a file that is no longer loaded.
+        self._source_bit_depth = 8
+        self._cached_props = None
+        self._cached_maxcll = None
+        self._update_bit_depth_choice()  # hides the 10/12-bit toggle
         if hasattr(self, 'info_label'):
             self.info_label.config(text='')
             self.info_label.grid_remove()
@@ -581,11 +618,56 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
 
     # ── Output Color Depth ──────────────────────────────────────────────────────
 
-    def _auto_ten_bit(self) -> bool:
-        """Automatically choose the output bit depth: 10-bit (Pro) only when the
-        source actually has more than 8 bits of data to preserve, otherwise
-        8-bit -- there is no user-facing toggle for this."""
-        return self._licensed and getattr(self, '_source_bit_depth', 8) > 8
+    def _update_bit_depth_choice(self) -> None:
+        """Show the 10-bit/12-bit toggle only for sources where the choice is
+        actually meaningful (>10-bit) -- hidden otherwise, matching the fully
+        automatic 8/10-bit behavior for lower-bit-depth sources. 12-bit is
+        CPU-only and Pro-gated, so its label/enabled state track license
+        state; the toggle defaults to 10-bit each time it (re)appears."""
+        if not hasattr(self, 'bit_depth_frame'):
+            return  # bare/partially-initialized instance (test contexts only)
+        source = getattr(self, '_source_bit_depth', 8)
+        if source > 10:
+            # Default to 10-bit, but a queued file remembers its own choice
+            # (stored by _on_bit_depth_toggle) so batch runs and queue clicks
+            # restore it instead of silently reverting to 10-bit.
+            choice = '10-bit'
+            if self._licensed:
+                item = self._batch_item_for_current_input()
+                if item is not None:
+                    choice = item.get('bit_depth_choice', '10-bit')
+            self.bit_depth_var.set(choice)
+            pro_text = 'CPU Only' if self._licensed else 'Pro'
+            self.bit_depth_12_radio.config(
+                text=f'12-bit ({pro_text})',
+                state='normal' if self._licensed else 'disabled')
+            self.bit_depth_frame.grid()
+        else:
+            self.bit_depth_frame.grid_remove()
+
+    def _selected_bit_depth(self) -> int:
+        """The output bit depth for the current source: 8/10-bit are fully
+        automatic; above 10-bit, a licensed user's 10/12-bit toggle choice
+        is honored (unlicensed is capped at 10 regardless of the var)."""
+        source = getattr(self, '_source_bit_depth', 8)
+        if source <= 8:
+            return 8
+        if source <= 10:
+            return 10
+        if self._licensed and getattr(self, 'bit_depth_var', None) is not None \
+                and self.bit_depth_var.get() == '12-bit':
+            return 12
+        return 10
+
+    def _on_bit_depth_toggle(self) -> None:
+        """Handle a 10/12-bit radio click: persist the choice on the queue
+        entry for the loaded file (so batch runs honor it per item, surviving
+        the reload that resets the live toggle) and refresh the info strip."""
+        item = self._batch_item_for_current_input()
+        if item is not None:
+            item['bit_depth_choice'] = self.bit_depth_var.get()
+            self._refresh_batch_list()  # show/hide the (12-bit) marker
+        self._refresh_info_label_text()
 
     # ── Quality slider ─────────────────────────────────────────────────────────
 
@@ -613,8 +695,16 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
     @staticmethod
     def _build_info_text(
             properties: dict, maxcll: float | None = None,  # type: ignore[type-arg]
-            licensed: bool = False) -> str:
-        """Format key video metadata as a compact one-line string."""
+            bit_depth: int = 8, licensed: bool = False) -> str:
+        """Format key video metadata as a compact one-line string.
+
+        *bit_depth* is the actual resolved output depth (the live 10/12-bit
+        toggle choice above a 10-bit source, or the automatic 8/10-bit choice
+        otherwise). Shows "{source}-bit -> {output}-bit" whenever they differ
+        so the conversion is visible at a glance, or just "{N}-bit" when they
+        match. An unlicensed source capped to 10-bit (rather than a licensed
+        user's own toggle choice) gets a "(Pro Only)" suffix.
+        """
         w = properties.get('width', '?')
         h = properties.get('height', '?')
         fps = properties.get('frame_rate', 0)
@@ -629,15 +719,17 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             maxcll_str = f"  Max Nits: {int(maxcll)}" if maxcll is not None else "  Max Nits: N/A"
         else:
             maxcll_str = ""
-        # Output bit depth is chosen automatically (never a user toggle): 10-bit
-        # only when licensed and the source has more than 8 bits to preserve,
-        # 8-bit otherwise -- always shown so the choice is visible at a glance.
         source_bit_depth = properties.get('bit_depth', 8)
-        bit_depth_str = f"{source_bit_depth}-bit"
-        if source_bit_depth > 8 and not licensed:
-            bit_depth_str += " -> 8-bit Output (Pro required)"
-        elif source_bit_depth > 10 and licensed:
-            bit_depth_str += " -> 10-bit Output"
+        if source_bit_depth != bit_depth:
+            bit_depth_str = f"{source_bit_depth}-bit -> {bit_depth}-bit"
+            # Only call out the license as the reason when it's actually the
+            # reason: an unlicensed source that got capped to 10-bit. A
+            # licensed user's own 10-bit toggle choice (or a 16-bit source
+            # still exceeding even Pro's 12-bit ceiling) isn't a license issue.
+            if source_bit_depth > 10 and not licensed:
+                bit_depth_str += " (Pro Only)"
+        else:
+            bit_depth_str = f"{bit_depth}-bit"
         return f"{w}×{h} | {fps_str} | {codec} | {hdr_tag}{maxcll_str} | {bit_depth_str} | Audio: {audio}"
 
     def _update_info_label(self, file_path: str) -> None:
@@ -646,11 +738,24 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             return
         props = get_video_properties(file_path)
         self._source_bit_depth = props.get('bit_depth', 8) if props else 8
+        self._update_bit_depth_choice()
+        self._cached_props = props
+        self._cached_maxcll = get_maxcll(file_path) if props else None
+        self._refresh_info_label_text()
+
+    def _refresh_info_label_text(self) -> None:
+        """Re-render the info strip from the last probe results, without
+        re-probing the file -- used after a fresh load and whenever the user
+        flips the 10/12-bit toggle, so the shown bit depth stays live."""
+        if not hasattr(self, 'info_label'):
+            return
+        props = getattr(self, '_cached_props', None)
         if props:
-            maxcll = get_maxcll(file_path)
             self.info_label.config(
                 text=self._build_info_text(
-                    props, maxcll=maxcll, licensed=getattr(self, '_licensed', False)))
+                    props, maxcll=getattr(self, '_cached_maxcll', None),
+                    bit_depth=self._selected_bit_depth(),
+                    licensed=getattr(self, '_licensed', False)))
             self.info_label.grid()
         else:
             self.info_label.config(text='')
@@ -676,7 +781,19 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 self.add_batch_files(paths)
                 return
             file_path = paths[0]
-            if file_path:
+            if not file_path:
+                return
+            if self._licensed:
+                # Licensed drops route through the queue so single- and
+                # multi-file drops behave consistently: the queue is the work
+                # list, and dropping onto a populated queue adds to it instead
+                # of bypassing it. add_batch_files may already load the file
+                # (first-load path); only load explicitly if it didn't.
+                self.add_batch_files([file_path])
+                if self.input_path_var.get() != file_path:
+                    self._load_input_file(file_path)
+            else:
+                # Batch is Pro -- unlicensed drops keep the plain load.
                 self._load_input_file(file_path)
         except Exception as e:
             logging.error(f"Error handling file drop: {e}")
@@ -700,7 +817,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             use_gpu = self.gpu_accel_var.get()
             tonemapper = self.tonemap_var.get().lower()
             quality = int(self.quality_var.get())
-            ten_bit = self._auto_ten_bit()
+            bit_depth = self._selected_bit_depth()
 
             output_path = self._output_path_with_format(output_path, self.format_var.get())
             self.output_path_var.set(output_path)
@@ -729,7 +846,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 input_path, output_path, gamma, use_gpu,
                 self.progress_var, self.interactable_elements, self,
                 self.open_after_conversion_var.get(), self.cancel_button,
-                tonemapper=tonemapper, quality=quality, ten_bit=ten_bit,
+                tonemapper=tonemapper, quality=quality, bit_depth=bit_depth,
             )
         except Exception as e:
             logging.error(f"Conversion error: {str(e)}", exc_info=True)

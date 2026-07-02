@@ -67,6 +67,12 @@ def apply_dark_theme(root):
               indicatorcolor=[('selected', ACCENT), ('!selected', FIELD)],
               foreground=[('disabled', DISABLED)])
 
+    style.configure('TRadiobutton', background=BG, foreground=FG, focuscolor=BG)
+    style.map('TRadiobutton',
+              background=[('active', BG)],
+              indicatorcolor=[('selected', ACCENT), ('!selected', FIELD)],
+              foreground=[('disabled', DISABLED)])
+
     style.configure('TEntry', fieldbackground=FIELD, foreground=FG,
                     bordercolor=BORDER, insertcolor=FG, padding=4)
     style.map('TEntry', bordercolor=[('focus', ACCENT)])

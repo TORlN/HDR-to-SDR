@@ -64,10 +64,17 @@ class _BatchMixin:
             self.add_batch_files(paths)
 
     def add_batch_files(self, paths: object) -> None:
-        """Append video files to the batch queue, building each output path."""
+        """Append video files to the batch queue, building each output path.
+
+        Paths already queued are skipped: a duplicate entry would only fail at
+        convert time anyway (its output already exists), and single-file drops
+        route through here too, so re-dropping a file to preview it must not
+        stack up copies."""
+        queued = {it['input'] for it in self.batch_items}
         for path in paths:  # type: ignore[union-attr]
-            if not path:
+            if not path or path in queued:
                 continue
+            queued.add(path)
             fmt = self._format_for_input(path)  # type: ignore[attr-defined]
             base = os.path.splitext(path)[0]
             output_path = self._output_path_with_format(f"{base}_sdr", fmt)  # type: ignore[attr-defined]
@@ -107,6 +114,18 @@ class _BatchMixin:
         else:
             self._unload_input_file()  # type: ignore[attr-defined]
 
+    def _batch_item_for_current_input(self) -> dict | None:  # type: ignore[type-arg]
+        """The queue entry matching the currently loaded input file, if any."""
+        if not hasattr(self, 'input_path_var'):
+            return None
+        current = self.input_path_var.get()
+        if not current:
+            return None
+        for item in getattr(self, 'batch_items', None) or []:
+            if item['input'] == current:
+                return item
+        return None
+
     def on_batch_item_select(self, event: object = None) -> None:
         """Preview the queue entry the user clicks."""
         if not hasattr(self, 'batch_listbox') or not hasattr(self, 'input_path_var'):
@@ -126,7 +145,11 @@ class _BatchMixin:
         self.batch_listbox.delete(0, tk.END)
         for item in self.batch_items:
             icon = self._STATUS_ICONS.get(item['status'], '•')
-            self.batch_listbox.insert(tk.END, f"{icon}  {os.path.basename(item['input'])}")
+            # Surface the per-item 12-bit choice -- it's otherwise invisible
+            # once another queue entry is being previewed.
+            marker = '  (12-bit)' if item.get('bit_depth_choice') == '12-bit' else ''
+            self.batch_listbox.insert(
+                tk.END, f"{icon}  {os.path.basename(item['input'])}{marker}")
 
     # ── Batch execution ────────────────────────────────────────────────────────
 
@@ -177,13 +200,13 @@ class _BatchMixin:
         use_gpu = self.gpu_accel_var.get()
         tonemapper = self.tonemap_var.get().lower()
         quality = int(self.quality_var.get())
-        ten_bit = self._auto_ten_bit()  # type: ignore[attr-defined]
+        bit_depth = self._selected_bit_depth()  # type: ignore[attr-defined]
 
         conversion_manager.start_conversion(
             input_path, output_path, gamma, use_gpu,
             self.progress_var, self.interactable_elements, self,
             self.open_after_conversion_var.get(), self.cancel_button,
-            tonemapper=tonemapper, quality=quality, ten_bit=ten_bit,
+            tonemapper=tonemapper, quality=quality, bit_depth=bit_depth,
             on_complete=self._on_batch_item_complete
         )
         return True

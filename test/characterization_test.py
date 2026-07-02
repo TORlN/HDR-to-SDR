@@ -1,9 +1,11 @@
 """Characterization tests.
 
-These lock in the *current* behavior of code paths that the planned
-responsiveness refactor will touch. They are intentionally written to pass
-against the code as it exists today, so that any behavior change during
-refactoring shows up as a failing test rather than a silent regression.
+These lock in behavior for code paths that are easy to regress silently --
+originally written against the responsiveness refactor (preview threading
+pool, resize/pane-fitting), which has since substantially landed and is now
+covered here as an ongoing regression suite rather than transitional
+scaffolding. New characterization tests are welcome for any other code path
+worth pinning down this way, not just responsiveness work.
 """
 import sys
 import os
@@ -772,6 +774,9 @@ class TestGuiInteractions(unittest.TestCase):
     def test_handle_file_drop_sets_paths_and_refreshes(self):
         gui = _bare_gui()
         gui.drop_target_registered = True
+        # Unlicensed keeps the plain load-only path (licensed drops route
+        # through the batch queue instead -- covered separately below).
+        gui._licensed = False
         gui.input_path_var = MagicMock()
         gui.output_path_var = MagicMock()
         gui.format_var = MagicMock()
@@ -789,7 +794,8 @@ class TestGuiInteractions(unittest.TestCase):
         gui.handle_file_drop(event)
 
         gui.input_path_var.set.assert_called_once_with('C:/videos/movie.mkv')
-        gui.output_path_var.set.assert_called_once_with('C:/videos/movie_sdr.mkv')
+        # Unlicensed loads force the MP4 container regardless of input format.
+        gui.output_path_var.set.assert_called_once_with('C:/videos/movie_sdr.mp4')
         self.assertIsNone(gui.original_image)
         self.assertIsNone(gui.converted_image_base)
         gui.update_frame_preview.assert_called_once()
@@ -1107,6 +1113,44 @@ class TestBatchQueue(unittest.TestCase):
         gui.handle_file_drop(event)
         gui.add_batch_files.assert_called_once_with(['C:/a.mkv', 'C:/b.mkv'])
 
+    def test_single_drop_licensed_routes_through_queue(self):
+        gui = _bare_gui()
+        gui.drop_target_registered = True
+        gui._licensed = True
+        gui.add_batch_files = MagicMock()
+        gui._load_input_file = MagicMock()
+        # already previewing the dropped file -> queued but not re-loaded
+        gui.input_path_var = MagicMock()
+        gui.input_path_var.get.return_value = 'C:/a.mkv'
+        event = MagicMock()
+        event.data = '{C:/a.mkv}'
+        gui.handle_file_drop(event)
+        gui.add_batch_files.assert_called_once_with(['C:/a.mkv'])
+        gui._load_input_file.assert_not_called()
+
+    def test_add_files_skips_paths_already_queued(self):
+        gui = self._gui()
+        gui.batch_items = [{'input': 'a.mkv', 'status': 'Pending'}]
+        gui.input_path_var = MagicMock()
+        gui.input_path_var.get.return_value = 'a.mkv'
+        gui.add_batch_files(['a.mkv', 'C:/v/b.mp4'])
+        self.assertEqual([it['input'] for it in gui.batch_items],
+                         ['a.mkv', 'C:/v/b.mp4'])
+
+    def test_batch_item_for_current_input_matches_loaded_file(self):
+        gui = self._gui()
+        gui.batch_items = [{'input': 'a.mkv'}, {'input': 'b.mkv'}]
+        gui.input_path_var = MagicMock()
+        gui.input_path_var.get.return_value = 'b.mkv'
+        self.assertIs(gui._batch_item_for_current_input(), gui.batch_items[1])
+
+    def test_batch_item_for_current_input_none_when_not_queued(self):
+        gui = self._gui()
+        gui.batch_items = [{'input': 'a.mkv'}]
+        gui.input_path_var = MagicMock()
+        gui.input_path_var.get.return_value = 'other.mkv'
+        self.assertIsNone(gui._batch_item_for_current_input())
+
     # --- Removing/clearing re-syncs the preview with the queue (issue 3) ---
 
     def test_remove_shown_file_loads_new_top_into_preview(self):
@@ -1246,13 +1290,13 @@ class TestBatchProcessing(unittest.TestCase):
 
     @patch('src.batch.conversion_manager')
     @patch('src.gui.os.path.isfile', return_value=True)
-    def test_start_batch_auto_selects_ten_bit_for_high_bit_depth_source(self, _isfile, mock_cm):
+    def test_start_batch_selects_ten_bit_for_high_bit_depth_source(self, _isfile, mock_cm):
         gui = self._gui()
         gui._source_bit_depth = 10
         gui.batch_items = [self._item('a')]
         gui.start_batch()
         kwargs = mock_cm.start_conversion.call_args.kwargs
-        self.assertTrue(kwargs['ten_bit'])
+        self.assertEqual(kwargs['bit_depth'], 10)
 
     @patch('src.batch.conversion_manager')
     @patch('src.gui.os.path.isfile', return_value=True)
@@ -1262,7 +1306,19 @@ class TestBatchProcessing(unittest.TestCase):
         gui.batch_items = [self._item('a')]
         gui.start_batch()
         kwargs = mock_cm.start_conversion.call_args.kwargs
-        self.assertFalse(kwargs['ten_bit'])
+        self.assertEqual(kwargs['bit_depth'], 8)
+
+    @patch('src.batch.conversion_manager')
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_start_batch_selects_twelve_bit_when_toggle_set(self, _isfile, mock_cm):
+        gui = self._gui()
+        gui._source_bit_depth = 12
+        gui.bit_depth_var = MagicMock()
+        gui.bit_depth_var.get.return_value = '12-bit'
+        gui.batch_items = [self._item('a')]
+        gui.start_batch()
+        kwargs = mock_cm.start_conversion.call_args.kwargs
+        self.assertEqual(kwargs['bit_depth'], 12)
 
     @patch('src.batch.conversion_manager')
     @patch('src.gui.os.path.isfile', return_value=True)
@@ -1628,8 +1684,10 @@ class TestConvertVideoBranches(unittest.TestCase):
     @patch('src.gui.messagebox')
     @patch('src.gui.os.path.exists', return_value=False)
     @patch('src.gui.os.path.isfile', return_value=True)
-    def test_convert_auto_selects_ten_bit_for_high_bit_depth_source(
+    def test_convert_selects_ten_bit_for_high_bit_depth_source_by_default(
             self, _isfile, _exists, _mock_mb, mock_cm):
+        """Above 10-bit, without an explicit toggle choice, the default is
+        10-bit (the toggle itself defaults to '10-bit' each time it appears)."""
         gui = self._gui()
         gui._source_bit_depth = 12
         gui.drop_target_registered = False
@@ -1642,7 +1700,29 @@ class TestConvertVideoBranches(unittest.TestCase):
         gui.convert_video()
 
         _, kwargs = mock_cm.start_conversion.call_args
-        self.assertTrue(kwargs['ten_bit'])
+        self.assertEqual(kwargs['bit_depth'], 10)
+
+    @patch('src.gui.conversion_manager')
+    @patch('src.gui.messagebox')
+    @patch('src.gui.os.path.exists', return_value=False)
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_convert_selects_twelve_bit_when_toggle_set(
+            self, _isfile, _exists, _mock_mb, mock_cm):
+        gui = self._gui()
+        gui._source_bit_depth = 12
+        gui.bit_depth_var = MagicMock()
+        gui.bit_depth_var.get.return_value = '12-bit'
+        gui.drop_target_registered = False
+        gui.cancel_button = MagicMock()
+        gui.progress_var = MagicMock()
+        gui.interactable_elements = []
+        gui.open_after_conversion_var = MagicMock()
+        gui.open_after_conversion_var.get.return_value = False
+
+        gui.convert_video()
+
+        _, kwargs = mock_cm.start_conversion.call_args
+        self.assertEqual(kwargs['bit_depth'], 12)
 
     @patch('src.gui.conversion_manager')
     @patch('src.gui.messagebox')
@@ -1662,14 +1742,16 @@ class TestConvertVideoBranches(unittest.TestCase):
         gui.convert_video()
 
         _, kwargs = mock_cm.start_conversion.call_args
-        self.assertFalse(kwargs['ten_bit'])
+        self.assertEqual(kwargs['bit_depth'], 8)
 
     @patch('src.gui.conversion_manager')
     @patch('src.gui.messagebox')
     @patch('src.gui.os.path.exists', return_value=False)
     @patch('src.gui.os.path.isfile', return_value=True)
-    def test_convert_forces_8bit_when_unlicensed_even_with_high_bit_depth_source(
+    def test_convert_caps_at_ten_bit_when_unlicensed_even_with_high_bit_depth_source(
             self, _isfile, _exists, _mock_mb, mock_cm):
+        """Free tier still gets 10-bit for a high-bit-depth source -- only
+        12-bit (toggle disabled in that case) is Pro-gated."""
         gui = self._gui()
         gui._licensed = False
         gui._source_bit_depth = 12
@@ -1683,7 +1765,7 @@ class TestConvertVideoBranches(unittest.TestCase):
         gui.convert_video()
 
         _, kwargs = mock_cm.start_conversion.call_args
-        self.assertFalse(kwargs['ten_bit'])
+        self.assertEqual(kwargs['bit_depth'], 10)
 
 
 class TestGuiErrorAndResizePaths(unittest.TestCase):
@@ -1755,7 +1837,6 @@ class TestGuiErrorAndResizePaths(unittest.TestCase):
         gui.converted_title_label = MagicMock()
         gui.button_container = MagicMock()
         gui.arrange_widgets = MagicMock()
-        gui.filter_combobox = MagicMock()
         gui.tonemap_combobox = MagicMock()
         gui._show_preview_loading = MagicMock()
 
@@ -2263,7 +2344,6 @@ class TestPreviewLoadingIndicator(unittest.TestCase):
         gui.input_path_var = MagicMock(); gui.input_path_var.get.return_value = 'in.mkv'
         gui.error_label = MagicMock()
         gui.arrange_widgets = MagicMock()
-        gui.filter_combobox = MagicMock()
         gui.tonemap_combobox = MagicMock()
         gui._show_preview_loading = MagicMock()
         gui.display_frames = MagicMock()
@@ -2483,7 +2563,6 @@ class TestUpdateFramePreviewElseBranch(unittest.TestCase):
         gui.converted_title_label = MagicMock()
         gui.button_container = MagicMock()
         gui.arrange_widgets = MagicMock()
-        gui.filter_combobox = MagicMock()
         gui.tonemap_combobox = MagicMock()
         return gui
 

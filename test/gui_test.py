@@ -573,9 +573,14 @@ class TestBuildInfoText(TestCase):
 
 
 class TestBuildInfoTextOutputBitDepth(TestCase):
-    """The info strip always shows the *output* bit depth the app will actually
-    use -- chosen automatically from the source's bit depth and license state,
-    never from a user-facing toggle."""
+    """The info strip shows "{source}-bit -> {output}-bit" whenever the actual
+    resolved output (passed in directly as *bit_depth* -- the live 10/12-bit
+    toggle choice above a 10-bit source, or the automatic 8/10-bit choice
+    otherwise) differs from the source depth, so the conversion is visible at
+    a glance. When they match, it's just "{N}-bit" -- no redundant arrow. An
+    unlicensed user whose >10-bit source got capped to 10 (rather than a
+    licensed user's own 10-bit toggle choice) gets a "(Pro Only)" suffix,
+    since that's specifically the license capping it, not their choice."""
 
     def _props(self, bit_depth):
         return {
@@ -588,35 +593,71 @@ class TestBuildInfoTextOutputBitDepth(TestCase):
             'bit_depth': bit_depth,
         }
 
-    def test_8bit_source_licensed_outputs_8bit(self):
-        """No benefit to 10-bit output when the source has no extra precision."""
-        text = HDRConverterGUI._build_info_text(self._props(8), maxcll=1000.0, licensed=True)
+    def test_shows_plain_eight_bit_when_source_matches_output(self):
+        text = HDRConverterGUI._build_info_text(
+            self._props(8), maxcll=1000.0, bit_depth=8, licensed=True)
         self.assertIn('8-bit', text)
+        self.assertNotIn('->', text)
+        self.assertNotIn('Pro', text)
 
-    def test_10bit_source_licensed_outputs_10bit(self):
-        text = HDRConverterGUI._build_info_text(self._props(10), maxcll=1000.0, licensed=True)
+    def test_shows_plain_ten_bit_when_source_matches_output(self):
+        text = HDRConverterGUI._build_info_text(
+            self._props(10), maxcll=1000.0, bit_depth=10, licensed=True)
         self.assertIn('10-bit', text)
+        self.assertNotIn('->', text)
 
-    def test_12bit_source_licensed_outputs_10bit(self):
-        """Output is capped at 10-bit even when the source exceeds it."""
-        text = HDRConverterGUI._build_info_text(self._props(12), maxcll=1000.0, licensed=True)
-        self.assertIn('12-bit -> 10-bit Output', text)
+    def test_shows_plain_twelve_bit_when_source_matches_output(self):
+        text = HDRConverterGUI._build_info_text(
+            self._props(12), maxcll=1000.0, bit_depth=12, licensed=True)
+        self.assertIn('12-bit', text)
+        self.assertNotIn('->', text)
+        self.assertNotIn('Pro', text)
 
-    def test_16bit_source_licensed_outputs_10bit(self):
-        text = HDRConverterGUI._build_info_text(self._props(16), maxcll=1000.0, licensed=True)
-        self.assertIn('16-bit -> 10-bit Output', text)
+    def test_arrow_for_nine_bit_source_rounded_up_to_ten(self):
+        text = HDRConverterGUI._build_info_text(
+            self._props(9), maxcll=1000.0, bit_depth=10, licensed=True)
+        self.assertIn('9-bit -> 10-bit', text)
 
-    def test_10bit_source_unlicensed_forced_to_8bit(self):
-        """Free tier is always capped to 8-bit output, regardless of source."""
-        text = HDRConverterGUI._build_info_text(self._props(10), maxcll=1000.0, licensed=False)
-        self.assertIn('10-bit -> 8-bit Output (Pro required)', text)
+    def test_licensed_high_bit_depth_source_shows_arrow_without_pro_suffix(self):
+        """Defaulting to 10-bit is the user's own toggle position (they could
+        pick 12-bit any time), not a license restriction -- no Pro suffix."""
+        text = HDRConverterGUI._build_info_text(
+            self._props(12), maxcll=1000.0, bit_depth=10, licensed=True)
+        self.assertIn('12-bit -> 10-bit', text)
+        self.assertNotIn('Pro', text)
+
+    def test_unlicensed_high_bit_depth_source_shows_arrow_with_pro_only_suffix(self):
+        text = HDRConverterGUI._build_info_text(
+            self._props(12), maxcll=1000.0, bit_depth=10, licensed=False)
+        self.assertIn('12-bit -> 10-bit (Pro Only)', text)
+
+    def test_unlicensed_sixteen_bit_source_shows_arrow_with_pro_only_suffix(self):
+        text = HDRConverterGUI._build_info_text(
+            self._props(16), maxcll=1000.0, bit_depth=10, licensed=False)
+        self.assertIn('16-bit -> 10-bit (Pro Only)', text)
+
+    def test_licensed_sixteen_bit_source_at_max_twelve_bit_has_no_pro_suffix(self):
+        """Even Pro's ceiling is 12-bit -- a 16-bit source still gets
+        downsampled, but that's a codec limit, not a license restriction."""
+        text = HDRConverterGUI._build_info_text(
+            self._props(16), maxcll=1000.0, bit_depth=12, licensed=True)
+        self.assertIn('16-bit -> 12-bit', text)
+        self.assertNotIn('Pro', text)
+
+    def test_unlicensed_ten_bit_source_has_no_pro_suffix(self):
+        """The Pro suffix is only for sources that could actually use 12-bit."""
+        text = HDRConverterGUI._build_info_text(
+            self._props(10), maxcll=1000.0, bit_depth=10, licensed=False)
+        self.assertNotIn('Pro', text)
+        self.assertNotIn('->', text)
 
     def test_missing_bit_depth_defaults_to_8bit_output(self):
         """Older probes / mocks without a bit_depth key must not crash."""
         props = self._props(8)
         del props['bit_depth']
-        text = HDRConverterGUI._build_info_text(props, maxcll=1000.0, licensed=True)
+        text = HDRConverterGUI._build_info_text(props, maxcll=1000.0, bit_depth=8, licensed=True)
         self.assertIn('8-bit', text)
+        self.assertNotIn('->', text)
 
 
 if __name__ == '__main__':

@@ -110,11 +110,16 @@ class TestConstruction(_GuiTestBase):
         self.assertAlmostEqual(float(self.gui.quality_slider.cget('from')), 28)
         self.assertAlmostEqual(float(self.gui.quality_slider.cget('to')), 17)
 
-    def test_no_manual_color_depth_widget(self):
-        """Output bit depth is chosen automatically -- there is no user-facing
-        toggle for it (see TestBuildInfoTextOutputBitDepth / _auto_ten_bit)."""
+    def test_no_legacy_color_depth_widget(self):
+        """The old unconditional 8/10-bit picker is gone for good -- replaced
+        by the conditional 10/12-bit toggle (see TestBitDepthToggle)."""
         self.assertFalse(hasattr(self.gui, 'color_depth_combobox'))
         self.assertFalse(hasattr(self.gui, 'color_depth_var'))
+
+    def test_bit_depth_toggle_hidden_by_default(self):
+        """No file loaded yet -- _source_bit_depth defaults to 8, so the
+        10/12-bit toggle (only relevant above 10-bit) starts hidden."""
+        self.assertEqual(self.gui.bit_depth_frame.grid_info(), {})
 
     def test_five_numbered_frame_buttons(self):
         self.assertEqual(len(self.gui.frame_buttons), 5)
@@ -163,6 +168,7 @@ class TestConstruction(_GuiTestBase):
             self.gui.custom_time_entry, self.gui.custom_seek_button,
             self.gui.add_files_button, self.gui.clear_batch_button,
             self.gui.remove_batch_button,
+            self.gui.bit_depth_10_radio, self.gui.bit_depth_12_radio,
         }
         self.assertEqual(set(self.gui.interactable_elements), expected)
 
@@ -664,16 +670,19 @@ class TestUnlicensedState(_LicensingBase):
 
     def test_excludes_premium_from_interactable_elements(self):
         # GPU is free, so gpu_accel_checkbutton IS included even when unlicensed.
+        # 10-bit is free too, so bit_depth_10_radio is included; 12-bit is Pro.
         premium = [
             self.gui.quality_slider,
             self.gui.format_combobox, self.gui.custom_time_entry,
             self.gui.custom_seek_button, self.gui.add_files_button,
             self.gui.clear_batch_button, self.gui.remove_batch_button,
+            self.gui.bit_depth_12_radio,
         ]
         for widget in premium:
             self.assertNotIn(widget, self.gui.interactable_elements,
                              msg=f'{widget} must not be in interactable_elements when unlicensed')
         self.assertIn(self.gui.gpu_accel_checkbutton, self.gui.interactable_elements)
+        self.assertIn(self.gui.bit_depth_10_radio, self.gui.interactable_elements)
 
     def test_multifile_drop_blocked(self):
         event = MagicMock()
@@ -683,10 +692,11 @@ class TestUnlicensedState(_LicensingBase):
         mock_info.assert_called_once()
         self.assertEqual(self.gui.batch_items, [])
 
-    def test_auto_ten_bit_forced_to_8bit_when_unlicensed(self):
-        """Free tier never gets 10-bit output, even for a high-bit-depth source."""
+    def test_selected_bit_depth_capped_at_ten_when_unlicensed(self):
+        """Free tier gets 10-bit output for a high-bit-depth source -- 12-bit
+        stays Pro-only, but is never silently downgraded all the way to 8."""
         self.gui._source_bit_depth = 12
-        self.assertFalse(self.gui._auto_ten_bit())
+        self.assertEqual(self.gui._selected_bit_depth(), 10)
 
 
 @unittest.skipUnless(_TK_OK, _SKIP)
@@ -728,6 +738,7 @@ class TestLicensedState(_LicensingBase):
             self.gui.format_combobox, self.gui.custom_time_entry,
             self.gui.custom_seek_button, self.gui.add_files_button,
             self.gui.clear_batch_button, self.gui.remove_batch_button,
+            self.gui.bit_depth_10_radio, self.gui.bit_depth_12_radio,
         ]
         for widget in premium:
             self.assertIn(widget, self.gui.interactable_elements,
@@ -740,14 +751,26 @@ class TestLicensedState(_LicensingBase):
             self.gui.handle_file_drop(event)
         mock_add.assert_called_once()
 
-    def test_auto_ten_bit_true_when_source_above_8bit_and_licensed(self):
+    def test_selected_bit_depth_ten_for_ten_bit_source(self):
         self.gui._source_bit_depth = 10
-        self.assertTrue(self.gui._auto_ten_bit())
+        self.assertEqual(self.gui._selected_bit_depth(), 10)
 
-    def test_auto_ten_bit_false_when_source_is_8bit_even_if_licensed(self):
+    def test_selected_bit_depth_eight_for_eight_bit_source(self):
         """No benefit to 10-bit output when the source has no extra precision."""
         self.gui._source_bit_depth = 8
-        self.assertFalse(self.gui._auto_ten_bit())
+        self.assertEqual(self.gui._selected_bit_depth(), 8)
+
+    def test_selected_bit_depth_twelve_when_toggle_set(self):
+        self.gui._source_bit_depth = 12
+        self.gui._update_bit_depth_choice()
+        self.gui.bit_depth_var.set('12-bit')
+        self.assertEqual(self.gui._selected_bit_depth(), 12)
+
+    def test_selected_bit_depth_defaults_to_ten_above_ten_bit_source(self):
+        """The toggle defaults to 10-bit each time it (re)appears."""
+        self.gui._source_bit_depth = 12
+        self.gui._update_bit_depth_choice()
+        self.assertEqual(self.gui._selected_bit_depth(), 10)
 
 
 @unittest.skipUnless(_TK_OK, _SKIP)
@@ -802,6 +825,276 @@ class TestLicenseTransition(unittest.TestCase):
             gui._load_input_file('/some/video.mkv')
         self.assertEqual(gui.format_var.get(), 'MKV')
         self.assertTrue(gui.output_path_var.get().endswith('.mkv'))
+
+
+@unittest.skipUnless(_TK_OK, _SKIP)
+class TestBitDepthToggle(unittest.TestCase):
+    """The 10/12-bit toggle: appears only for >10-bit sources, labeled/enabled
+    per license state, placed next to the tonemapper selector, and refreshes
+    immediately on a mid-session license activation."""
+
+    def setUp(self) -> None:
+        self._load_patch = patch('src.gui.load_settings', return_value=dict(DEFAULTS))
+        self._save_patch = patch('src.gui.save_settings')
+        self._load_patch.start()
+        self._save_patch.start()
+        for w in _probe_root.winfo_children():
+            w.destroy()
+
+    def tearDown(self) -> None:
+        self._load_patch.stop()
+        self._save_patch.stop()
+
+    def _make_gui(self, licensed: bool) -> HDRConverterGUI:
+        return HDRConverterGUI(_probe_root, licensed=licensed)
+
+    def test_hidden_for_le_ten_bit_source(self):
+        gui = self._make_gui(licensed=True)
+        gui._source_bit_depth = 10
+        gui._update_bit_depth_choice()
+        self.assertEqual(gui.bit_depth_frame.grid_info(), {})
+
+    def test_visible_licensed_shows_cpu_only_and_enabled(self):
+        gui = self._make_gui(licensed=True)
+        gui._source_bit_depth = 12
+        gui._update_bit_depth_choice()
+        self.assertNotEqual(gui.bit_depth_frame.grid_info(), {})
+        self.assertEqual(gui.bit_depth_var.get(), '10-bit')
+        self.assertIn('CPU Only', gui.bit_depth_12_radio.cget('text'))
+        self.assertFalse(gui.bit_depth_12_radio.instate(['disabled']))
+
+    def test_visible_unlicensed_shows_pro_and_disabled(self):
+        gui = self._make_gui(licensed=False)
+        gui._source_bit_depth = 12
+        gui._update_bit_depth_choice()
+        self.assertNotEqual(gui.bit_depth_frame.grid_info(), {})
+        self.assertIn('Pro', gui.bit_depth_12_radio.cget('text'))
+        self.assertTrue(gui.bit_depth_12_radio.instate(['disabled']))
+
+    def test_refreshes_on_mid_session_license_activation(self):
+        gui = self._make_gui(licensed=False)
+        gui._source_bit_depth = 12
+        gui._update_bit_depth_choice()
+        self.assertTrue(gui.bit_depth_12_radio.instate(['disabled']))
+
+        gui._apply_license_state(True)
+
+        self.assertFalse(gui.bit_depth_12_radio.instate(['disabled']))
+        self.assertIn('CPU Only', gui.bit_depth_12_radio.cget('text'))
+
+    def test_grid_placement_next_to_tonemapper(self):
+        gui = self._make_gui(licensed=True)
+        gui._source_bit_depth = 12
+        gui._update_bit_depth_choice()
+        info = gui.bit_depth_frame.grid_info()
+        self.assertEqual(int(info['row']), 3)
+        self.assertEqual(int(info['column']), 2)
+
+    def _twelve_bit_props(self):
+        return {
+            'width': 1920, 'height': 1080, 'frame_rate': 24.0,
+            'codec_name': 'hevc', 'audio_codec': 'aac',
+            'color_primaries': 'bt2020', 'color_transfer': 'smpte2084',
+            'bit_depth': 12,
+        }
+
+    def test_clicking_twelve_bit_radio_refreshes_info_label_live(self):
+        """Toggling the radio must update the info strip immediately, without
+        re-probing the file -- it reuses the cached probe results."""
+        gui = self._make_gui(licensed=True)
+        gui._source_bit_depth = 12
+        gui._cached_props = self._twelve_bit_props()
+        gui._cached_maxcll = 1000.0
+        gui._update_bit_depth_choice()
+        gui._refresh_info_label_text()
+        self.assertIn('12-bit -> 10-bit', gui.info_label.cget('text'))
+
+        gui.bit_depth_12_radio.invoke()
+
+        text = gui.info_label.cget('text')
+        self.assertIn('12-bit', text)
+        self.assertNotIn('->', text)  # source now matches the chosen output
+
+    def test_unlicensed_info_label_shows_pro_only_hint_for_high_bit_depth_source(self):
+        gui = self._make_gui(licensed=False)
+        gui._source_bit_depth = 12
+        gui._cached_props = self._twelve_bit_props()
+        gui._cached_maxcll = 1000.0
+        gui._update_bit_depth_choice()
+        gui._refresh_info_label_text()
+        self.assertIn('12-bit -> 10-bit (Pro Only)', gui.info_label.cget('text'))
+
+    def test_unload_hides_toggle_and_clears_cached_state(self):
+        """Unloading the file (e.g. clearing the batch queue) must hide the
+        toggle and drop the cached probe state, or the widget lingers for a
+        file that's no longer loaded."""
+        gui = self._make_gui(licensed=True)
+        gui._source_bit_depth = 12
+        gui._cached_props = self._twelve_bit_props()
+        gui._cached_maxcll = 1000.0
+        gui._update_bit_depth_choice()
+        gui._refresh_info_label_text()
+        self.assertNotEqual(gui.bit_depth_frame.grid_info(), {})
+
+        with patch.object(gui, 'update_frame_preview'):
+            gui._unload_input_file()
+
+        self.assertEqual(gui.bit_depth_frame.grid_info(), {})
+        self.assertEqual(gui._source_bit_depth, 8)
+        self.assertIsNone(gui._cached_props)
+        self.assertIsNone(gui._cached_maxcll)
+
+    def test_license_activation_after_unload_does_not_resurrect_stale_state(self):
+        """Activating a license after the file was unloaded must not re-show
+        the info strip (or the toggle) from stale cached probe results."""
+        gui = self._make_gui(licensed=False)
+        gui._source_bit_depth = 12
+        gui._cached_props = self._twelve_bit_props()
+        gui._cached_maxcll = 1000.0
+        gui._update_bit_depth_choice()
+        gui._refresh_info_label_text()
+        with patch.object(gui, 'update_frame_preview'):
+            gui._unload_input_file()
+
+        gui._apply_license_state(True)
+
+        self.assertEqual(gui.info_label.cget('text'), '')
+        self.assertEqual(gui.info_label.grid_info(), {})
+        self.assertEqual(gui.bit_depth_frame.grid_info(), {})
+
+    # ── Per-queue-item bit depth choice ──────────────────────────────────────
+
+    @staticmethod
+    def _queued(path, **extra):
+        item = {'input': path, 'output': f"{path.rsplit('.', 1)[0]}_sdr.mkv",
+                'format': 'MKV', 'status': 'Pending'}
+        item.update(extra)
+        return item
+
+    def test_toggle_stores_choice_on_matching_queue_item(self):
+        gui = self._make_gui(licensed=True)
+        gui.batch_items = [self._queued('C:/a.mkv')]
+        gui.input_path_var.set('C:/a.mkv')
+        gui._source_bit_depth = 12
+        gui._update_bit_depth_choice()
+
+        gui.bit_depth_12_radio.invoke()
+        self.assertEqual(gui.batch_items[0].get('bit_depth_choice'), '12-bit')
+
+        gui.bit_depth_10_radio.invoke()
+        self.assertEqual(gui.batch_items[0].get('bit_depth_choice'), '10-bit')
+
+    def test_update_bit_depth_choice_restores_stored_queue_choice(self):
+        """Re-loading a queued file (batch runs, queue clicks) must restore
+        that item's stored 10/12-bit choice instead of resetting to 10-bit."""
+        gui = self._make_gui(licensed=True)
+        gui.batch_items = [self._queued('C:/a.mkv', bit_depth_choice='12-bit')]
+        gui.input_path_var.set('C:/a.mkv')
+        gui._source_bit_depth = 12
+        gui._update_bit_depth_choice()
+        self.assertEqual(gui.bit_depth_var.get(), '12-bit')
+
+    def test_batch_list_marks_twelve_bit_items(self):
+        gui = self._make_gui(licensed=True)
+        gui.batch_items = [self._queued('C:/a.mkv', bit_depth_choice='12-bit'),
+                           self._queued('C:/b.mkv')]
+        gui._refresh_batch_list()
+        self.assertIn('(12-bit)', gui.batch_listbox.get(0))
+        self.assertNotIn('(12-bit)', gui.batch_listbox.get(1))
+
+    def _run_one_item_batch(self, gui):
+        """Drive start_batch with probing/preview mocked; return start_conversion kwargs."""
+        with patch('src.gui.get_video_properties', return_value=self._twelve_bit_props()), \
+             patch('src.gui.get_maxcll', return_value=1000.0), \
+             patch.object(gui, 'update_frame_preview'), \
+             patch.object(gui, 'highlight_frame_button'), \
+             patch('src.batch.conversion_manager') as mock_cm, \
+             patch('src.batch.os.path.isfile', return_value=True), \
+             patch('src.batch.os.path.exists', return_value=False):
+            gui.start_batch()
+        return mock_cm.start_conversion.call_args.kwargs
+
+    def test_batch_honors_stored_twelve_bit_choice_after_reload(self):
+        """The batch runner reloads each item (which resets the live toggle);
+        the item's stored choice must survive that reload and reach ffmpeg."""
+        gui = self._make_gui(licensed=True)
+        gui.batch_items = [self._queued('C:/a.mkv', bit_depth_choice='12-bit')]
+        kwargs = self._run_one_item_batch(gui)
+        self.assertEqual(kwargs['bit_depth'], 12)
+
+    def test_batch_defaults_to_ten_bit_without_stored_choice(self):
+        gui = self._make_gui(licensed=True)
+        gui.batch_items = [self._queued('C:/a.mkv')]
+        kwargs = self._run_one_item_batch(gui)
+        self.assertEqual(kwargs['bit_depth'], 10)
+
+
+@unittest.skipUnless(_TK_OK, _SKIP)
+class TestDropToQueue(unittest.TestCase):
+    """Licensed single-file drops route through the batch queue (so dropping
+    onto a populated queue adds to it instead of bypassing it); unlicensed
+    drops keep the plain load-only behavior since batch is Pro."""
+
+    def setUp(self) -> None:
+        self._load_patch = patch('src.gui.load_settings', return_value=dict(DEFAULTS))
+        self._save_patch = patch('src.gui.save_settings')
+        self._load_patch.start()
+        self._save_patch.start()
+        for w in _probe_root.winfo_children():
+            w.destroy()
+
+    def tearDown(self) -> None:
+        self._load_patch.stop()
+        self._save_patch.stop()
+
+    def _make_gui(self, licensed: bool) -> HDRConverterGUI:
+        return HDRConverterGUI(_probe_root, licensed=licensed)
+
+    @staticmethod
+    def _queued(path):
+        return {'input': path, 'output': f"{path.rsplit('.', 1)[0]}_sdr.mkv",
+                'format': 'MKV', 'status': 'Pending'}
+
+    def test_single_drop_licensed_adds_to_queue_and_previews(self):
+        gui = self._make_gui(licensed=True)
+        with patch.object(gui, '_load_input_file') as mock_load:
+            gui.handle_file_drop(MagicMock(data='{C:/videos/new.mkv}'))
+        self.assertEqual([it['input'] for it in gui.batch_items], ['C:/videos/new.mkv'])
+        mock_load.assert_any_call('C:/videos/new.mkv')
+
+    def test_single_drop_licensed_appends_to_existing_queue(self):
+        gui = self._make_gui(licensed=True)
+        gui.batch_items = [self._queued('C:/a.mkv')]
+        gui.input_path_var.set('C:/a.mkv')
+        with patch.object(gui, '_load_input_file') as mock_load:
+            gui.handle_file_drop(MagicMock(data='{C:/b.mkv}'))
+        self.assertEqual([it['input'] for it in gui.batch_items],
+                         ['C:/a.mkv', 'C:/b.mkv'])
+        mock_load.assert_called_once_with('C:/b.mkv')
+
+    def test_single_drop_unlicensed_only_loads(self):
+        gui = self._make_gui(licensed=False)
+        with patch.object(gui, '_load_input_file') as mock_load:
+            gui.handle_file_drop(MagicMock(data='{C:/a.mkv}'))
+        self.assertEqual(gui.batch_items, [])
+        mock_load.assert_called_once_with('C:/a.mkv')
+
+    def test_duplicate_single_drop_does_not_duplicate_queue_entry(self):
+        gui = self._make_gui(licensed=True)
+        gui.batch_items = [self._queued('C:/a.mkv')]
+        gui.input_path_var.set('C:/other.mkv')
+        with patch.object(gui, '_load_input_file') as mock_load:
+            gui.handle_file_drop(MagicMock(data='{C:/a.mkv}'))
+        self.assertEqual([it['input'] for it in gui.batch_items], ['C:/a.mkv'])
+        mock_load.assert_called_once_with('C:/a.mkv')  # still previews it
+
+    def test_add_batch_files_skips_already_queued_paths(self):
+        gui = self._make_gui(licensed=True)
+        gui.batch_items = [self._queued('C:/a.mkv')]
+        gui.input_path_var.set('C:/a.mkv')
+        gui.add_batch_files(['C:/a.mkv', 'C:/b.mkv'])
+        self.assertEqual([it['input'] for it in gui.batch_items],
+                         ['C:/a.mkv', 'C:/b.mkv'])
 
 
 @unittest.skipUnless(_TK_OK, _SKIP)

@@ -820,12 +820,18 @@ class TestGpuEncoderCommandConstruction(unittest.TestCase):
         self.assertIn('h264_nvenc', cmd)
 
 
-class TestTenBitPixelFormat(unittest.TestCase):
-    """Output Color Depth (Premium): -pix_fmt selection on the CPU (libx264) path.
+class TestBitDepthPixelFormat(unittest.TestCase):
+    """Output Color Depth: -pix_fmt and codec selection on the CPU path, for
+    a non-HEVC (h264) source -- see TestHEVCSourcePreservation below for the
+    HEVC-source case, which switches to libx265 even at 8/10-bit.
 
     This app's bundled ffmpeg is compiled with high-bit-depth libx264 support
     (verified: 'ffmpeg -h encoder=libx264' lists yuv420p10le among supported
-    pixel formats), so the CPU path can honor 10-bit without switching codecs.
+    pixel formats) and a 12-bit-capable libx265 (verified: running it prints
+    'x265 [info]: Main 12 profile'), so for an h264 source, 8/10-bit output
+    stays on libx264 while 12-bit switches to libx265 -- libx264 silently
+    downgrades yuv420p12le to 10-bit instead of erroring, so this switch has
+    to be explicit.
     """
 
     def setUp(self):
@@ -843,7 +849,7 @@ class TestTenBitPixelFormat(unittest.TestCase):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
             'in.mp4', 'out.mkv', 2.2, self._PROPS, False,
-            tonemapper='reinhard', ten_bit=False)
+            tonemapper='reinhard', bit_depth=8)
         self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p')
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'libx264')
 
@@ -851,20 +857,176 @@ class TestTenBitPixelFormat(unittest.TestCase):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
             'in.mp4', 'out.mkv', 2.2, self._PROPS, False,
-            tonemapper='reinhard', ten_bit=True)
+            tonemapper='reinhard', bit_depth=10)
         self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p10le')
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'libx264')
 
-    def test_ten_bit_defaults_to_false(self):
-        """Omitting ten_bit entirely must not change the existing 8-bit behavior."""
+    def test_bit_depth_defaults_to_eight(self):
+        """Omitting bit_depth entirely must not change the existing 8-bit behavior."""
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
             'in.mp4', 'out.mkv', 2.2, self._PROPS, False, tonemapper='reinhard')
         self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p')
 
+    def test_twelve_bit_switches_to_libx265_and_yuv420p12le(self):
+        manager = ConversionManager()
+        cmd = manager.construct_ffmpeg_command(
+            'in.mp4', 'out.mkv', 2.2, self._PROPS, False,
+            tonemapper='reinhard', bit_depth=12)
+        self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p12le')
+        self.assertEqual(cmd[cmd.index('-c:v') + 1], 'libx265')
 
-class TestTenBitHardwareEncoderMapping(unittest.TestCase):
-    """10-bit output on a hardware encoder must swap to its HEVC counterpart.
+    def test_twelve_bit_never_passes_tune_film(self):
+        """'-tune film' is an x264-only tune; libx265 fails to open with it
+        (verified against the bundled binary: 'Error setting preset/tune
+        veryfast/film'). It must never leak onto the libx265 path."""
+        manager = ConversionManager()
+        cmd = manager.construct_ffmpeg_command(
+            'in.mp4', 'out.mkv', 2.2, self._PROPS, False,
+            tonemapper='reinhard', bit_depth=12)
+        self.assertNotIn('-tune', cmd)
+
+    def test_twelve_bit_forces_cpu_even_when_gpu_requested(self):
+        """No hardware encoder (any vendor) supports 12-bit -- it's a fixed
+        silicon limitation, not a driver gap. 12-bit must force the full CPU
+        pipeline regardless of the GPU toggle."""
+        manager = ConversionManager()
+        manager._gpu_encoder = 'h264_nvenc'
+        cmd = manager.construct_ffmpeg_command(
+            'in.mp4', 'out.mkv', 2.2, self._PROPS, use_gpu=True,
+            tonemapper='reinhard', bit_depth=12)
+        self.assertEqual(cmd[cmd.index('-c:v') + 1], 'libx265')
+        self.assertNotIn('-hwaccel', cmd)
+
+
+class TestHEVCSourcePreservation(unittest.TestCase):
+    """When the source is already HEVC, keep the output HEVC too, independent
+    of bit depth -- the goal is to preserve the video's characteristics as
+    closely as possible and only change what tonemapping requires.
+    """
+
+    def setUp(self):
+        patcher = patch('src.conversion.vulkan_libplacebo_available', return_value=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    _HEVC_PROPS = {
+        "width": 1920, "height": 1080, "bit_rate": 4000000, "codec_name": 'hevc',
+        "frame_rate": 30.0, "audio_codec": 'aac', "audio_bit_rate": 128000,
+        "duration": 120.0, "subtitle_streams": [],
+    }
+
+    def test_hevc_source_cpu_path_uses_libx265_at_eight_bit(self):
+        manager = ConversionManager()
+        cmd = manager.construct_ffmpeg_command(
+            'in.mkv', 'out.mkv', 2.2, self._HEVC_PROPS, False,
+            tonemapper='reinhard', bit_depth=8)
+        self.assertEqual(cmd[cmd.index('-c:v') + 1], 'libx265')
+        self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p')
+        self.assertNotIn('-tune', cmd)
+
+    def test_h264_source_cpu_path_still_uses_libx264(self):
+        """Non-HEVC sources keep today's default -- this is preservation of
+        the source codec, not a blanket switch to HEVC for everyone."""
+        manager = ConversionManager()
+        props = dict(self._HEVC_PROPS, codec_name='h264')
+        cmd = manager.construct_ffmpeg_command(
+            'in.mp4', 'out.mkv', 2.2, props, False,
+            tonemapper='reinhard', bit_depth=8)
+        self.assertEqual(cmd[cmd.index('-c:v') + 1], 'libx264')
+
+    def test_hevc_source_gpu_path_swaps_to_hevc_nvenc_at_eight_bit(self):
+        manager = ConversionManager()
+        manager._gpu_encoder = 'h264_nvenc'
+        cmd = manager.construct_ffmpeg_command(
+            'in.mkv', 'out.mkv', 2.2, self._HEVC_PROPS, use_gpu=True,
+            tonemapper='reinhard', bit_depth=8)
+        self.assertEqual(cmd[cmd.index('-c:v') + 1], 'hevc_nvenc')
+        self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p')
+
+    def test_h264_source_gpu_path_stays_h264_nvenc_at_eight_bit(self):
+        manager = ConversionManager()
+        manager._gpu_encoder = 'h264_nvenc'
+        props = dict(self._HEVC_PROPS, codec_name='h264')
+        cmd = manager.construct_ffmpeg_command(
+            'in.mp4', 'out.mkv', 2.2, props, use_gpu=True,
+            tonemapper='reinhard', bit_depth=8)
+        self.assertEqual(cmd[cmd.index('-c:v') + 1], 'h264_nvenc')
+
+
+class TestHEVCContainerTag(unittest.TestCase):
+    """HEVC tracks in MP4/MOV must be tagged 'hvc1': ffmpeg's default sample
+    entry is 'hev1', which QuickTime/Apple devices (and some Windows players)
+    refuse to recognize even though the stream itself is fine. Matroska has no
+    such codec tag, so MKV output must not receive the flag.
+    """
+
+    def setUp(self):
+        patcher = patch('src.conversion.vulkan_libplacebo_available', return_value=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    _PROPS = {
+        "width": 1920, "height": 1080, "bit_rate": 4000000, "codec_name": 'h264',
+        "frame_rate": 30.0, "audio_codec": 'aac', "audio_bit_rate": 128000,
+        "duration": 120.0, "subtitle_streams": [],
+    }
+    _HEVC_PROPS = dict(_PROPS, codec_name='hevc')
+
+    @staticmethod
+    def _tag_value(cmd):
+        return cmd[cmd.index('-tag:v') + 1] if '-tag:v' in cmd else None
+
+    def test_twelve_bit_libx265_mp4_gets_hvc1_tag(self):
+        manager = ConversionManager()
+        cmd = manager.construct_ffmpeg_command(
+            'in.mp4', 'out.mp4', 2.2, self._PROPS, False,
+            tonemapper='reinhard', bit_depth=12)
+        self.assertEqual(self._tag_value(cmd), 'hvc1')
+
+    def test_hevc_source_eight_bit_mp4_gets_hvc1_tag(self):
+        manager = ConversionManager()
+        cmd = manager.construct_ffmpeg_command(
+            'in.mkv', 'out.mp4', 2.2, self._HEVC_PROPS, False,
+            tonemapper='reinhard', bit_depth=8)
+        self.assertEqual(self._tag_value(cmd), 'hvc1')
+
+    def test_hevc_source_mov_gets_hvc1_tag(self):
+        manager = ConversionManager()
+        cmd = manager.construct_ffmpeg_command(
+            'in.mkv', 'out.mov', 2.2, self._HEVC_PROPS, False,
+            tonemapper='reinhard', bit_depth=8)
+        self.assertEqual(self._tag_value(cmd), 'hvc1')
+
+    def test_gpu_hevc_encoder_mp4_gets_hvc1_tag(self):
+        """The hardware-HEVC swap (10-bit forces hevc_nvenc) produces HEVC in
+        MP4 too, so it needs the tag just like the libx265 path."""
+        manager = ConversionManager()
+        manager._gpu_encoder = 'h264_nvenc'
+        cmd = manager.construct_ffmpeg_command(
+            'in.mp4', 'out.mp4', 2.2, self._PROPS, use_gpu=True,
+            tonemapper='reinhard', bit_depth=10)
+        self.assertEqual(cmd[cmd.index('-c:v') + 1], 'hevc_nvenc')
+        self.assertEqual(self._tag_value(cmd), 'hvc1')
+
+    def test_mkv_output_gets_no_tag(self):
+        manager = ConversionManager()
+        cmd = manager.construct_ffmpeg_command(
+            'in.mkv', 'out.mkv', 2.2, self._HEVC_PROPS, False,
+            tonemapper='reinhard', bit_depth=12)
+        self.assertNotIn('-tag:v', cmd)
+
+    def test_h264_output_mp4_gets_no_tag(self):
+        manager = ConversionManager()
+        cmd = manager.construct_ffmpeg_command(
+            'in.mp4', 'out.mp4', 2.2, self._PROPS, False,
+            tonemapper='reinhard', bit_depth=8)
+        self.assertNotIn('-tag:v', cmd)
+
+
+class TestBitDepthHardwareEncoderMapping(unittest.TestCase):
+    """10-bit (or higher) output on a hardware encoder must swap to its HEVC
+    counterpart.
 
     None of the vendor H.264 hardware encoders (nvenc/amf/qsv) support 10-bit;
     the HEVC variants do, using the semi-planar p010le pixel format.
@@ -881,16 +1043,16 @@ class TestTenBitHardwareEncoderMapping(unittest.TestCase):
         "subtitle_streams": [],
     }
 
-    def _cmd(self, encoder, ten_bit):
+    def _cmd(self, encoder, bit_depth):
         m = ConversionManager()
         m._gpu_encoder = encoder
         return m.construct_ffmpeg_command(
             'in.mp4', 'out.mkv', 1.0, self._BASE_PROPS,
-            use_gpu=True, tonemapper='reinhard', ten_bit=ten_bit
+            use_gpu=True, tonemapper='reinhard', bit_depth=bit_depth
         )
 
     def test_nvenc_maps_to_hevc_nvenc_p010le(self):
-        cmd = self._cmd('h264_nvenc', ten_bit=True)
+        cmd = self._cmd('h264_nvenc', bit_depth=10)
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'hevc_nvenc')
         self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'p010le')
         # The CUDA decode hwaccel dispatch is keyed on the NVIDIA vendor, not
@@ -899,30 +1061,30 @@ class TestTenBitHardwareEncoderMapping(unittest.TestCase):
         self.assertIn('cuda', cmd)
 
     def test_amf_maps_to_hevc_amf_p010le(self):
-        cmd = self._cmd('h264_amf', ten_bit=True)
+        cmd = self._cmd('h264_amf', bit_depth=10)
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'hevc_amf')
         self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'p010le')
 
     def test_qsv_maps_to_hevc_qsv_p010le(self):
-        cmd = self._cmd('h264_qsv', ten_bit=True)
+        cmd = self._cmd('h264_qsv', bit_depth=10)
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'hevc_qsv')
         self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'p010le')
         self.assertIn('-hwaccel', cmd)
         self.assertIn('qsv', cmd)
 
     def test_nvenc_eight_bit_is_unaffected(self):
-        """ten_bit=False must not disturb the existing H.264 hardware path."""
-        cmd = self._cmd('h264_nvenc', ten_bit=False)
+        """bit_depth=8 must not disturb the existing H.264 hardware path."""
+        cmd = self._cmd('h264_nvenc', bit_depth=8)
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'h264_nvenc')
         self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p')
 
 
-class TestTenBitContainerGuardrail(unittest.TestCase):
-    """Defensive validation: some legacy containers can never carry 10-bit video.
+class TestBitDepthContainerGuardrail(unittest.TestCase):
+    """Defensive validation: some legacy containers can never carry >8-bit video.
 
     The .m4v profile (Apple's legacy "iPod video" MPEG-4 variant) predates
     HEVC/10-bit entirely and only ever allowed 8-bit H.264 Baseline/Main/High.
-    Selecting it with 10-bit enabled must be caught before ffmpeg is ever
+    Selecting it with a higher bit depth must be caught before ffmpeg is ever
     launched -- not discovered via a failing subprocess.
     """
 
@@ -930,18 +1092,23 @@ class TestTenBitContainerGuardrail(unittest.TestCase):
         self.manager = ConversionManager()
 
     def test_rejects_legacy_m4v_with_ten_bit(self):
-        error = self.manager.validate_ten_bit_output('C:/out/movie.m4v', True)
+        error = self.manager.validate_bit_depth_output('C:/out/movie.m4v', 10)
+        self.assertIsNotNone(error)
+        self.assertIn('m4v', error.lower())
+
+    def test_rejects_legacy_m4v_with_twelve_bit(self):
+        error = self.manager.validate_bit_depth_output('C:/out/movie.m4v', 12)
         self.assertIsNotNone(error)
         self.assertIn('m4v', error.lower())
 
     def test_allows_modern_containers_with_ten_bit(self):
         for path in ('out.mp4', 'out.mkv', 'out.mov'):
-            self.assertIsNone(self.manager.validate_ten_bit_output(path, True),
+            self.assertIsNone(self.manager.validate_bit_depth_output(path, 10),
                               msg=f'{path} should be allowed with 10-bit')
 
-    def test_skips_validation_when_ten_bit_not_requested(self):
-        # An 8-bit .m4v output is perfectly normal; only 10-bit is the problem.
-        self.assertIsNone(self.manager.validate_ten_bit_output('legacy.m4v', False))
+    def test_skips_validation_when_eight_bit_requested(self):
+        # An 8-bit .m4v output is perfectly normal; only >8-bit is the problem.
+        self.assertIsNone(self.manager.validate_bit_depth_output('legacy.m4v', 8))
 
     @patch('src.conversion.messagebox.showwarning')
     @patch('src.conversion.subprocess.Popen')
@@ -956,7 +1123,7 @@ class TestTenBitContainerGuardrail(unittest.TestCase):
         manager = ConversionManager()
         manager.start_conversion(
             'input.mp4', 'output.m4v', 2.2, False,
-            progress_var, [], mock_gui, False, MagicMock(), ten_bit=True)
+            progress_var, [], mock_gui, False, MagicMock(), bit_depth=10)
 
         mock_showwarning.assert_called_once()
         mock_popen.assert_not_called()

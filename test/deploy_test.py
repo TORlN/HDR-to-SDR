@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import sys
 import unittest
@@ -42,6 +44,20 @@ from deploy import (
     DISTRIBUTION_ID,
     DEFAULT_CACHE_CONTROL,
 )
+
+# deploy.py's upload/delete/invalidate helpers print their own console progress
+# UX (checkmarks, dry-run previews, etc.) -- real behavior for the CLI tool, but
+# noise here since no test asserts on it. Silenced for the whole module so a
+# passing run stays quiet; failures still raise normally and show in the traceback.
+_stdout_silencer = contextlib.redirect_stdout(io.StringIO())
+
+
+def setUpModule():
+    _stdout_silencer.__enter__()
+
+
+def tearDownModule():
+    _stdout_silencer.__exit__(None, None, None)
 
 
 class TestGetMimeType(unittest.TestCase):

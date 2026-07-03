@@ -7,8 +7,9 @@ Two complementary kinds:
    resolution). These encode the snappiness invariants and never flake.
 
 2. Timing budgets (best-of-N, generous ceilings): they measure cheap hot-path
-   operations and print a `[perf]` report, so a genuine regression trips them
-   while normal jitter does not. The printed numbers double as a perf audit.
+   operations, so a genuine regression trips them while normal jitter does not.
+   Timings are carried in the assertion failure message (not printed unconditionally)
+   so a passing run stays quiet and a regression still reports the `[perf]` numbers.
 
 A real-ffmpeg extraction audit runs only when a sample video is present (skips on
 CI), reporting the slow decode-bound path with a loose catastrophe ceiling.
@@ -168,15 +169,16 @@ class TestTimingBudgets(unittest.TestCase):
         gui = _bare_gui()
         img = Image.new('RGB', PREVIEW_SIZE, (120, 90, 60))
         ms = _best_ms(lambda: gui.adjust_gamma(img, 1.8))
-        print(f"\n[perf] adjust_gamma {PREVIEW_SIZE[0]}x{PREVIEW_SIZE[1]}: {ms:.2f} ms")
-        self.assertLess(ms, 60.0)  # ~0.6ms observed; 60ms = huge CI headroom
+        # ~0.6ms observed; 60ms = huge CI headroom. msg only surfaces on failure.
+        self.assertLess(ms, 60.0,
+                         f"[perf] adjust_gamma {PREVIEW_SIZE[0]}x{PREVIEW_SIZE[1]}: {ms:.2f} ms")
 
     def test_identity_gamma_is_essentially_free(self):
         gui = _bare_gui()
         big = Image.new('RGB', (3840, 1632), (120, 90, 60))
         ms = _best_ms(lambda: gui.adjust_gamma(big, 1.0))
-        print(f"\n[perf] adjust_gamma identity (4K, short-circuit): {ms:.3f} ms")
-        self.assertLess(ms, 5.0)  # gamma==1.0 returns the same object
+        self.assertLess(ms, 5.0,  # gamma==1.0 returns the same object
+                         f"[perf] adjust_gamma identity (4K, short-circuit): {ms:.3f} ms")
 
     def test_working_on_preview_size_beats_full_resolution(self):
         # Documents why rescaling the display pane from the cached 4K base is
@@ -187,9 +189,9 @@ class TestTimingBudgets(unittest.TestCase):
         big = Image.new('RGB', PREVIEW_SIZE, (120, 90, 60))
         ms_small = _best_ms(lambda: gui.adjust_gamma(small, 1.8))
         ms_big = _best_ms(lambda: gui.adjust_gamma(big, 1.8))
-        print(f"\n[perf] adjust_gamma pane={ms_small:.2f}ms 4K={ms_big:.2f}ms "
-              f"(~{ms_big / max(ms_small, 1e-3):.0f}x)")
-        self.assertLess(ms_small, ms_big)
+        self.assertLess(ms_small, ms_big,
+                         f"[perf] adjust_gamma pane={ms_small:.2f}ms 4K={ms_big:.2f}ms "
+                         f"(~{ms_big / max(ms_small, 1e-3):.0f}x)")
 
 
 @unittest.skipUnless(_SAMPLE and _FFMPEG_OK, "no sample video / ffmpeg for the extraction audit")
@@ -206,10 +208,10 @@ class TestExtractionPerfAudit(unittest.TestCase):
                 _SAMPLE, gamma=1.0, tonemapper='mobius', time_position=2.0,
                 width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1]),
             runs=2)
-        print(f"\n[perf] real preview extract ({os.path.basename(_SAMPLE)}): "
-              f"original={e_original:.0f}ms dynamic-convert={e_dynamic:.0f}ms")
         # Loose ceiling: catches a catastrophic regression, tolerant of slow CI/disk.
-        self.assertLess(e_dynamic, 15000)
+        self.assertLess(e_dynamic, 15000,
+                         f"[perf] real preview extract ({os.path.basename(_SAMPLE)}): "
+                         f"original={e_original:.0f}ms dynamic-convert={e_dynamic:.0f}ms")
 
     def test_report_maxfall_cache_cold_vs_warm(self):
         # Repeated preview extractions: cache avoids repeated ffmpeg for same frames.
@@ -225,8 +227,10 @@ class TestExtractionPerfAudit(unittest.TestCase):
         extract(3.0)
         cold = (time.perf_counter() - start) * 1000.0
         warm = _best_ms(lambda: extract(4.0), runs=2)
-        print(f"\n[perf] extraction timing ({os.path.basename(_SAMPLE)}): "
-              f"first={cold:.0f}ms repeat={warm:.0f}ms")
+        # No hard ceiling (decode time is disk/CI-load dependent) -- this test only
+        # documents that a second extraction doesn't crash or hang.
+        self.assertGreaterEqual(cold, 0)
+        self.assertGreaterEqual(warm, 0)
 
 
 if __name__ == '__main__':

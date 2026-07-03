@@ -1,3 +1,5 @@
+import contextlib
+import io
 import sys
 import threading
 import unittest
@@ -406,7 +408,10 @@ class TestGetVideoPropertiesErrors(unittest.TestCase):
         proc = mock_popen.return_value
         proc.communicate.return_value = (b'this is not json', b'')
         proc.returncode = 0
-        self.assertIsNone(get_video_properties('x.mp4'))
+        # get_video_properties logs the JSONDecodeError via print() on this path;
+        # silence it here so a passing suite run stays quiet.
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertIsNone(get_video_properties('x.mp4'))
 
 
 class TestRunFfmpegColorspace(unittest.TestCase):

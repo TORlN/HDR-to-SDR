@@ -97,9 +97,10 @@ class TestCheckForUpdate(unittest.TestCase):
             result = check_for_update()
         self.assertIsNotNone(result)
         assert result is not None
-        new_ver, url = result
+        new_ver, url, release_url = result
         self.assertEqual(new_ver, '99.0.0')
         self.assertEqual(url, expected_url)
+        self.assertEqual(release_url, updater.RELEASES_URL)
 
     def test_same_version_returns_none(self):
         with self._patch_urlopen(_github_payload(f'v{APP_VERSION}')):
@@ -247,8 +248,10 @@ class TestGuiUpdateIntegration(unittest.TestCase):
     def test_show_update_dialog_constructs_dialog(self):
         gui, _UpdateDialog = self._make_gui()
         with patch('src.gui._UpdateDialog') as MockDialog:
-            gui._show_update_dialog('3.0.0', '4.0.0', 'https://example.com/setup.exe')
-        MockDialog.assert_called_once_with(gui.root, '3.0.0', '4.0.0', 'https://example.com/setup.exe')
+            gui._show_update_dialog('3.0.0', '4.0.0', 'https://example.com/setup.exe',
+                                     updater.RELEASES_URL)
+        MockDialog.assert_called_once_with(gui.root, '3.0.0', '4.0.0', 'https://example.com/setup.exe',
+                                            updater.RELEASES_URL)
 
     def test_start_update_check_schedules_dialog_when_update_available(self):
         gui, _ = self._make_gui()
@@ -260,12 +263,15 @@ class TestGuiUpdateIntegration(unittest.TestCase):
 
         gui.root.after = fake_after
 
-        with patch('src.updater.check_for_update', return_value=('4.0.0', 'https://example.com/setup.exe')):
+        release_url = updater.RELEASES_URL
+        with patch('src.updater.check_for_update',
+                   return_value=('4.0.0', 'https://example.com/setup.exe', release_url)):
             with patch('src.gui._UpdateDialog') as MockDialog:
                 gui._start_update_check()
                 found_event.wait(timeout=2)
 
-        MockDialog.assert_called_once_with(gui.root, APP_VERSION, '4.0.0', 'https://example.com/setup.exe')
+        MockDialog.assert_called_once_with(gui.root, APP_VERSION, '4.0.0',
+                                            'https://example.com/setup.exe', release_url)
 
     def test_start_update_check_no_dialog_when_current(self):
         gui, _ = self._make_gui()

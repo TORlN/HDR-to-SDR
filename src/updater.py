@@ -13,6 +13,7 @@ from typing import Callable
 APP_VERSION = "3.0.8"
 _GITHUB_API = "https://api.github.com/repos/TORlN/HDR-to-SDR/releases/latest"
 _ASSET_NAME = "HDR_to_SDR_Setup.exe"
+RELEASES_URL = "https://github.com/TORlN/HDR-to-SDR/releases"
 _HEADERS = {
     "User-Agent": "HDR-to-SDR-Updater/1.0",
     "Accept": "application/vnd.github+json",
@@ -23,8 +24,10 @@ def _version_tuple(v: str) -> tuple[int, ...]:
     return tuple(int(x) for x in re.findall(r"\d+", v))
 
 
-def check_for_update() -> tuple[str, str] | None:
-    """Return (new_version_str, download_url) if a newer release exists, else None.
+def check_for_update() -> tuple[str, str, str] | None:
+    """Return (new_version_str, download_url, release_url) if a newer release
+    exists, else None. release_url points to the GitHub releases page, for
+    linking to the changelog.
 
     Silently returns None on any network or parse error so callers never crash.
     """
@@ -44,7 +47,7 @@ def check_for_update() -> tuple[str, str] | None:
         )
         if not url:
             return None
-        return tag.lstrip("v"), url
+        return tag.lstrip("v"), url, RELEASES_URL
     except Exception:
         return None
 

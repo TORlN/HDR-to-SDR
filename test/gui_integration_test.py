@@ -1228,6 +1228,48 @@ class TestLicenseDialog(unittest.TestCase):
         dlg.destroy()
 
 
+@unittest.skipUnless(_TK_OK, _SKIP)
+class TestUpdateDialog(unittest.TestCase):
+    """Tests for the _UpdateDialog Toplevel's changelog link."""
+
+    def setUp(self) -> None:
+        for w in _probe_root.winfo_children():
+            w.destroy()
+
+    def tearDown(self) -> None:
+        for w in _probe_root.winfo_children():
+            try:
+                w.destroy()
+            except Exception:
+                pass
+
+    _RELEASE_URL = 'https://github.com/TORlN/HDR-to-SDR/releases'
+
+    def _make_dialog(self):  # type: ignore[return]
+        from src.gui import _UpdateDialog  # type: ignore[attr-defined]
+        dlg = _UpdateDialog(_probe_root, '3.0.0', '4.0.0',
+                             'https://example.com/setup.exe', self._RELEASE_URL)
+        dlg.withdraw()
+        return dlg
+
+    def test_changelog_link_widget_exists(self):
+        dlg = self._make_dialog()
+        texts = [w.cget('text') for w in dlg.winfo_children()
+                 if isinstance(w, tk.Label)]
+        self.assertTrue(
+            any('changelog' in t.lower() for t in texts),
+            f"Expected a label mentioning 'changelog'; found: {texts}",
+        )
+        dlg.destroy()
+
+    def test_changelog_link_opens_release_url(self):
+        dlg = self._make_dialog()
+        with patch('src.dialogs.webbrowser') as mock_wb:
+            dlg._open_changelog()
+        mock_wb.open.assert_called_once_with(self._RELEASE_URL)
+        dlg.destroy()
+
+
 class TestDolbyVisionInfoBarTag(_GuiTestBase):
     """Dolby Vision detection is folded into the real info-strip label as its
     own '|'-separated segment (no separate badge widget): absent on startup,

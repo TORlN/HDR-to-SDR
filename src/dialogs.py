@@ -112,7 +112,8 @@ class _LicenseDialog(tk.Toplevel):
 class _UpdateDialog(tk.Toplevel):
     """Dark-themed modal that prompts the user to install an available update."""
 
-    def __init__(self, master: tk.Misc, current_ver: str, new_ver: str, download_url: str) -> None:
+    def __init__(self, master: tk.Misc, current_ver: str, new_ver: str, download_url: str,
+                 release_url: str) -> None:
         super().__init__(master)
         self.configure(bg=_BG)
         self.title('Update Available')
@@ -121,6 +122,7 @@ class _UpdateDialog(tk.Toplevel):
         self._current_ver = current_ver
         self._new_ver = new_ver
         self._url = download_url
+        self._release_url = release_url
         self._build_ui()
         self.update_idletasks()
         w = max(self.winfo_reqwidth() + 40, 430)
@@ -140,6 +142,11 @@ class _UpdateDialog(tk.Toplevel):
         tk.Label(self,
                  text='The app will close and the installer will open automatically.',
                  bg=_BG, fg='#666666', font=_FONT_SM).pack(pady=(0, 12))
+
+        link = tk.Label(self, text='View changelog',
+                        bg=_BG, fg=_ACCENT, font=_FONT_SM, cursor='hand2')
+        link.pack(pady=(0, 4))
+        link.bind('<Button-1>', lambda _: self._open_changelog())
 
         self._status_var = tk.StringVar()
         tk.Label(self, textvariable=self._status_var,
@@ -165,6 +172,9 @@ class _UpdateDialog(tk.Toplevel):
             relief='flat', padx=18, pady=7, font=_FONT, cursor='hand2',
         )
         self._later_btn.grid(row=0, column=1, padx=8)
+
+    def _open_changelog(self) -> None:
+        webbrowser.open(self._release_url)
 
     def _start_download(self) -> None:
         from updater import download_installer

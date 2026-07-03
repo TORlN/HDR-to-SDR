@@ -18,7 +18,7 @@
       // mocked helpers return when the test knows the value is non-None. These
       // rules are noise in test/ only -- src/ keeps them on.
       "root": "test",
-      "extraPaths": [".", "src"],
+      "extraPaths": [".", "src", "HDR to SDR Website"],
       "reportAttributeAccessIssue": "none",
       "reportArgumentType": "none",
       "reportCallIssue": "none",

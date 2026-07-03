@@ -1366,7 +1366,7 @@ class TestMonitorProgressCancellationRace(unittest.TestCase):
             stderr = iter([])  # empty → the for-loop exits immediately
             returncode = 0
 
-            def wait(inner_self) -> None:
+            def wait(self) -> None:
                 # Simulate the main thread running cancel_conversion concurrently:
                 # the shared attribute is yanked right after the loop but before
                 # returncode is read.

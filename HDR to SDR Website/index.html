@@ -736,37 +736,20 @@
     <div class="max-w-5xl mx-auto">
 
       <div style="text-align:center;margin-bottom:56px;">
-        <span class="badge badge-roadmap" style="margin-bottom:14px;display:inline-block;">Coming in v3.2</span>
+        <span class="badge badge-roadmap" style="margin-bottom:14px;display:inline-block;">Roadmap</span>
         <h2 style="font-size:clamp(1.8rem,3.5vw,2.6rem);font-weight:800;letter-spacing:-0.025em;margin-bottom:12px;">
-          Roadmap
+          What's next
         </h2>
         <p style="color:var(--muted);max-width:560px;margin:0 auto;font-size:15px;line-height:1.65;">
-          Here's what's planned for the next release. The Free tier keeps growing right
-          alongside Pro, these are the core capabilities landing for everyone, plus what
-          Pro unlocks on top.
+          A smaller update lands first, with the bigger builds following in the next
+          major version. One Pro purchase covers both. The Free tier keeps growing
+          right alongside Pro at every step.
         </p>
       </div>
 
-      <div class="grid grid-cols-1 sm:grid-cols-2" style="gap:20px;">
+      <span class="badge badge-free" style="margin-bottom:20px;display:inline-block;">Coming in v3.2</span>
 
-        <!-- 3D LUT Injection -->
-        <div class="feature-card">
-          <div class="feature-icon" style="background:rgba(91,156,246,0.10);border:1px solid rgba(91,156,246,0.22);">
-            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#5b9cf6" stroke-width="1.7"
-              stroke-linecap="round" stroke-linejoin="round">
-              <path d="M11 2L19 6.5V15.5L11 20L3 15.5V6.5L11 2Z" />
-              <path d="M11 11L19 6.5M11 11L3 6.5M11 11V20" />
-            </svg>
-          </div>
-          <h3 style="font-size:17px;font-weight:700;margin-bottom:14px;">Creative 3D LUT Injection (.cube)</h3>
-          <ul class="check-list" style="margin:0;">
-            <li><span class="tick">✓</span> <strong>Free:</strong> One built-in Rec.2020 &rarr; Rec.709
-              normalization LUT, ready as a baseline for casual conversions.</li>
-            <li class="pro"><span class="tick">✓</span> <strong>Pro:</strong> Import any custom .cube file,
-              creative grades or camera-specific profiles, directly into the live preview and processing
-              chain.</li>
-          </ul>
-        </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2" style="gap:20px;margin-bottom:56px;">
 
         <!-- Color Telemetry -->
         <div class="feature-card">
@@ -782,8 +765,61 @@
           <ul class="check-list" style="margin:0;">
             <li><span class="tick">✓</span> <strong>Free:</strong> MaxCLL and MaxFALL parsed via ffprobe and
               shown right on the video info strip.</li>
+          </ul>
+        </div>
+
+        <!-- LUT Pipeline foundation -->
+        <div class="feature-card">
+          <div class="feature-icon" style="background:rgba(91,156,246,0.10);border:1px solid rgba(91,156,246,0.22);">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#5b9cf6" stroke-width="1.7"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M11 2L19 6.5V15.5L11 20L3 15.5V6.5L11 2Z" />
+              <path d="M11 11L19 6.5M11 11L3 6.5M11 11V20" />
+            </svg>
+          </div>
+          <h3 style="font-size:17px;font-weight:700;margin-bottom:14px;">Real 3D LUT Color Pipeline</h3>
+          <ul class="check-list" style="margin:0;">
+            <li><span class="tick">✓</span> <strong>Free:</strong> Rec.2020 &rarr; Rec.709 normalization moves
+              onto an actual .cube LUT stage, the foundation custom LUT support builds on in v4.0.</li>
+          </ul>
+        </div>
+
+      </div>
+
+      <span class="badge badge-pro" style="margin-bottom:20px;display:inline-block;">Planned for v4.0</span>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2" style="gap:20px;">
+
+        <!-- Custom LUT Import -->
+        <div class="feature-card">
+          <div class="feature-icon" style="background:rgba(91,156,246,0.10);border:1px solid rgba(91,156,246,0.22);">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#5b9cf6" stroke-width="1.7"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M11 2L19 6.5V15.5L11 20L3 15.5V6.5L11 2Z" />
+              <path d="M11 11L19 6.5M11 11L3 6.5M11 11V20" />
+            </svg>
+          </div>
+          <h3 style="font-size:17px;font-weight:700;margin-bottom:14px;">Creative 3D LUT Injection (.cube)</h3>
+          <ul class="check-list" style="margin:0;">
+            <li class="pro"><span class="tick">✓</span> <strong>Pro:</strong> Import any custom .cube file,
+              creative grades or camera-specific profiles, directly into the live preview and processing
+              chain.</li>
+          </ul>
+        </div>
+
+        <!-- Dynamic Tone Mapping -->
+        <div class="feature-card">
+          <div class="feature-icon" style="background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.22);">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#f59e0b" stroke-width="1.7"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 16c3-1 4-9 7-9s3 8 6 8 3-6 5-6" />
+            </svg>
+          </div>
+          <h3 style="font-size:17px;font-weight:700;margin-bottom:14px;">Dynamic Tone Mapping</h3>
+          <ul class="check-list" style="margin:0;">
             <li class="pro"><span class="tick">✓</span> <strong>Pro:</strong> Selecting the Dynamic tone-mapping
-              method auto-populates and adjusts Hable/Mobius slider targets from those parsed values.</li>
+              method auto-populates and adjusts Hable/Mobius slider targets from the MaxCLL/MaxFALL values
+              already parsed in v3.2, one click instead of hand-tuning sliders per clip.</li>
           </ul>
         </div>
 
@@ -797,8 +833,6 @@
           </div>
           <h3 style="font-size:17px;font-weight:700;margin-bottom:14px;">Smart Audio Pipeline Mapping</h3>
           <ul class="check-list" style="margin:0;">
-            <li><span class="tick">✓</span> <strong>Free:</strong> Core stream copy, plus a straightforward
-              transcode to stereo AAC.</li>
             <li class="pro"><span class="tick">✓</span> <strong>Pro:</strong> Multi-track isolation with an
               automated 5.1/7.1 &rarr; stereo downmix matrix, so complex theatrical masters never sound hollow
               on standard devices.</li>
@@ -821,6 +855,26 @@
               quick highlight, with no watermarks.</li>
             <li class="pro"><span class="tick">✓</span> <strong>Pro:</strong> Unlimited-duration cuts with a
               multi-clip queue, mark several segments from one source and queue each as its own job.</li>
+          </ul>
+        </div>
+
+        <!-- macOS Compatibility -->
+        <div class="feature-card sm:col-span-2" style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
+          <div style="display:flex;align-items:center;gap:16px;">
+            <div class="feature-icon" style="background:rgba(139,92,246,0.10);border:1px solid rgba(139,92,246,0.22);margin-bottom:0;">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#8b5cf6" stroke-width="1.7"
+                stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="16" height="11" rx="1.5" />
+                <path d="M1 18h20l-2-3H3l-2 3Z" />
+              </svg>
+            </div>
+            <h3 style="font-size:17px;font-weight:700;white-space:nowrap;">macOS Compatibility</h3>
+          </div>
+          <ul class="check-list" style="margin:0;flex:1;min-width:220px;columns:2;column-gap:24px;">
+            <li><span class="tick">✓</span> <strong>Free:</strong> Native macOS build (Apple Silicon &amp;
+              Intel) with the same core conversion pipeline and format support as Windows.</li>
+            <li class="pro"><span class="tick">✓</span> <strong>Pro:</strong> One Pro license unlocks every
+              Pro feature on macOS too, no separate purchase, no platform lock-in.</li>
           </ul>
         </div>
 

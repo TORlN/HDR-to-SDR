@@ -441,7 +441,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._pro_banner.grid_remove()
         ttk.Label(
             self._pro_banner,
-            text='🔒 Quality, batch & container require Pro.',
+            text='Quality, batch, container and 12-bit require Pro.',
             foreground='gray',
         ).grid(row=0, column=0, sticky=tk.W)
         ttk.Button(

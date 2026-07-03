@@ -320,14 +320,14 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             variable=self.display_image_var, command=self.update_frame_preview)
         self.display_image_checkbutton.grid(row=4, column=0, sticky=tk.W, pady=(5, 0))
 
-        tonemap_frame = ttk.Frame(self.control_frame)
-        tonemap_frame.grid(row=3, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))
+        self.tonemap_frame = ttk.Frame(self.control_frame)
+        self.tonemap_frame.grid(row=3, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))
         self.tonemap_combobox = ttk.Combobox(
-            tonemap_frame, textvariable=self.tonemap_var,
+            self.tonemap_frame, textvariable=self.tonemap_var,
             values=TONEMAP, state='readonly', width=15)
         self.tonemap_combobox.grid(row=0, column=0, padx=(0, 5))
         self.tonemap_combobox.bind('<<ComboboxSelected>>', self.update_frame_preview)
-        info_button_tonemap = ttk.Label(tonemap_frame, text="ⓘ", cursor="hand2")
+        info_button_tonemap = ttk.Label(self.tonemap_frame, text="ⓘ", cursor="hand2")
         info_button_tonemap.grid(row=0, column=1)
         tooltip_text_tonemap = (
             "Reinhard: Basic HDR to SDR conversion\n"
@@ -339,10 +339,12 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         info_button_tonemap.bind('<Leave>', self.hide_tooltip)
 
         # Conditional 10/12-bit toggle: hidden unless the loaded source has
-        # more than 10 bits to preserve (see _update_bit_depth_choice). Placed
-        # next to the tonemapper selector on the same row.
-        self.bit_depth_frame = ttk.Frame(self.control_frame)
-        self.bit_depth_frame.grid(row=3, column=2, sticky=tk.W, padx=(10, 0), pady=(5, 0))
+        # more than 10 bits to preserve (see _update_bit_depth_choice). Nested
+        # inside tonemap_frame so it sits next to the tonemapper selector but
+        # lives in control_frame's stretchy column 1 -- gridding it into
+        # column 2 would widen the Browse/format/gamma widgets stacked there.
+        self.bit_depth_frame = ttk.Frame(self.tonemap_frame)
+        self.bit_depth_frame.grid(row=0, column=2, sticky=tk.W, padx=(15, 0))
         ttk.Label(self.bit_depth_frame, text="Bit Depth:").grid(row=0, column=0, sticky=tk.W)
         self.bit_depth_10_radio = ttk.Radiobutton(
             self.bit_depth_frame, text='10-bit',

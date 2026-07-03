@@ -883,12 +883,40 @@ class TestBitDepthToggle(unittest.TestCase):
         self.assertIn('CPU Only', gui.bit_depth_12_radio.cget('text'))
 
     def test_grid_placement_next_to_tonemapper(self):
+        """The toggle lives inside the tonemapper's row frame (column 1, the
+        stretchy column) -- NOT in control_frame's column 2, where its width
+        would stretch the Browse/format/gamma widgets stacked above it."""
         gui = self._make_gui(licensed=True)
         gui._source_bit_depth = 12
         gui._update_bit_depth_choice()
+        self.assertIs(gui.bit_depth_frame.master, gui.tonemap_frame)
         info = gui.bit_depth_frame.grid_info()
-        self.assertEqual(int(info['row']), 3)
-        self.assertEqual(int(info['column']), 2)
+        combo_info = gui.tonemap_combobox.grid_info()
+        self.assertEqual(int(info['row']), int(combo_info['row']))
+        self.assertGreater(int(info['column']), int(combo_info['column']))
+
+    @staticmethod
+    def _column_req_width(gui, column: int) -> int:
+        """Requested width of a control_frame grid column: the max reqwidth of
+        the widgets managed in it alone (how grid sizes a weight-0 column --
+        columnspan>1 widgets spread across columns and don't pin this one)."""
+        gui.root.update_idletasks()
+        widths = [w.winfo_reqwidth()
+                  for w in gui.control_frame.grid_slaves(column=column)
+                  if int(w.grid_info().get('columnspan', 1)) == 1]
+        return max(widths) if widths else 0
+
+    def test_showing_toggle_does_not_widen_browse_column(self):
+        """Regression: the toggle used to be gridded into control_frame column
+        2, so revealing it stretched the Browse button, format combobox and
+        gamma entry (all sticky EW in that column) to the toggle's width."""
+        gui = self._make_gui(licensed=True)
+        before = self._column_req_width(gui, 2)
+
+        gui._source_bit_depth = 12
+        gui._update_bit_depth_choice()
+
+        self.assertEqual(self._column_req_width(gui, 2), before)
 
     def _twelve_bit_props(self):
         return {

@@ -207,6 +207,7 @@ class _BatchMixin:
             self.progress_var, self.interactable_elements, self,
             self.open_after_conversion_var.get(), self.cancel_button,
             tonemapper=tonemapper, quality=quality, bit_depth=bit_depth,
+            licensed=self._licensed,
             on_complete=self._on_batch_item_complete
         )
         return True

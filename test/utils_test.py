@@ -60,6 +60,8 @@ class TestGetVideoProperties(unittest.TestCase):
             "color_primaries": "",
             "color_transfer": "",
             "bit_depth": 8,
+            "is_dolby_vision": False,
+            "dovi_profile": None,
         }
 
         properties = get_video_properties(input_file)
@@ -122,6 +124,8 @@ class TestGetVideoProperties(unittest.TestCase):
             "color_primaries": "",
             "color_transfer": "",
             "bit_depth": 8,
+            "is_dolby_vision": False,
+            "dovi_profile": None,
         }
         self.assertEqual(properties, expected_properties)
 
@@ -1064,6 +1068,96 @@ class TestDynamicOnlyFilter(unittest.TestCase):
         from src.utils import build_libplacebo_filter
         result = build_libplacebo_filter(gamma=1.0, tonemapper='reinhard')
         self.assertIn('peak_detect=1', result)
+
+
+class TestDolbyVisionDetection(unittest.TestCase):
+    """get_video_properties flags Dolby Vision inputs from ffprobe's stream
+    side_data_list (the 'DOVI configuration record' entry), exposing
+    is_dolby_vision / dovi_profile for the conversion tier split and the UI
+    badge."""
+
+    def setUp(self):
+        clear_video_properties_cache()
+        self.addCleanup(clear_video_properties_cache)
+
+    @staticmethod
+    def _probe_json(side_data=None):
+        video = {
+            "codec_type": "video", "width": 3840, "height": 2160,
+            "bit_rate": "20000000", "codec_name": "hevc",
+            "avg_frame_rate": "24/1", "pix_fmt": "yuv420p10le",
+            "color_primaries": "bt2020", "color_transfer": "smpte2084",
+        }
+        if side_data is not None:
+            video["side_data_list"] = side_data
+        return json.dumps({
+            "streams": [
+                video,
+                {"codec_type": "audio", "codec_name": "truehd",
+                 "bit_rate": "3000000"},
+            ],
+            "format": {"duration": "600.0"},
+        }).encode('utf-8')
+
+    def _props_for(self, mock_popen, side_data, name):
+        mock_process = mock_popen.return_value
+        mock_process.communicate.return_value = (self._probe_json(side_data), b'')
+        mock_process.returncode = 0
+        return get_video_properties(name)
+
+    _DOVI_P8_RECORD = {
+        "side_data_type": "DOVI configuration record",
+        "dv_version_major": 1, "dv_version_minor": 0,
+        "dv_profile": 8, "dv_level": 6,
+        "rpu_present_flag": 1, "el_present_flag": 0, "bl_present_flag": 1,
+        "dv_bl_signal_compatibility_id": 1,
+    }
+
+    @patch('src.utils.subprocess.Popen')
+    def test_dovi_configuration_record_sets_flag_and_profile(self, mock_popen):
+        props = self._props_for(mock_popen, [self._DOVI_P8_RECORD], 'dovi_p8.mkv')
+        self.assertTrue(props['is_dolby_vision'])
+        self.assertEqual(props['dovi_profile'], 8)
+
+    @patch('src.utils.subprocess.Popen')
+    def test_dovi_profile_5_detected(self, mock_popen):
+        record = dict(self._DOVI_P8_RECORD,
+                      dv_profile=5, dv_bl_signal_compatibility_id=0)
+        props = self._props_for(mock_popen, [record], 'dovi_p5.mp4')
+        self.assertTrue(props['is_dolby_vision'])
+        self.assertEqual(props['dovi_profile'], 5)
+
+    @patch('src.utils.subprocess.Popen')
+    def test_plain_hdr10_stream_is_not_flagged(self, mock_popen):
+        props = self._props_for(mock_popen, None, 'plain_hdr10.mkv')
+        self.assertFalse(props['is_dolby_vision'])
+        self.assertIsNone(props['dovi_profile'])
+
+    @patch('src.utils.subprocess.Popen')
+    def test_unrelated_side_data_is_not_flagged(self, mock_popen):
+        props = self._props_for(mock_popen, [
+            {"side_data_type": "Display Matrix", "rotation": 0},
+            {"side_data_type": "Content light level metadata",
+             "max_content": 1000, "max_average": 400},
+        ], 'rotated_hdr10.mkv')
+        self.assertFalse(props['is_dolby_vision'])
+        self.assertIsNone(props['dovi_profile'])
+
+    @patch('src.utils.subprocess.Popen')
+    def test_dovi_record_with_missing_profile_still_flags_dovi(self, mock_popen):
+        record = {k: v for k, v in self._DOVI_P8_RECORD.items()
+                  if k != 'dv_profile'}
+        props = self._props_for(mock_popen, [record], 'dovi_no_profile.mkv')
+        self.assertTrue(props['is_dolby_vision'])
+        self.assertIsNone(props['dovi_profile'])
+
+    @patch('src.utils.subprocess.Popen')
+    def test_dovi_record_with_string_profile_is_parsed(self, mock_popen):
+        """ffprobe emits numbers, but a string value must not crash detection."""
+        record = dict(self._DOVI_P8_RECORD, dv_profile="8")
+        props = self._props_for(mock_popen, [record], 'dovi_str_profile.mkv')
+        self.assertTrue(props['is_dolby_vision'])
+        self.assertEqual(props['dovi_profile'], 8)
 
 
 if __name__ == '__main__':

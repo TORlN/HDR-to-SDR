@@ -1450,6 +1450,163 @@ class TestConstructCommandNoFilterIndex(unittest.TestCase):
         self.assertIn('peak_detect=1', cmd)
 
 
+class TestDolbyVisionTierCommands(unittest.TestCase):
+    """License-tier guardrails for Dolby Vision sources.
+
+    Pro: audio passes through completely untouched (direct stream copy, every
+    audio stream mapped, no channel manipulation). Free: audio is explicitly
+    restricted to the first stream and downmixed to 2-channel stereo AAC.
+    Non-DoVi sources keep the pre-existing behavior on both tiers.
+    """
+
+    def setUp(self):
+        # Pin the GPU tonemap probe off; the profile-5 tests below re-patch it
+        # on explicitly where the RPU-aware libplacebo path is the subject.
+        patcher = patch('src.conversion.vulkan_libplacebo_available', return_value=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def _dovi_props(profile=8, audio='truehd'):
+        return {
+            "width": 3840, "height": 2160, "bit_rate": 20000000,
+            "codec_name": 'hevc', "frame_rate": 24.0, "duration": 600.0,
+            "audio_codec": audio, "audio_bit_rate": 3000000,
+            "subtitle_streams": [], "bit_depth": 10,
+            "is_dolby_vision": True, "dovi_profile": profile,
+        }
+
+    # ── Audio tier split ────────────────────────────────────────────────────
+
+    def test_pro_dovi_audio_is_untouched_copy(self):
+        manager = ConversionManager()
+        cmd = manager.construct_ffmpeg_command(
+            'in.mkv', 'out.mkv', 1.0, self._dovi_props(), False,
+            tonemapper='reinhard', licensed=True)
+        self.assertEqual(cmd[cmd.index('-c:a') + 1], 'copy')
+        self.assertIn('0:a?', cmd)     # every audio stream mapped
+        self.assertNotIn('-ac', cmd)   # multi-channel layout untouched
+        self.assertNotIn('aac', cmd)   # nothing transcoded
+
+    def test_free_dovi_audio_forces_two_channel_stereo(self):
+        manager = ConversionManager()
+        cmd = manager.construct_ffmpeg_command(
+            'in.mkv', 'out.mkv', 1.0, self._dovi_props(), False,
+            tonemapper='reinhard', licensed=False)
+        self.assertEqual(cmd[cmd.index('-c:a') + 1], 'aac')
+        self.assertEqual(cmd[cmd.index('-ac') + 1], '2')
+
+    def test_free_dovi_audio_restricted_to_first_stream(self):
+        manager = ConversionManager()
+        cmd = manager.construct_ffmpeg_command(
+            'in.mkv', 'out.mkv', 1.0, self._dovi_props(), False,
+            tonemapper='reinhard', licensed=False)
+        self.assertIn('0:a:0?', cmd)
+        self.assertNotIn('0:a?', cmd)
+
+    def test_licensed_flag_defaults_to_free_tier(self):
+        """Omitting licensed= must behave as Free — the restrictive default is
+        the safe one for a premium gate."""
+        manager = ConversionManager()
+        cmd = manager.construct_ffmpeg_command(
+            'in.mkv', 'out.mkv', 1.0, self._dovi_props(), False,
+            tonemapper='reinhard')
+        self.assertEqual(cmd[cmd.index('-c:a') + 1], 'aac')
+        self.assertEqual(cmd[cmd.index('-ac') + 1], '2')
+
+    def test_free_non_dovi_source_keeps_full_copy_passthrough(self):
+        """The stereo restriction is a DoVi-conversion rule only: a plain
+        HDR10 file on the Free tier keeps the existing copy-everything path."""
+        manager = ConversionManager()
+        props = self._dovi_props()
+        props['is_dolby_vision'] = False
+        props['dovi_profile'] = None
+        cmd = manager.construct_ffmpeg_command(
+            'in.mkv', 'out.mkv', 1.0, props, False,
+            tonemapper='reinhard', licensed=False)
+        self.assertEqual(cmd[cmd.index('-c:a') + 1], 'copy')
+        self.assertIn('0:a?', cmd)
+        self.assertNotIn('-ac', cmd)
+
+    def test_pro_dovi_mp4_transcodes_incompatible_audio_without_downmix(self):
+        """MP4 can't hold TrueHD, so Pro passthrough must still fall back to
+        the container-mandated AAC transcode — but with the full channel
+        layout preserved (no -ac), unlike the Free downmix."""
+        manager = ConversionManager()
+        cmd = manager.construct_ffmpeg_command(
+            'in.mkv', 'out.mp4', 1.0, self._dovi_props(audio='truehd'), False,
+            tonemapper='reinhard', licensed=True)
+        self.assertEqual(cmd[cmd.index('-c:a') + 1], 'aac')
+        self.assertNotIn('-ac', cmd)
+        self.assertIn('0:a?', cmd)
+
+    # ── Video: RPU-aware tonemapping per DoVi profile ───────────────────────
+
+    def test_dovi_profile5_uses_rpu_aware_libplacebo_even_on_cpu(self):
+        """Profile 5 (IPTPQc2) has no HDR10-compatible base layer — the zscale
+        chain would render wrong colors. When libplacebo is available it must
+        be used (it applies the DoVi RPU) even with the GPU toggle off."""
+        manager = ConversionManager()
+        with patch('src.conversion.vulkan_libplacebo_available', return_value=True):
+            cmd = manager.construct_ffmpeg_command(
+                'in.mkv', 'out.mkv', 1.0, self._dovi_props(profile=5), False,
+                tonemapper='reinhard', licensed=True)
+        fc = cmd[cmd.index('-filter_complex') + 1]
+        self.assertIn('libplacebo', fc)
+        self.assertIn('-init_hw_device', cmd)   # Vulkan device for the filter
+        self.assertIn('libx265', cmd)           # encode itself stays on CPU
+
+    def test_dovi_profile5_without_libplacebo_falls_back_to_cpu_chain(self):
+        manager = ConversionManager()
+        cmd = manager.construct_ffmpeg_command(
+            'in.mkv', 'out.mkv', 1.0, self._dovi_props(profile=5), False,
+            tonemapper='reinhard', licensed=True)
+        fc = cmd[cmd.index('-filter_complex') + 1]
+        self.assertIn('zscale', fc)
+        self.assertNotIn('libplacebo', fc)
+
+    def test_dovi_profile8_keeps_standard_hdr10_cpu_chain(self):
+        """Profiles 7/8 carry an HDR10-compatible base layer, so the existing
+        tonemap chain is already correct — the GPU toggle alone decides
+        whether libplacebo runs."""
+        manager = ConversionManager()
+        with patch('src.conversion.vulkan_libplacebo_available', return_value=True):
+            cmd = manager.construct_ffmpeg_command(
+                'in.mkv', 'out.mkv', 1.0, self._dovi_props(profile=8), False,
+                tonemapper='reinhard', licensed=True)
+        fc = cmd[cmd.index('-filter_complex') + 1]
+        self.assertIn('zscale', fc)
+        self.assertNotIn('libplacebo', fc)
+
+    # ── licensed flag plumbing ──────────────────────────────────────────────
+
+    @patch('src.conversion.get_video_properties')
+    def test_start_conversion_threads_licensed_flag(self, mock_props):
+        mock_props.return_value = self._dovi_props()
+        manager = ConversionManager()
+        mock_gui = MagicMock()
+        with patch.object(manager, 'construct_ffmpeg_command',
+                          return_value=['ffmpeg']) as mock_build, \
+             patch.object(manager, 'start_ffmpeg_process', return_value=MagicMock()), \
+             patch.object(manager, 'monitor_progress'):
+            manager.start_conversion(
+                'in.mkv', 'out.mkv', 1.0, False, MagicMock(), [], mock_gui,
+                False, MagicMock(), licensed=True)
+        self.assertIs(mock_build.call_args.kwargs.get('licensed'), True)
+
+    def test_cpu_retry_preserves_licensed_flag(self):
+        """A GPU-failure retry must not silently demote a Pro user to the
+        Free stereo downmix."""
+        manager = ConversionManager()
+        manager._licensed = True  # as remembered by start_conversion(licensed=True)
+        mock_gui = MagicMock()
+        with patch.object(manager, 'start_conversion') as mock_start, \
+             patch('src.conversion.messagebox.showwarning'):
+            manager._retry_with_cpu(mock_gui, [], MagicMock(), MagicMock(),
+                                    False, 1.0, 'reinhard')
+        self.assertIs(mock_start.call_args.kwargs.get('licensed'), True)
+
+
 if __name__ == '__main__':
     unittest.main()
 

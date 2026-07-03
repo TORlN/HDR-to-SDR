@@ -2754,5 +2754,46 @@ class TestConversionManagerInternals(unittest.TestCase):
         self.assertIn('h264_nvenc', result)
 
 
+class TestBatchPassesLicenseTier(unittest.TestCase):
+    """Queue runs forward the license tier to the conversion layer — the
+    Dolby Vision Pro-passthrough / Free-downmix audio split depends on it."""
+
+    def _gui(self, licensed):
+        gui = _bare_gui()
+        gui._licensed = licensed
+        gui.batch_items = [{'input': 'a.mkv', 'output': 'a_sdr.mkv',
+                            'format': 'MKV', 'status': 'Pending'}]
+        gui._refresh_batch_list = MagicMock()
+        gui.gamma_var = MagicMock(); gui.gamma_var.get.return_value = 1.0
+        gui.gpu_accel_var = MagicMock(); gui.gpu_accel_var.get.return_value = False
+        gui.tonemap_var = MagicMock(); gui.tonemap_var.get.return_value = 'Mobius'
+        gui.quality_var = MagicMock(); gui.quality_var.get.return_value = 20
+        gui._source_bit_depth = 8
+        gui.open_after_conversion_var = MagicMock()
+        gui.open_after_conversion_var.get.return_value = False
+        gui.progress_var = MagicMock()
+        gui.interactable_elements = []
+        gui.cancel_button = MagicMock()
+        gui.drop_target_registered = False
+        gui._load_input_file = MagicMock()
+        return gui
+
+    @patch('src.batch.conversion_manager')
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_start_batch_forwards_pro_license(self, _isfile, mock_cm):
+        gui = self._gui(licensed=True)
+        gui.start_batch()
+        self.assertIs(
+            mock_cm.start_conversion.call_args.kwargs.get('licensed'), True)
+
+    @patch('src.batch.conversion_manager')
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_start_batch_forwards_free_license(self, _isfile, mock_cm):
+        gui = self._gui(licensed=False)
+        gui.start_batch()
+        self.assertIs(
+            mock_cm.start_conversion.call_args.kwargs.get('licensed'), False)
+
+
 if __name__ == '__main__':
     unittest.main()

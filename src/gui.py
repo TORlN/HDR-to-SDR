@@ -706,6 +706,11 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         so the conversion is visible at a glance, or just "{N}-bit" when they
         match. An unlicensed source capped to 10-bit (rather than a licensed
         user's own toggle choice) gets a "(Pro Only)" suffix.
+
+        Any detected dynamic-metadata format (currently just Dolby Vision) is
+        inserted as its own "|"-separated segment between the codec and the
+        HDR/SDR tag; sources without one (plain HDR10, SDR) omit the segment
+        entirely rather than showing an empty slot.
         """
         w = properties.get('width', '?')
         h = properties.get('height', '?')
@@ -732,7 +737,12 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 bit_depth_str += " (Pro Only)"
         else:
             bit_depth_str = f"{bit_depth}-bit"
-        return f"{w}×{h} | {fps_str} | {codec} | {hdr_tag}{maxcll_str} | {bit_depth_str} | Audio: {audio}"
+        format_tags = []
+        if properties.get('is_dolby_vision'):
+            format_tags.append('Dolby Vision')
+        parts = [f"{w}×{h}", fps_str, codec, *format_tags,
+                 f"{hdr_tag}{maxcll_str}", bit_depth_str, f"Audio: {audio}"]
+        return " | ".join(parts)
 
     def _update_info_label(self, file_path: str) -> None:
         """Probe file metadata and update the info strip below the output path."""
@@ -849,6 +859,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 self.progress_var, self.interactable_elements, self,
                 self.open_after_conversion_var.get(), self.cancel_button,
                 tonemapper=tonemapper, quality=quality, bit_depth=bit_depth,
+                licensed=self._licensed,
             )
         except Exception as e:
             logging.error(f"Conversion error: {str(e)}", exc_info=True)

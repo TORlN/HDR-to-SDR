@@ -1228,5 +1228,40 @@ class TestLicenseDialog(unittest.TestCase):
         dlg.destroy()
 
 
+class TestDolbyVisionInfoBarTag(_GuiTestBase):
+    """Dolby Vision detection is folded into the real info-strip label as its
+    own '|'-separated segment (no separate badge widget): absent on startup,
+    present once a Dolby Vision file's metadata is loaded, gone again for
+    non-DoVi files."""
+
+    @staticmethod
+    def _props(dovi=True):
+        return {
+            'width': 3840, 'height': 2160, 'frame_rate': 23.976,
+            'codec_name': 'hevc', 'audio_codec': 'truehd',
+            'color_primaries': 'bt2020', 'color_transfer': 'smpte2084',
+            'bit_depth': 10, 'duration': 600.0, 'subtitle_streams': [],
+            'is_dolby_vision': dovi, 'dovi_profile': 8 if dovi else None,
+        }
+
+    def _load_metadata(self, dovi):
+        with patch('src.gui.get_video_properties', return_value=self._props(dovi)), \
+             patch('src.gui.get_maxcll', return_value=1000.0):
+            self.gui._update_info_label('movie.mkv')
+
+    def test_no_tag_on_startup(self):
+        self.assertNotIn('Dolby Vision', self.gui.info_label.cget('text'))
+
+    def test_tag_renders_on_dovi_import(self):
+        self._load_metadata(dovi=True)
+        self.assertEqual(self.gui.info_label.winfo_manager(), 'grid')
+        self.assertIn('Dolby Vision', self.gui.info_label.cget('text'))
+
+    def test_tag_hides_again_for_non_dovi_file(self):
+        self._load_metadata(dovi=True)
+        self._load_metadata(dovi=False)
+        self.assertNotIn('Dolby Vision', self.gui.info_label.cget('text'))
+
+
 if __name__ == '__main__':
     unittest.main()

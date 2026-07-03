@@ -670,6 +670,25 @@ def _int_or_zero(v) -> int:
         return 0
 
 
+def _parse_dovi(video_stream: dict) -> 'tuple[bool, int | None]':
+    """Detect Dolby Vision from the video stream's side data.
+
+    ffprobe surfaces DoVi as a ``side_data_list`` entry with
+    ``side_data_type == 'DOVI configuration record'`` carrying ``dv_profile``
+    (5 = IPTPQc2/no HDR10-compatible base layer, 7 = BD dual-layer,
+    8 = single-layer HDR10-compatible). Returns ``(is_dolby_vision,
+    dovi_profile)``; a record with an unreadable profile still flags the
+    stream as DoVi so the UI badge and audio tier split stay correct.
+    """
+    for sd in video_stream.get('side_data_list') or []:
+        if sd.get('side_data_type') == 'DOVI configuration record':
+            try:
+                return True, int(sd.get('dv_profile'))
+            except (TypeError, ValueError):
+                return True, None
+    return False, None
+
+
 def _parse_bit_depth(video_stream: dict) -> int:
     """Determine the source's actual bit depth (8/10/12/16), independent of the
     output color depth we ultimately encode to (always capped to 8-bit free /
@@ -742,6 +761,8 @@ def get_video_properties(input_file):
             return None
         duration = float(data['format'].get('duration', 0))
 
+        is_dolby_vision, dovi_profile = _parse_dovi(video_stream)
+
         props = {
             "width": int(video_stream.get('width', 0)),
             "height": int(video_stream.get('height', 0)),
@@ -755,6 +776,8 @@ def get_video_properties(input_file):
             "color_primaries": video_stream.get('color_primaries', ''),
             "color_transfer": video_stream.get('color_transfer', ''),
             "bit_depth": _parse_bit_depth(video_stream),
+            "is_dolby_vision": is_dolby_vision,
+            "dovi_profile": dovi_profile,
         }
         with _VIDEO_PROPS_CACHE_LOCK:
             _VIDEO_PROPS_CACHE[input_file] = props

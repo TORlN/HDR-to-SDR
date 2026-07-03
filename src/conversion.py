@@ -25,7 +25,7 @@ class ConversionManager:
     def start_conversion(self, input_path, output_path, gamma, use_gpu,
                          progress_var, interactable_elements, gui_instance,
                          open_after_conversion, cancel_button, tonemapper='reinhard',
-                         quality=23, on_complete=None, bit_depth=8):
+                         quality=23, on_complete=None, bit_depth=8, licensed=False):
         if not self.verify_paths(input_path, output_path):
             return
 
@@ -40,6 +40,10 @@ class ConversionManager:
         self.use_gpu = use_gpu  # Store the use_gpu state
         self._quality = quality  # remembered so a GPU->CPU retry keeps the same quality
         self._bit_depth = bit_depth  # remembered so a GPU->CPU retry keeps the same color depth
+        # Remembered so a GPU->CPU retry keeps the license tier: the Dolby
+        # Vision audio split (Pro passthrough vs Free stereo downmix) must not
+        # silently demote a Pro user on retry.
+        self._licensed = licensed
         # When set (batch/queue runs), the per-file success/error dialog is
         # suppressed and this callback drives queue progression instead.
         self._on_complete = on_complete
@@ -63,7 +67,8 @@ class ConversionManager:
 
         cmd = self.construct_ffmpeg_command(
             input_path, output_path, gamma, properties, use_gpu,
-            tonemapper=tonemapper, quality=quality, bit_depth=bit_depth
+            tonemapper=tonemapper, quality=quality, bit_depth=bit_depth,
+            licensed=licensed
         )
         self.process = self.start_ffmpeg_process(cmd)
 
@@ -98,7 +103,8 @@ class ConversionManager:
     }
 
     def construct_ffmpeg_command(self, input_path, output_path, gamma, properties, use_gpu,
-                               tonemapper='reinhard', quality=23, bit_depth=8):
+                               tonemapper='reinhard', quality=23, bit_depth=8,
+                               licensed=False):
         # No hardware encoder (any vendor/generation) has a 12-bit HEVC profile
         # in its API -- it's a fixed silicon limitation, not a driver gap.
         # 12-bit always forces the full CPU pipeline (tonemap + encode).
@@ -115,7 +121,18 @@ class ConversionManager:
         # single-threaded CPU tonemap that otherwise bottlenecks the whole
         # pipeline. Gated on the same "GPU acceleration" toggle plus a one-time
         # capability probe; falls back to the CPU tonemap chain when unavailable.
-        use_libplacebo = use_gpu and vulkan_libplacebo_available()
+        #
+        # Dolby Vision profile 5 (IPTPQc2) is the exception to the toggle: it
+        # has no HDR10-compatible base layer, so the zscale chain decodes to
+        # wrong colors (green/purple cast). libplacebo applies the DoVi RPU
+        # during tonemapping (apply_dovi defaults on), so when it's available
+        # it is used for profile 5 even in CPU mode — only the tonemap runs on
+        # the GPU; encoding still follows the encoder dispatch below. Profiles
+        # 7/8 carry an HDR10-compatible base layer and are already handled
+        # correctly by the standard chain.
+        dovi_needs_rpu = (properties.get('is_dolby_vision')
+                          and properties.get('dovi_profile') == 5)
+        use_libplacebo = (use_gpu or dovi_needs_rpu) and vulkan_libplacebo_available()
 
         # GPU acceleration setup — dispatch on whichever encoder was detected
         active_encoder = None
@@ -182,7 +199,18 @@ class ConversionManager:
         # on the output container (see _container_stream_args).
         subtitle_map_args, audio_codec_args, subtitle_codec_args = \
             self._container_stream_args(output_path, properties)
-        cmd += ['-map', '0:a?']   # Map all audio streams if they exist
+
+        # Dolby Vision audio tier split: Pro keeps the container-aware
+        # passthrough decided above (lossless copy wherever the container
+        # allows, full multi-channel layout always preserved). Free is
+        # explicitly restricted to the first audio stream, downmixed to
+        # 2-channel stereo AAC.
+        if properties.get('is_dolby_vision') and not licensed:
+            audio_map_args = ['-map', '0:a:0?']
+            audio_codec_args = list(self._FREE_DOVI_AUDIO_ARGS)
+        else:
+            audio_map_args = ['-map', '0:a?']   # Map all audio streams if they exist
+        cmd += audio_map_args
         cmd += subtitle_map_args
 
         # Output Color Depth: 10-bit (free) / 12-bit (Pro, CPU-only) avoids the
@@ -317,6 +345,11 @@ class ConversionManager:
             )
         return None
 
+    # Free-tier audio for Dolby Vision sources: first stream only, forced
+    # 2-channel stereo. AAC is safe in every output container we offer
+    # (MP4/MOV/MKV), so the downmix never needs container-specific handling.
+    _FREE_DOVI_AUDIO_ARGS = ['-c:a', 'aac', '-ac', '2', '-b:a', '192k']
+
     # Audio/subtitle codecs that the MP4-family containers (.mp4/.m4v/.mov) accept
     # via stream copy. Anything else must be transcoded or dropped.
     _MP4_AUDIO_OK = {'aac', 'ac3', 'eac3', 'mp3', 'alac'}
@@ -437,6 +470,7 @@ class ConversionManager:
             quality=getattr(self, '_quality', 23),
             on_complete=getattr(self, '_on_complete', None),
             bit_depth=getattr(self, '_bit_depth', 8),
+            licensed=getattr(self, '_licensed', False),
         )
 
     def parse_time(self, time_str):

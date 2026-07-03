@@ -278,6 +278,23 @@ class TestHDRConverterGUI(TestCase):
         
         self._assert_conversion_started(mock_unregister, mock_start_conversion)
 
+    @patch('src.gui.messagebox.askyesno')
+    @patch('src.gui.HDRConverterGUI.unregister_drop_target')
+    @patch('src.gui.conversion_manager.start_conversion')
+    @patch('src.gui.os.path.isfile')
+    def test_video_conversion_passes_license_tier(self, mock_isfile,
+                                                  mock_start_conversion,
+                                                  mock_unregister, mock_confirm):
+        """convert_video forwards the license tier so the conversion layer can
+        apply the DoVi Pro-passthrough / Free-stereo-downmix audio split."""
+        self._setup_conversion_test(mock_confirm)
+        mock_isfile.return_value = True
+
+        self.gui.convert_video()
+
+        kwargs = mock_start_conversion.call_args.kwargs
+        self.assertIs(kwargs.get('licensed'), True)  # setUp builds licensed=True
+
     def test_ui_state_management(self):
         """Test UI element state management."""
         test_elements = [MagicMock(), MagicMock()]
@@ -658,6 +675,60 @@ class TestBuildInfoTextOutputBitDepth(TestCase):
         text = HDRConverterGUI._build_info_text(props, maxcll=1000.0, bit_depth=8, licensed=True)
         self.assertIn('8-bit', text)
         self.assertNotIn('->', text)
+
+
+class TestDolbyVisionInfoBarTag(TestCase):
+    """Dolby Vision detection surfaces as its own '|'-separated segment inside
+    the fps/resolution info bar (no separate badge widget), and is omitted
+    entirely for non-DoVi sources, including plain HDR10."""
+
+    @staticmethod
+    def _props(dovi=True):
+        return {
+            'width': 3840, 'height': 2160, 'frame_rate': 23.976,
+            'codec_name': 'hevc', 'audio_codec': 'truehd',
+            'color_primaries': 'bt2020', 'color_transfer': 'smpte2084',
+            'bit_depth': 10,
+            'is_dolby_vision': dovi, 'dovi_profile': 8 if dovi else None,
+        }
+
+    def test_tag_shown_for_dovi_source(self):
+        text = HDRConverterGUI._build_info_text(self._props(True), maxcll=1000.0)
+        self.assertIn('Dolby Vision', text)
+
+    def test_tag_sits_between_codec_and_hdr_tag(self):
+        text = HDRConverterGUI._build_info_text(self._props(True), maxcll=1000.0)
+        self.assertIn('HEVC | Dolby Vision | HDR', text)
+
+    def test_no_tag_for_plain_hdr10_source(self):
+        text = HDRConverterGUI._build_info_text(self._props(False), maxcll=1000.0)
+        self.assertNotIn('Dolby Vision', text)
+
+    def test_no_tag_when_keys_absent(self):
+        """Older probes without the DoVi keys must not crash or add the tag."""
+        props = self._props(False)
+        del props['is_dolby_vision']
+        del props['dovi_profile']
+        text = HDRConverterGUI._build_info_text(props, maxcll=1000.0)
+        self.assertNotIn('Dolby Vision', text)
+
+    def test_info_label_reflects_dolby_vision_on_import(self):
+        gui = object.__new__(HDRConverterGUI)
+        gui.info_label = MagicMock()
+        with patch('src.gui.get_video_properties', return_value=self._props(True)), \
+             patch('src.gui.get_maxcll', return_value=1000.0):
+            gui._update_info_label('movie_dovi.mkv')
+        text = gui.info_label.config.call_args.kwargs['text']
+        self.assertIn('Dolby Vision', text)
+
+    def test_info_label_omits_tag_for_plain_hdr10_import(self):
+        gui = object.__new__(HDRConverterGUI)
+        gui.info_label = MagicMock()
+        with patch('src.gui.get_video_properties', return_value=self._props(False)), \
+             patch('src.gui.get_maxcll', return_value=1000.0):
+            gui._update_info_label('plain_hdr10.mkv')
+        text = gui.info_label.config.call_args.kwargs['text']
+        self.assertNotIn('Dolby Vision', text)
 
 
 if __name__ == '__main__':

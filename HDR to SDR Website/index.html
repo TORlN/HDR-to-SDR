@@ -850,10 +850,11 @@
           <a href="#" onclick="openModal('modal-tos');return false;" class="link-muted">Terms of Service</a>
           <a href="https://github.com/TORlN/HDR-to-SDR/issues" target="_blank" rel="noopener" class="link-muted">Contact
             / Support</a>
+          <a href="#" onclick="openModal('modal-oss');return false;" class="link-muted">Open Source Licenses</a>
         </nav>
 
         <p style="font-size:12px;color:var(--subtle);margin:0;">
-          &copy; 2026 HDRtoSDR. All rights reserved.
+          &copy; 2024&ndash;2026 HDRtoSDR. All rights reserved.
         </p>
       </div>
     </div>
@@ -873,7 +874,7 @@
         aria-label="Close">✕</button>
 
       <h2 id="tos-title" style="font-size:1.5rem;font-weight:800;margin-bottom:6px;">Terms of Service</h2>
-      <p style="font-size:12px;color:#666;margin-bottom:36px;">Effective: June 2026</p>
+      <p style="font-size:12px;color:#666;margin-bottom:36px;">Effective: July 2026</p>
 
       <div style="color:#bbb;font-size:14px;line-height:1.8;">
 
@@ -883,16 +884,30 @@
 
         <h3 style="color:#eee;font-size:15px;font-weight:700;margin:0 0 8px;">2. License Grant</h3>
         <p style="margin:0 0 10px;"><strong style="color:#ddd;">Free Tier.</strong> We grant you a free, perpetual,
-          non-exclusive, non-transferable license to use the Software for personal or commercial purposes, subject to
-          the restrictions below.</p>
-        <p style="margin:0 0 24px;"><strong style="color:#ddd;">Pro Tier.</strong> Upon purchasing a Pro license, we
-          grant you a non-exclusive, non-transferable license to use the Pro version. Your license covers all v3.x and
-          v4.x releases, including all minor and patch updates within those versions. Version 5 and beyond will be
-          sold separately.</p>
+          non-exclusive, non-transferable license to use the compiled Software we distribute for personal or
+          commercial purposes, subject to the restrictions below.</p>
+        <p style="margin:0 0 10px;"><strong style="color:#ddd;">Pro Tier.</strong> Upon purchasing a Pro license, we
+          grant you a non-exclusive, non-transferable license to use the Pro version, unlocked via your license key.
+          Your license covers all v3.x and v4.x releases, including all minor and patch updates within those
+          versions. Version 5 and beyond will be sold separately.</p>
+        <p style="margin:0 0 10px;"><strong style="color:#ddd;">Device Activation.</strong> A Pro license is
+          node-locked to a limited number of devices at a time. Activating on a new device requires an internet
+          connection; the app then works offline indefinitely and re-checks with our license server at most once
+          every 30 days. To move your license to a different machine, deactivate it on the old one first (from the
+          license dialog) to free up the slot.</p>
+        <p style="margin:0 0 24px;"><strong style="color:#ddd;">Open Source.</strong> The Software's source code is
+          published at <a href="https://github.com/TORlN/HDR-to-SDR" target="_blank" rel="noopener"
+            style="color:var(--accent);text-decoration:none;">github.com/TORlN/HDR-to-SDR</a> under the MIT License
+          for as long as v3.x and v4.x are the current releases. Your rights to use, modify, and redistribute that
+          source code are governed by the MIT License, not by these Terms. Version 5.0 and later may be released
+          under different licensing terms.</p>
 
         <h3 style="color:#eee;font-size:15px;font-weight:700;margin:0 0 8px;">3. Restrictions</h3>
-        <p style="margin:0 0 24px;">You may not: (a) redistribute, sell, rent, or sublicense the Software; (b) reverse
-          engineer or decompile the Software; (c) remove or obscure any proprietary notices.</p>
+        <p style="margin:0 0 24px;">The restrictions below apply to the compiled binaries we distribute (the
+          installer and release downloads) and to your Pro license key, not to the MIT-licensed source code
+          described above. You may not: (a) redistribute, sell, rent, or sublicense the compiled binaries or your
+          license key; (b) reverse engineer or decompile the compiled binaries to bypass license activation or
+          enforcement; (c) remove or obscure any proprietary notices in official builds.</p>
 
         <h3 style="color:#eee;font-size:15px;font-weight:700;margin:0 0 8px;">4. Payment &amp; Refunds</h3>
         <p style="margin:0 0 24px;">Pro licenses are one-time purchases processed by Lemon Squeezy. Prices are in USD.
@@ -929,13 +944,18 @@
         aria-label="Close">✕</button>
 
       <h2 id="privacy-title" style="font-size:1.5rem;font-weight:800;margin-bottom:6px;">Privacy Policy</h2>
-      <p style="font-size:12px;color:#666;margin-bottom:36px;">Effective: June 2026</p>
+      <p style="font-size:12px;color:#666;margin-bottom:36px;">Effective: July 2026</p>
 
       <div style="color:#bbb;font-size:14px;line-height:1.8;">
 
         <h3 style="color:#eee;font-size:15px;font-weight:700;margin:0 0 8px;">1. What We Collect</h3>
-        <p style="margin:0 0 10px;"><strong style="color:#ddd;">The Desktop App.</strong> HDR to SDR runs entirely on
-          your machine. It does not transmit usage data, telemetry, or any personal information to us.</p>
+        <p style="margin:0 0 10px;"><strong style="color:#ddd;">The Desktop App.</strong> HDR to SDR does not collect
+          analytics, usage telemetry, or crash reports. It makes two narrow network calls of its own: on launch, it
+          checks GitHub's public API for the latest release version (GitHub, not us, sees the request and your IP
+          address, the same as visiting any GitHub page); and if you activate a Pro license, the app sends your
+          license key and a one-way SHA-256 hash of hardware identifiers (MAC address, hostname, CPU architecture,
+          OS) to Lemon Squeezy to activate and periodically re-validate it, since Pro licenses are locked to a
+          limited number of devices. No other data leaves your machine.</p>
         <p style="margin:0 0 10px;"><strong style="color:#ddd;">The Website.</strong> When you visit hdrtosdr.com, our
           CDN (Amazon CloudFront) may log standard request data such as IP address, browser type, and pages visited. We
           do not use tracking pixels, third-party analytics, or persistent cookies.</p>
@@ -977,6 +997,49 @@
     </div>
   </div>
 
+  <!-- ══════════════════════ OPEN SOURCE LICENSES MODAL ══════════════════════ -->
+  <div id="modal-oss" role="dialog" aria-modal="true" aria-labelledby="oss-title"
+    style="display:none;position:fixed;inset:0;z-index:500;background:rgba(0,0,0,0.75);overflow-y:auto;padding:48px 24px;"
+    onclick="closeModal('modal-oss')">
+    <div
+      style="max-width:680px;margin:0 auto;background:#252525;border:1px solid #333;border-radius:16px;padding:48px 48px 52px;position:relative;"
+      onclick="event.stopPropagation()">
+      <button onclick="closeModal('modal-oss')"
+        style="position:absolute;top:18px;right:18px;background:none;border:none;color:#666;font-size:22px;cursor:pointer;line-height:1;"
+        aria-label="Close">✕</button>
+
+      <h2 id="oss-title" style="font-size:1.5rem;font-weight:800;margin-bottom:6px;">Open Source &amp; Third-Party
+        Licenses</h2>
+      <p style="font-size:12px;color:#666;margin-bottom:36px;">Effective: July 2026</p>
+
+      <div style="color:#bbb;font-size:14px;line-height:1.8;">
+
+        <h3 style="color:#eee;font-size:15px;font-weight:700;margin:0 0 8px;">FFmpeg &amp; ffprobe</h3>
+        <p style="margin:0 0 24px;">HDR to SDR bundles standard, unmodified FFmpeg and ffprobe binaries to handle
+          video decoding, tone mapping, and encoding. They ship exactly as built by the upstream project, we have
+          not patched or altered their source in any way, and the application invokes them as separate external
+          processes rather than linking against their libraries.</p>
+        <p style="margin:0 0 24px;">The bundled build enables GPL-licensed components (including libx264 and
+          libx265), so it is distributed under the <a href="https://www.gnu.org/licenses/gpl-2.0.html" target="_blank"
+            rel="noopener" style="color:var(--accent);text-decoration:none;">GNU GPL, version 2 or later</a>. Full
+          FFmpeg source is publicly available at <a href="https://github.com/FFmpeg/FFmpeg" target="_blank"
+            rel="noopener" style="color:var(--accent);text-decoration:none;">github.com/FFmpeg/FFmpeg</a>. If you
+          would like the exact source matching the binaries we ship, open an issue at the GitHub link in the footer
+          and we will provide it, consistent with our obligations under the GPL.</p>
+
+        <h3 style="color:#eee;font-size:15px;font-weight:700;margin:0 0 8px;">HDR to SDR itself</h3>
+        <p style="margin:0;">The HDR to SDR application, its GUI, conversion pipeline, and licensing logic, is
+          open source under the <a href="https://github.com/TORlN/HDR-to-SDR/blob/main/LICENSE" target="_blank"
+            rel="noopener" style="color:var(--accent);text-decoration:none;">MIT License</a>. The source is public
+          at <a href="https://github.com/TORlN/HDR-to-SDR" target="_blank" rel="noopener"
+            style="color:var(--accent);text-decoration:none;">github.com/TORlN/HDR-to-SDR</a>, and is not affiliated
+          with or endorsed by the FFmpeg project. This covers the v3.x and v4.x release line; version 5.0 and later
+          may be released under different licensing terms.</p>
+
+      </div>
+    </div>
+  </div>
+
   <script>
     function openModal(id) {
       document.getElementById(id).style.display = 'block';
@@ -988,7 +1051,7 @@
     }
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') {
-        ['modal-tos', 'modal-privacy'].forEach(closeModal);
+        ['modal-tos', 'modal-privacy', 'modal-oss'].forEach(closeModal);
       }
     });
   </script>

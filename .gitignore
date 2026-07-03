@@ -60,3 +60,9 @@ old_icon.png
 # Secrets — never commit
 src/_secrets.py
 signing/
+
+# Committed smoke-test video fixtures (small, deliberately un-ignored so CI can
+# exercise the real ffmpeg pipeline against them; must come after every *.mp4/
+# *.mkv rule above so the negation isn't re-shadowed).
+!test/smoke_test_videos/*.mp4
+!test/smoke_test_videos/*.mkv

@@ -29,6 +29,11 @@ jobs:
         pip install -r requirements.txt
         pip install coverage==7.14.1
 
+    # test/smoke_test.py matches '*_test.py' so it's already part of this
+    # discovery run. Its small fixtures under test/smoke_test_videos/ are
+    # committed (not gitignored) specifically so these tests exercise the
+    # real ffmpeg pipeline here instead of skipping -- the large real-world
+    # captures in the project root stay gitignored and skip on CI.
     - name: Run tests with coverage
       run: |
         xvfb-run -a python -m coverage run -m unittest discover -s test -p '*_test.py' -t .

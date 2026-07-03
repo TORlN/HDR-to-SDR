@@ -186,6 +186,12 @@
       border: 1px solid rgba(245, 158, 11, 0.28);
     }
 
+    .badge-roadmap {
+      background: rgba(139, 92, 246, 0.12);
+      color: #8b5cf6;
+      border: 1px solid rgba(139, 92, 246, 0.28);
+    }
+
     /* ── Hero glow ─────────────────────────────────────── */
     .hero-glow {
       position: absolute;
@@ -401,6 +407,16 @@
 
 <body>
 
+  <!-- ═══════════════════════════ AI DISCLOSURE ══════════════════════════════════ -->
+  <div style="background:#161616;border-bottom:1px solid #282828;padding:10px 24px;text-align:center;">
+    <p style="margin:0;font-size:12.5px;color:var(--muted);line-height:1.5;">
+      This website and the HDR to SDR application were built with the aid of AI tools. I believe in being
+      transparent about that, so that you can make an informed decision about the content you consume. The AI tools used
+      were primarily for code generation, design assistance, and content drafting. All final decisions, edits, and
+      implementations were made by me, the developer.
+    </p>
+  </div>
+
   <!-- ═══════════════════════════════ NAV ══════════════════════════════════════ -->
   <nav class="site-nav">
     <div class="max-w-6xl mx-auto px-5 py-3.5 flex items-center justify-between gap-6">
@@ -418,6 +434,7 @@
         <a href="#comparison" class="link-muted" style="font-size:14px;">Demo</a>
         <a href="#features" class="link-muted" style="font-size:14px;">Features</a>
         <a href="#pricing" class="link-muted" style="font-size:14px;">Pricing</a>
+        <a href="#roadmap" class="link-muted" style="font-size:14px;">Roadmap</a>
       </div>
 
       <!-- CTA -->
@@ -634,6 +651,7 @@
             <li><span class="tick">✓</span> MP4 output (H.264/H.265)</li>
             <li><span class="tick">✓</span> Unlimited conversions</li>
             <li><span class="tick">✓</span> 10-Bit Output</li>
+            <li><span class="tick">✓</span> Dolby Vision Support with Stereo Audio</li>
             <li><span class="tick">✓</span> GPU Acceleration (NVENC / VCE / QSV)</li>
           </ul>
 
@@ -664,6 +682,8 @@
               MOV, H.264/H.265)</li>
             <li class="pro"><span class="tick">✓</span> <strong>High-Volume Batch Processing</strong></li>
             <li class="pro"><span class="tick">✓</span> <strong>12-Bit Output</strong></li>
+            <li class="pro"><span class="tick">✓</span> <strong>Dolby Vision Support with Full Audio</strong>
+            </li>
             <li class="pro"><span class="tick">✓</span> <strong>Access To All Future 3.x - 4.x Pro Features</strong>
             </li>
           </ul>
@@ -705,6 +725,109 @@
           Secure payment
         </span>
       </div>
+
+    </div>
+  </section>
+
+
+  <!-- ════════════════════════════ ROADMAP ═══════════════════════════════════════ -->
+  <section id="roadmap" style="padding: 96px 24px 104px;">
+    <div class="max-w-5xl mx-auto">
+
+      <div style="text-align:center;margin-bottom:56px;">
+        <span class="badge badge-roadmap" style="margin-bottom:14px;display:inline-block;">Coming in v3.2</span>
+        <h2 style="font-size:clamp(1.8rem,3.5vw,2.6rem);font-weight:800;letter-spacing:-0.025em;margin-bottom:12px;">
+          Roadmap
+        </h2>
+        <p style="color:var(--muted);max-width:560px;margin:0 auto;font-size:15px;line-height:1.65;">
+          Here's what's planned for the next release. The Free tier keeps growing right
+          alongside Pro, these are the core capabilities landing for everyone, plus what
+          Pro unlocks on top.
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2" style="gap:20px;">
+
+        <!-- 3D LUT Injection -->
+        <div class="feature-card">
+          <div class="feature-icon" style="background:rgba(91,156,246,0.10);border:1px solid rgba(91,156,246,0.22);">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#5b9cf6" stroke-width="1.7"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M11 2L19 6.5V15.5L11 20L3 15.5V6.5L11 2Z" />
+              <path d="M11 11L19 6.5M11 11L3 6.5M11 11V20" />
+            </svg>
+          </div>
+          <h3 style="font-size:17px;font-weight:700;margin-bottom:14px;">Creative 3D LUT Injection (.cube)</h3>
+          <ul class="check-list" style="margin:0;">
+            <li><span class="tick">✓</span> <strong>Free:</strong> One built-in Rec.2020 &rarr; Rec.709
+              normalization LUT, ready as a baseline for casual conversions.</li>
+            <li class="pro"><span class="tick">✓</span> <strong>Pro:</strong> Import any custom .cube file,
+              creative grades or camera-specific profiles, directly into the live preview and processing
+              chain.</li>
+          </ul>
+        </div>
+
+        <!-- Color Telemetry -->
+        <div class="feature-card">
+          <div class="feature-icon" style="background:rgba(139,92,246,0.10);border:1px solid rgba(139,92,246,0.22);">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#8b5cf6" stroke-width="1.7"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 18V10M8 18V4M13 18V13M18 18V7" />
+              <path d="M2 20h18" />
+            </svg>
+          </div>
+          <h3 style="font-size:17px;font-weight:700;margin-bottom:14px;">Interactive Color Telemetry &amp;
+            Metadata Inspector</h3>
+          <ul class="check-list" style="margin:0;">
+            <li><span class="tick">✓</span> <strong>Free:</strong> MaxCLL and MaxFALL parsed via ffprobe and
+              shown right on the video info strip.</li>
+            <li class="pro"><span class="tick">✓</span> <strong>Pro:</strong> Selecting the Dynamic tone-mapping
+              method auto-populates and adjusts Hable/Mobius slider targets from those parsed values.</li>
+          </ul>
+        </div>
+
+        <!-- Smart Audio Pipeline -->
+        <div class="feature-card">
+          <div class="feature-icon" style="background:rgba(34,197,94,0.10);border:1px solid rgba(34,197,94,0.22);">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#22c55e" stroke-width="1.7"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 11v2M7 8v8M11 5v14M15 8v8M19 11v2" />
+            </svg>
+          </div>
+          <h3 style="font-size:17px;font-weight:700;margin-bottom:14px;">Smart Audio Pipeline Mapping</h3>
+          <ul class="check-list" style="margin:0;">
+            <li><span class="tick">✓</span> <strong>Free:</strong> Core stream copy, plus a straightforward
+              transcode to stereo AAC.</li>
+            <li class="pro"><span class="tick">✓</span> <strong>Pro:</strong> Multi-track isolation with an
+              automated 5.1/7.1 &rarr; stereo downmix matrix, so complex theatrical masters never sound hollow
+              on standard devices.</li>
+          </ul>
+        </div>
+
+        <!-- Clip Cutting -->
+        <div class="feature-card">
+          <div class="feature-icon" style="background:rgba(239,68,68,0.10);border:1px solid rgba(239,68,68,0.22);">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#ef4444" stroke-width="1.7"
+              stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="6" cy="6" r="2.2" />
+              <circle cx="6" cy="16" r="2.2" />
+              <path d="M8 7.5L19 18M8 14.5L19 4" />
+            </svg>
+          </div>
+          <h3 style="font-size:17px;font-weight:700;margin-bottom:14px;">Clip Cutting &amp; Trimming</h3>
+          <ul class="check-list" style="margin:0;">
+            <li><span class="tick">✓</span> <strong>Free:</strong> Trim clips up to 60 seconds, enough for a
+              quick highlight, with no watermarks.</li>
+            <li class="pro"><span class="tick">✓</span> <strong>Pro:</strong> Unlimited-duration cuts with a
+              multi-clip queue, mark several segments from one source and queue each as its own job.</li>
+          </ul>
+        </div>
+
+      </div>
+
+      <p style="text-align:center;font-size:12px;color:var(--subtle);margin-top:36px;">
+        Roadmap items are planned, not guaranteed, and may change before release.
+      </p>
 
     </div>
   </section>

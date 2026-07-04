@@ -312,6 +312,22 @@ class TestConversionManager(unittest.TestCase):
         self.assertTrue(manager.verify_paths('input.mp4', 'output.mkv'))
         mock_showwarning.assert_not_called()
 
+    @patch('src.conversion.messagebox.showwarning')
+    def test_verify_paths_rejects_same_input_and_output(self, mock_showwarning):
+        """Output path must not resolve to the same file as the input -- ffmpeg
+        would read and overwrite the source simultaneously, corrupting it."""
+        manager = ConversionManager()
+        self.assertFalse(manager.verify_paths('video.mp4', 'video.mp4'))
+        mock_showwarning.assert_called_once_with(
+            "Warning", "Input and output file cannot be the same."
+        )
+
+        mock_showwarning.reset_mock()
+        self.assertFalse(manager.verify_paths('./video.mp4', 'video.mp4'))
+        mock_showwarning.assert_called_once_with(
+            "Warning", "Input and output file cannot be the same."
+        )
+
     def test_parse_time(self):
         """Test parse_time method."""
         manager = ConversionManager()

@@ -83,6 +83,10 @@ class ConversionManager:
             messagebox.showwarning(
                 "Warning", "Please select both an input file and specify an output file.")
             return False
+        if os.path.abspath(input_path) == os.path.abspath(output_path):
+            messagebox.showwarning(
+                "Warning", "Input and output file cannot be the same.")
+            return False
         return True
 
     def disable_ui(self, elements):

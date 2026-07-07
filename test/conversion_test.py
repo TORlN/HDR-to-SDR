@@ -374,45 +374,32 @@ class TestConversionManager(unittest.TestCase):
             )
             self.assertEqual(process, mock_process)
 
-    @patch('ctypes.windll', create=True)  # Correctly mock ctypes.windll
     @patch('src.conversion.subprocess.Popen')
-    @patch('src.conversion.subprocess')  # Mock the subprocess module
-    def test_start_ffmpeg_process_windows(self, mock_subprocess, mock_popen, mock_windll):
+    @patch('src.utils.subprocess.STARTUPINFO')
+    def test_start_ffmpeg_process_windows(self, mock_startupinfo_cls, mock_popen):
         """Test start_ffmpeg_process on Windows platforms."""
         if sys.platform != 'win32':
             self.skipTest("Windows platform required for this test.")
-        
-        # Set mocked constants to their actual integer values
-        mock_subprocess.PIPE = subprocess.PIPE  # PIPE is -1
-        mock_subprocess.DEVNULL = subprocess.DEVNULL  # DEVNULL is -3
-        mock_subprocess.STARTF_USESHOWWINDOW = subprocess.STARTF_USESHOWWINDOW  # Usually 1
-        mock_subprocess.SW_HIDE = subprocess.SW_HIDE  # Usually 0
-        
-        # Create a mock StartupInfo instance
-        startupinfo_instance = MagicMock()
-        startupinfo_instance.dwFlags = 0  # Initial dwFlags
-        startupinfo_instance.wShowWindow = None  # Initial wShowWindow
-        mock_subprocess.STARTUPINFO.return_value = startupinfo_instance
 
-        # Mock GetStartupInfoW method
-        mock_windll.kernel32.GetStartupInfoW = MagicMock()
+        startupinfo_instance = MagicMock()
+        startupinfo_instance.dwFlags = 0
+        mock_startupinfo_cls.return_value = startupinfo_instance
 
         with patch('sys.platform', 'win32'):
             manager = ConversionManager()
             cmd = ['ffmpeg', '-i', 'input.mp4', 'output.mkv']
-            mock_process = MagicMock()
-            mock_popen.return_value = mock_process
+            mock_popen.return_value = MagicMock()
 
-            process = manager.start_ffmpeg_process(cmd)
+            manager.start_ffmpeg_process(cmd)
             mock_popen.assert_called_once_with(
                 cmd,
                 stderr=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
                 universal_newlines=True,
                 startupinfo=startupinfo_instance,
-                encoding='utf-8',          # Added encoding
-                errors='replace',            # Added errors
-                creationflags=ANY  # Allow any creationflags
+                encoding='utf-8',
+                errors='replace',
+                creationflags=ANY,
             )
 
     def test_is_gpu_available_no_gpu(self):

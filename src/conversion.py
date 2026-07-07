@@ -9,7 +9,8 @@ from utils import (get_video_properties, FFMPEG_CONVERT_FILTER,
                    FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE,
                    VULKAN_DEVICE_ARGS, VULKAN_CUDA_DEVICE_ARGS,
                    build_libplacebo_filter,
-                   vulkan_libplacebo_available, vulkan_cuda_interop_available)
+                   vulkan_libplacebo_available, vulkan_cuda_interop_available,
+                   _startupinfo as _utils_startupinfo)
 from tkinterdnd2 import DND_FILES
 import sys
 import platform  # Add this import at the top
@@ -533,13 +534,7 @@ class ConversionManager:
                 gui_instance.register_drop_target()
 
     def _startupinfo(self):
-        """Return (startupinfo, creationflags) to hide console windows on Windows."""
-        if sys.platform == "win32":
-            si = subprocess.STARTUPINFO()
-            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            si.wShowWindow = subprocess.SW_HIDE
-            return si, subprocess.CREATE_NO_WINDOW
-        return None, 0
+        return _utils_startupinfo()
 
     def _nvidia_present(self):
         """Return True if nvidia-smi reports a usable NVIDIA GPU."""

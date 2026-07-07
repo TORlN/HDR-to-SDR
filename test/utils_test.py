@@ -9,7 +9,7 @@ from src.utils import (
     extract_frame_with_conversion, get_executable_path, initialize_ffmpeg,
     build_libplacebo_filter, vulkan_libplacebo_available, reset_libplacebo_probe,
     vulkan_cuda_interop_available, reset_cuda_interop_probe, VULKAN_CUDA_DEVICE_ARGS,
-    get_maxfall, get_maxcll, verify_ffmpeg_files, clear_video_properties_cache,
+    get_maxcll, verify_ffmpeg_files, clear_video_properties_cache,
     clear_maxfall_cache,
     extract_frames_batch, extract_frames_with_conversion_batch, _split_png_frames,
 )
@@ -625,7 +625,7 @@ class TestMaxfallConcurrency(unittest.TestCase):
 
         def worker() -> None:
             start.wait()
-            results.append(get_maxfall('/fake/concurrent/video.mkv'))
+            results.append(get_maxcll('/fake/concurrent/video.mkv'))
 
         with patch('src.utils._probe_hdr_metadata', side_effect=slow_probe):
             threads = [threading.Thread(target=worker) for _ in range(4)]
@@ -700,7 +700,7 @@ class TestStartupinfoConsistency(unittest.TestCase):
     """Regression guards ensuring every subprocess call hides the console on Windows.
 
     All helpers that shell out (run_ffmpeg_command, get_video_properties,
-    vulkan_libplacebo_available, _compute_maxfall) must pass a STARTUPINFO with
+    vulkan_libplacebo_available, _probe_hdr_metadata) must pass a STARTUPINFO with
     SW_HIDE so no console window flashes during conversion or probing.
     """
 
@@ -727,27 +727,25 @@ class TestStartupinfoConsistency(unittest.TestCase):
             )
 
     @patch('src.utils.subprocess.check_output', return_value=b'{"frames": []}')
-    def test_compute_maxfall_hides_console_on_windows(self, mock_check: MagicMock) -> None:
-        """_compute_maxfall must pass a STARTUPINFO on Windows (hide console)."""
+    def test_probe_hdr_metadata_hides_console_on_windows(self, mock_check: MagicMock) -> None:
+        """_probe_hdr_metadata must pass a STARTUPINFO on Windows (hide console)."""
         import src.utils as _u
-        _u._MAXFALL_CACHE.clear()
         try:
-            _u._compute_maxfall('/fake/video.mkv')
+            _u._probe_hdr_metadata('/fake/video.mkv')
         except Exception:
-            pass  # JSON parse / no MAXFALL — irrelevant to this test
+            pass  # JSON parse errors are irrelevant to this test
 
         kwargs = mock_check.call_args[1]
         if sys.platform == 'win32':
             self.assertIsNotNone(
                 kwargs.get('startupinfo'),
-                "Windows: startupinfo must be set in _compute_maxfall",
+                "Windows: startupinfo must be set in _probe_hdr_metadata",
             )
         else:
             self.assertIsNone(
                 kwargs.get('startupinfo'),
-                "Non-Windows: startupinfo must be None in _compute_maxfall",
+                "Non-Windows: startupinfo must be None in _probe_hdr_metadata",
             )
-        _u._MAXFALL_CACHE.clear()
 
 
 class TestSetupDpiAwareness(unittest.TestCase):

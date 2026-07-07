@@ -113,12 +113,8 @@ def verify_ffmpeg_files():
 
 def initialize_ffmpeg():
     """Initialize FFmpeg executables and configure the environment."""
-    global FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE
     try:
-        found_files = verify_ffmpeg_files()
-        FFMPEG_EXECUTABLE = found_files['ffmpeg']
-        FFPROBE_EXECUTABLE = found_files['ffprobe']
-
+        verify_ffmpeg_files()
     except Exception as e:
         # Surfacing the error is the caller's job (the GUI shows it on startup);
         # a utility module must not pop a dialog.
@@ -269,15 +265,6 @@ def get_maxcll(video_path):
     """Return MaxCLL (peak pixel luminance) for display; None if not embedded."""
     return _get_hdr_metadata(video_path)['maxcll']
 
-
-def get_maxfall(video_path):
-    """Backward-compat alias for get_maxcll."""
-    return get_maxcll(video_path)
-
-
-def _compute_maxfall(video_path):
-    """Backward-compat shim — returns the raw probe dict (tests patch this)."""
-    return _probe_hdr_metadata(video_path)
 
 def build_libplacebo_filter(gamma, tonemapper, width='iw', height='ih',
                             cuda_input: bool = False) -> str:

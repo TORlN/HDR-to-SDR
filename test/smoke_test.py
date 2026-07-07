@@ -84,7 +84,7 @@ from PIL import Image
 
 from src.utils import (
     get_video_properties,
-    get_maxfall,
+    get_maxcll,
     extract_frame,
     extract_frame_with_conversion,
     FFMPEG_EXECUTABLE,
@@ -373,10 +373,10 @@ class TestRealVideoProbing(unittest.TestCase):
         self.assertGreater(props['duration'], 0)
         self.assertGreater(props['frame_rate'], 0)
 
-    def test_get_maxfall_returns_float_or_none(self):
-        # Returns a float when MAXFALL metadata is present, None when absent.
-        # This sample carries no MAXFALL side data so None is expected here.
-        value = get_maxfall(SAMPLE_VIDEO)
+    def test_get_maxcll_returns_float_or_none(self):
+        # Returns a float when MaxCLL metadata is present, None when absent.
+        # This sample carries no MaxCLL side data so None is expected here.
+        value = get_maxcll(SAMPLE_VIDEO)
         self.assertTrue(value is None or isinstance(value, float))
 
 

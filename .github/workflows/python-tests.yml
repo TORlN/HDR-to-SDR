@@ -26,7 +26,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y xvfb ffmpeg  # Install Xvfb and ffmpeg
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install -r requirements.txt -r requirements-dev.txt
         pip install coverage==7.14.1
 
     # test/smoke_test.py matches '*_test.py' so it's already part of this
@@ -57,7 +57,7 @@ jobs:
       run: |
         python -m venv .venv
         ./.venv/bin/python -m pip install --upgrade pip
-        ./.venv/bin/python -m pip install -r requirements.txt
+        ./.venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt
 
     - name: Type-check src/ (must be 0 errors; pyrightconfig.json keeps test/ relaxed)
       run: |

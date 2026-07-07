@@ -20,7 +20,7 @@ from PIL import Image
 
 from src.conversion import ConversionManager
 from src.utils import (
-    get_maxfall,
+    get_maxcll,
     get_video_properties,
     extract_frame_with_conversion,
     FFMPEG_FILTER,
@@ -107,41 +107,31 @@ class TestAdjustGamma(unittest.TestCase):
         self.assertLess(out.getpixel((0, 0)), 128)
 
 
-class TestGetMaxfallAlias(unittest.TestCase):
-    """get_maxfall is a backward-compat alias for get_maxcll.
-
-    Both functions return MaxCLL (max_content / peak pixel luminance).
-    Neither returns MaxFALL (max_average); get_maxfall was renamed when
-    the probe was extended to return the full metadata dict.
-    """
+class TestGetMaxcll(unittest.TestCase):
+    """get_maxcll returns MaxCLL (max_content / peak pixel luminance), not MaxFALL."""
 
     def setUp(self):
         from src.utils import clear_maxfall_cache
         clear_maxfall_cache()
 
     @patch('src.utils.subprocess.check_output')
-    def test_alias_returns_maxcll(self, mock_out):
-        """get_maxfall returns MaxCLL (max_content=1000), not MaxFALL (max_average=400)."""
+    def test_returns_maxcll_not_maxfall(self, mock_out):
+        """Returns max_content=1000, not max_average=400."""
         data = {"frames": [{"side_data_list": [
             {"side_data_type": "Content light level metadata",
              "max_content": 1000, "max_average": 400}
         ]}]}
         mock_out.return_value = json.dumps(data).encode('utf-8')
-        self.assertEqual(get_maxfall('video.mkv'), 1000.0)
+        self.assertEqual(get_maxcll('video.mkv'), 1000.0)
 
     @patch('src.utils.subprocess.check_output')
     def test_returns_none_when_absent(self, mock_out):
         mock_out.return_value = json.dumps({"frames": []}).encode('utf-8')
-        self.assertIsNone(get_maxfall('video.mkv'))
+        self.assertIsNone(get_maxcll('video.mkv'))
 
 
-class TestGetMaxfallAliasCaching(unittest.TestCase):
-    """HDR metadata (MaxCLL, mastering peak) is probed once per path and cached.
-
-    Probing costs ~0.5–1.2 s; subsequent calls must return the cached value.
-    get_maxfall is a backward-compat alias for get_maxcll; both return MaxCLL
-    (max_content), not MaxFALL (max_average).
-    """
+class TestGetMaxcllCaching(unittest.TestCase):
+    """HDR metadata is probed once per path and cached (~0.5–1.2 s per probe)."""
 
     def setUp(self):
         from src.utils import clear_maxfall_cache
@@ -149,33 +139,31 @@ class TestGetMaxfallAliasCaching(unittest.TestCase):
 
     @patch('src.utils.subprocess.check_output')
     def test_repeated_calls_probe_once(self, mock_out):
-        # max_content=1000 (MaxCLL) is what get_maxfall/get_maxcll return.
-        # max_average=250 (MaxFALL) is stored in the cache but not exposed by this alias.
         mock_out.return_value = json.dumps(
             {"frames": [{"side_data_list": [
                 {"side_data_type": "Content light level metadata",
                  "max_content": 1000, "max_average": 250}
             ]}]}).encode('utf-8')
-        first = get_maxfall('a.mkv')
-        second = get_maxfall('a.mkv')
-        self.assertEqual(first, 1000.0)   # MaxCLL (max_content), not MaxFALL (250)
+        first = get_maxcll('a.mkv')
+        second = get_maxcll('a.mkv')
+        self.assertEqual(first, 1000.0)
         self.assertEqual(second, 1000.0)
         self.assertEqual(mock_out.call_count, 1)  # second call served from cache
 
     @patch('src.utils.subprocess.check_output')
     def test_distinct_paths_probe_separately(self, mock_out):
         mock_out.return_value = json.dumps({"frames": []}).encode('utf-8')
-        get_maxfall('a.mkv')
-        get_maxfall('b.mkv')
+        get_maxcll('a.mkv')
+        get_maxcll('b.mkv')
         self.assertEqual(mock_out.call_count, 2)
 
     @patch('src.utils.subprocess.check_output')
     def test_clear_cache_forces_reprobe(self, mock_out):
         from src.utils import clear_maxfall_cache
         mock_out.return_value = json.dumps({"frames": []}).encode('utf-8')
-        get_maxfall('a.mkv')
+        get_maxcll('a.mkv')
         clear_maxfall_cache()
-        get_maxfall('a.mkv')
+        get_maxcll('a.mkv')
         self.assertEqual(mock_out.call_count, 2)
 
 
@@ -2708,13 +2696,6 @@ class TestExtractAndConvertFrameErrorPaths(unittest.TestCase):
 
 class TestConversionManagerInternals(unittest.TestCase):
     """Private helpers on ConversionManager that were uncovered."""
-
-    def test_startupinfo_non_windows(self):
-        m = ConversionManager()
-        with patch('sys.platform', 'linux'):
-            si, flags = m._startupinfo()
-        self.assertIsNone(si)
-        self.assertEqual(flags, 0)
 
     def test_monitor_progress_returns_early_when_proc_is_none(self):
         m = ConversionManager()

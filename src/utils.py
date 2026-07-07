@@ -273,7 +273,8 @@ def get_maxcll(video_path):
     return _get_hdr_metadata(video_path)['maxcll']
 
 
-def build_libplacebo_filter(gamma, tonemapper, width='iw', height='ih',
+def build_libplacebo_filter(gamma, tonemapper, width: 'int | str' = 'iw',
+                            height: 'int | str' = 'ih',
                             cuda_input: bool = False) -> str:
     """Build the GPU tonemapping filter chain (HDR->SDR) using libplacebo.
 

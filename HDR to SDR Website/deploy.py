@@ -262,7 +262,7 @@ def deploy(source_dir: Path, dry_run: bool = False) -> bool:
     print(f"  {len(files)} file(s) queued for upload:\n")
 
     try:
-        session = boto3.session.Session(region_name=AWS_REGION)
+        session = boto3.Session(region_name=AWS_REGION)
         s3      = session.client("s3")
         cf      = session.client("cloudfront")
     except NoCredentialsError:

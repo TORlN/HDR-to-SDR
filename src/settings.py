@@ -2,12 +2,11 @@ import json
 import logging
 import os
 
-_SETTINGS_DIR = os.path.join(
+SETTINGS_DIR = os.path.join(
     os.environ.get('APPDATA') or os.path.expanduser('~'),
     'HDR-to-SDR',
 )
-SETTINGS_DIR = _SETTINGS_DIR
-SETTINGS_FILE = os.path.join(_SETTINGS_DIR, 'settings.json')
+SETTINGS_FILE = os.path.join(SETTINGS_DIR, 'settings.json')
 
 DEFAULTS = {
     'gamma': 1.0,

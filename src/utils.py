@@ -1,4 +1,3 @@
-import ffmpeg
 from PIL import Image, UnidentifiedImageError
 import subprocess
 import os
@@ -46,49 +45,8 @@ FFPROBE_EXECUTABLE = None
 
 # Initialize logging
 def setup_logging():
-    """Configure logging with fallback locations for Wine compatibility"""
-    if not LOGGING_ENABLED:
-        logging.basicConfig(level=logging.WARNING, format='%(levelname)s - %(message)s')
-        return False
-
-    try:
-        base_dir = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, 'frozen', False) else __file__))
-        log_paths = [
-            os.path.join(base_dir, 'debug.log'),
-            os.path.join(os.getcwd(), 'debug.log'),
-            os.path.expanduser('~/debug.log'),
-            'debug.log'
-        ]
-        
-        for log_path in log_paths:
-            try:
-                logging.basicConfig(
-                    level=logging.DEBUG if LOGGING_ENABLED else logging.WARNING,
-                    filename=log_path,
-                    filemode='w',
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-                )
-                console = logging.StreamHandler()
-                console.setLevel(logging.DEBUG if LOGGING_ENABLED else logging.WARNING)
-                formatter = logging.Formatter('%(levelname)s - %(message)s')
-                console.setFormatter(formatter)
-                logging.getLogger('').addHandler(console)
-                
-                logging.info(f"Logging initialized. Log file: {log_path}")
-                logging.info(f"Platform: {sys.platform}")
-                logging.info(f"Executable path: {sys.executable if getattr(sys, 'frozen', False) else __file__}")
-                return True
-            except (IOError, PermissionError) as e:
-                print(f"Failed to set up logging at {log_path}: {e}")
-                continue
-        
-        logging.basicConfig(level=logging.DEBUG if LOGGING_ENABLED else logging.WARNING, format='%(levelname)s - %(message)s')
-        logging.warning("Failed to create log file. Logging to console only.")
-        return False
-    
-    except Exception as e:
-        print(f"Error setting up logging: {e}")
-        return False
+    logging.basicConfig(level=logging.WARNING, format='%(levelname)s - %(message)s')
+    return False
 
 # Initialize FFmpeg paths
 def get_executable_path(filename):
@@ -160,20 +118,6 @@ def initialize_ffmpeg():
         found_files = verify_ffmpeg_files()
         FFMPEG_EXECUTABLE = found_files['ffmpeg']
         FFPROBE_EXECUTABLE = found_files['ffprobe']
-
-        # Configure ffmpeg-python. These are private, undeclared module
-        # attributes, so set/read them via setattr/getattr to keep static type
-        # checkers from flagging them as unknown attributes of the module.
-        setattr(ffmpeg, '_ffmpeg_binary', FFMPEG_EXECUTABLE)
-        setattr(ffmpeg, '_ffprobe_binary', FFPROBE_EXECUTABLE)
-
-        # Set environment variables
-        os.environ['FFMPEG_BINARY'] = FFMPEG_EXECUTABLE
-        os.environ['FFPROBE_BINARY'] = FFPROBE_EXECUTABLE
-
-        # Add diagnostic logging
-        logging.debug(f"Configured ffmpeg binary: {getattr(ffmpeg, '_ffmpeg_binary', None)}")
-        logging.debug(f"Configured ffprobe binary: {getattr(ffmpeg, '_ffprobe_binary', None)}")
 
     except Exception as e:
         # Surfacing the error is the caller's job (the GUI shows it on startup);

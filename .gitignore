@@ -39,6 +39,7 @@ htmlcov/
 
 # VS Code settings
 .vscode/
+claude/
 
 # Script files
 *.sh

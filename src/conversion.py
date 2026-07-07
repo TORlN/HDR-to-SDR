@@ -2,7 +2,6 @@ import os
 import subprocess
 import threading
 import webbrowser
-import multiprocessing
 import re
 import logging
 from tkinter import messagebox
@@ -19,7 +18,6 @@ class ConversionManager:
     def __init__(self):
         self.process = None
         self.cancelled = False
-        self.cpu_count = multiprocessing.cpu_count()
         self._gpu_encoder = None
 
     def start_conversion(self, input_path, output_path, gamma, use_gpu,

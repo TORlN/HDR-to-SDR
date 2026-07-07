@@ -1131,6 +1131,31 @@ class TestBitDepthContainerGuardrail(unittest.TestCase):
         mock_get_props.assert_not_called()  # bail out before even probing the file
         self.assertIsNone(manager.process)
 
+    @patch('src.conversion.get_video_properties', return_value={'duration': 10.0})
+    def test_construct_ffmpeg_command_failure_reenables_ui(self, mock_get_props):
+        """If construct_ffmpeg_command raises after the UI has already been
+        disabled and the cancel button gridded (e.g. the GPU-only-tonemapper
+        safety net firing), the single-file path must re-enable the UI and
+        hide the cancel button before letting the exception propagate --
+        otherwise every control is permanently stuck disabled with no way to
+        recover short of restarting the app."""
+        manager = ConversionManager()
+        mock_gui = MagicMock()
+        progress_var = MagicMock()
+        cancel_button = MagicMock()
+        elements = [MagicMock(), MagicMock()]
+
+        with patch.object(manager, 'construct_ffmpeg_command',
+                           side_effect=ValueError('boom')):
+            with self.assertRaises(ValueError):
+                manager.start_conversion(
+                    'in.mp4', 'out.mp4', 1.0, False,
+                    progress_var, elements, mock_gui, False, cancel_button)
+
+        for el in elements:
+            el.config.assert_any_call(state='normal')
+        cancel_button.grid_remove.assert_called_once()
+
 
 class TestContainerStreamArgs(unittest.TestCase):
     """Container-aware audio/subtitle handling in construct_ffmpeg_command."""
@@ -1226,6 +1251,50 @@ class TestLibplaceboCommandConstruction(unittest.TestCase):
         self.assertNotIn('libplacebo', cmd)
         self.assertIn('zscale', cmd)
         self.assertIn('libx264', cmd)
+
+
+class TestGpuOnlyTonemapperSafetyNet(unittest.TestCase):
+    """BT.2390/Spline have no CPU implementation. If per-item settings force
+    the CPU branch anyway (e.g. 12-bit output, which always forces CPU
+    regardless of the GPU toggle), construct_ffmpeg_command must raise a
+    clear error instead of building an invalid zscale filter string."""
+
+    _PROPS = {
+        "width": 1920, "height": 1080, "bit_rate": 4000000,
+        "frame_rate": 24.0, "audio_codec": "aac", "audio_bit_rate": 128000,
+        "duration": 30.0, "subtitle_streams": [], "codec_name": "hevc",
+    }
+
+    def test_raises_when_forced_cpu_with_gpu_only_tonemapper(self):
+        m = ConversionManager()
+        with self.assertRaises(ValueError) as ctx:
+            m.construct_ffmpeg_command(
+                'in.mp4', 'out.mkv', 1.0, self._PROPS,
+                use_gpu=True, tonemapper='BT.2390', bit_depth=12,
+            )
+        message = str(ctx.exception)
+        self.assertIn('bt.2390', message)
+        self.assertIn('GPU', message)
+
+    @patch('src.conversion.vulkan_cuda_interop_available', return_value=False)
+    @patch('src.conversion.vulkan_libplacebo_available', return_value=True)
+    def test_gpu_path_bt2390_unaffected(self, _avail, _interop):
+        m = ConversionManager()
+        m._gpu_encoder = 'h264_nvenc'
+        cmd = ' '.join(m.construct_ffmpeg_command(
+            'in.mp4', 'out.mp4', 1.0, self._PROPS,
+            use_gpu=True, tonemapper='BT.2390'))
+        self.assertIn('tonemapping=bt.2390', cmd)
+
+    @patch('src.conversion.vulkan_cuda_interop_available', return_value=False)
+    @patch('src.conversion.vulkan_libplacebo_available', return_value=True)
+    def test_gpu_path_spline_unaffected(self, _avail, _interop):
+        m = ConversionManager()
+        m._gpu_encoder = 'h264_nvenc'
+        cmd = ' '.join(m.construct_ffmpeg_command(
+            'in.mp4', 'out.mp4', 1.0, self._PROPS,
+            use_gpu=True, tonemapper='Spline'))
+        self.assertIn('tonemapping=spline', cmd)
 
 
 class TestCudaVulkanInteropPath(unittest.TestCase):

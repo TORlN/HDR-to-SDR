@@ -13,10 +13,13 @@ from PIL import Image, ImageTk
 from utils import (
     extract_frame,
     extract_frame_with_conversion,
+    extract_frame_with_gpu_conversion,
     get_video_properties,
     clear_maxfall_cache,
     extract_frames_batch,
     extract_frames_with_conversion_batch,
+    extract_frames_with_gpu_conversion_batch,
+    GPU_ONLY_TONEMAPPERS,
 )
 
 # ── Module-level constants ─────────────────────────────────────────────────────
@@ -531,7 +534,10 @@ class _HDRPreviewMixin:
         converted_key = (video_path, time_key, tonemapper)
         converted = self._preview_cache_converted.get(converted_key)
         if converted is None:
-            converted = extract_frame_with_conversion(
+            extract_fn = (extract_frame_with_gpu_conversion
+                          if tonemapper.lower() in GPU_ONLY_TONEMAPPERS
+                          else extract_frame_with_conversion)
+            converted = extract_fn(
                 video_path, gamma=1.0,
                 tonemapper=tonemapper, time_position=time_position,
                 width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1]
@@ -557,11 +563,16 @@ class _HDRPreviewMixin:
     def _prewarm_batch_converted(
         self, video_path: str, positions: list[float], tonemapper: str, generation: int
     ) -> None:
-        """Tonemap-convert all frames for the given positions in one ffmpeg pass."""
+        """Tonemap-convert all frames for the given positions in one ffmpeg pass
+        (or, for GPU-only tonemappers, N looped GPU passes -- see
+        extract_frames_with_gpu_conversion_batch)."""
         if generation != self._preview_generation:
             return
         try:
-            converted = extract_frames_with_conversion_batch(
+            batch_fn = (extract_frames_with_gpu_conversion_batch
+                        if tonemapper.lower() in GPU_ONLY_TONEMAPPERS
+                        else extract_frames_with_conversion_batch)
+            converted = batch_fn(
                 video_path, positions, 1.0, tonemapper,
                 PREVIEW_SIZE[0], PREVIEW_SIZE[1])
             for t, img in zip(positions, converted):

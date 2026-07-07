@@ -8,7 +8,7 @@ from tkinter import messagebox
 from utils import (get_video_properties, FFMPEG_CONVERT_FILTER,
                    FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE,
                    VULKAN_DEVICE_ARGS, VULKAN_CUDA_DEVICE_ARGS,
-                   build_libplacebo_filter,
+                   build_libplacebo_filter, GPU_ONLY_TONEMAPPERS,
                    vulkan_libplacebo_available, vulkan_cuda_interop_available,
                    _startupinfo as _utils_startupinfo)
 from tkinterdnd2 import DND_FILES
@@ -64,11 +64,22 @@ class ConversionManager:
             gui_instance, interactable_elements, cancel_button))
         cancel_button.grid()
 
-        cmd = self.construct_ffmpeg_command(
-            input_path, output_path, gamma, properties, use_gpu,
-            tonemapper=tonemapper, quality=quality, bit_depth=bit_depth,
-            licensed=licensed
-        )
+        try:
+            cmd = self.construct_ffmpeg_command(
+                input_path, output_path, gamma, properties, use_gpu,
+                tonemapper=tonemapper, quality=quality, bit_depth=bit_depth,
+                licensed=licensed
+            )
+        except Exception:
+            # The UI was already disabled and the cancel button gridded above,
+            # but self.process hasn't been assigned yet -- Cancel would be a
+            # no-op and gui.py's generic error handler doesn't re-enable the
+            # UI. Undo both here so the app isn't left permanently disabled,
+            # then let the original exception propagate unchanged so callers
+            # still see/log/report it exactly as before.
+            self.enable_ui(interactable_elements)
+            cancel_button.grid_remove()
+            raise
         self.process = self.start_ffmpeg_process(cmd)
 
         thread = threading.Thread(target=self.monitor_progress, args=(
@@ -192,6 +203,12 @@ class ConversionManager:
             filter_str = build_libplacebo_filter(
                 gamma, tonemapper, cuda_input=use_cuda_interop)
         else:
+            if tonemapper in GPU_ONLY_TONEMAPPERS:
+                raise ValueError(
+                    f"{tonemapper} requires GPU tonemapping; this item's "
+                    "settings force CPU processing — change the tonemapper "
+                    "or output bit depth."
+                )
             filter_str = FFMPEG_CONVERT_FILTER.format(gamma=gamma, tonemapper=tonemapper)
         cmd += [
             '-filter_complex', f'[0:v:0]{filter_str}[vout]',

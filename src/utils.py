@@ -11,7 +11,7 @@ import threading
 
 # Constants and initialization
 LOGGING_ENABLED = False
-TONEMAP = ["Reinhard", "Mobius", "Hable"]
+TONEMAP = ["Reinhard", "Mobius", "Hable", "BT.2390", "Spline"]
 # npl=100 is the SDR reference white (100 nits). Lower values push the average
 # frame toward full white and crush highlight detail; higher values darken the
 # output. 100 is the correct target for standard SDR displays.
@@ -24,6 +24,13 @@ FFMPEG_CONVERT_FILTER = (
     'zscale=t=linear:npl=100,tonemap={tonemapper},zscale=t=bt709:m=bt709:r=tv:p=bt709,'
     'eq=gamma={gamma}'
 )
+
+# Tonemappers with no zscale/CPU implementation -- confirmed via
+# `ffmpeg -h filter=tonemap` against the real bundled build (only
+# none/linear/gamma/clip/reinhard/hable/mobius exist there). These two exist
+# only via libplacebo, so they require the GPU tonemap path both for preview
+# and for final conversion. Lowercase, matching libplacebo's own spelling.
+GPU_ONLY_TONEMAPPERS = {'bt.2390', 'spline'}
 
 # Flags that create the Vulkan device libplacebo runs on. Prepended to the ffmpeg
 # command (before -i) when the GPU tonemap path is active (CPU decode fallback).
@@ -558,6 +565,62 @@ def extract_frame_with_conversion(video_path, gamma, tonemapper='reinhard',
     except UnidentifiedImageError as e:
         logging.error(f"Failed to extract and convert frame: {e}")
         raise RuntimeError("Failed to extract and convert frame.")
+
+
+def extract_frame_with_gpu_conversion(video_path, gamma, tonemapper='bt.2390',
+                                      time_position=None, width: 'int | str' = 'iw',
+                                      height: 'int | str' = 'ih'):
+    """GPU (libplacebo) counterpart to extract_frame_with_conversion.
+
+    Used for tonemappers with no zscale/CPU implementation (see
+    GPU_ONLY_TONEMAPPERS) -- preview must render the true algorithm, not an
+    approximation, so these route through libplacebo/Vulkan instead of
+    zscale. Uses the plain-Vulkan (CPU-decode) path, not CUDA interop:
+    interop optimizes full-length encodes, not single preview frames.
+    """
+    properties = get_video_properties(video_path)
+    if not properties or properties['duration'] == 0:
+        raise ValueError("Invalid video properties or duration.")
+
+    target_time = properties['duration'] / 3 if time_position is None else time_position
+
+    filter_str = build_libplacebo_filter(gamma, tonemapper, width=width, height=height)
+    cmd = [FFMPEG_EXECUTABLE] + VULKAN_DEVICE_ARGS + [
+        '-ss', str(target_time), '-i', video_path,
+        '-vf', filter_str,
+        '-vframes', '1', '-f', 'image2pipe', '-'
+    ]
+
+    out = run_ffmpeg_command(cmd)
+    try:
+        return Image.open(io.BytesIO(out))
+    except UnidentifiedImageError as e:
+        logging.error(f"Failed to extract and convert frame (GPU): {e}")
+        raise RuntimeError("Failed to extract and convert frame.")
+
+
+def extract_frames_with_gpu_conversion_batch(
+    video_path: str,
+    time_positions: 'list[float]',
+    gamma: float,
+    tonemapper: str,
+    width: int,
+    height: int,
+) -> 'list[Image.Image]':
+    """GPU counterpart to extract_frames_with_conversion_batch.
+
+    Loops extract_frame_with_gpu_conversion once per position rather than
+    building a shared multi-input Vulkan filter graph -- that's materially
+    more complex and not worth it for this narrower, heavier-weight path.
+    """
+    if not time_positions:
+        return []
+    return [
+        extract_frame_with_gpu_conversion(
+            video_path, gamma, tonemapper=tonemapper,
+            time_position=t, width=width, height=height)
+        for t in time_positions
+    ]
 
 def extract_frame(video_path, time_position=None, width: 'int | None' = None,
                   height: 'int | None' = None):

@@ -6,7 +6,8 @@ from tkinter import filedialog, messagebox
 from tkinter import ttk
 from dark_theme import apply_dark_theme
 from conversion import conversion_manager
-from utils import get_video_properties, get_maxcll, TONEMAP, clear_maxfall_cache
+from utils import (get_video_properties, get_maxcll, TONEMAP, clear_maxfall_cache,
+                   GPU_ONLY_TONEMAPPERS, vulkan_libplacebo_available)
 from settings import load_settings, save_settings
 from licensing import InvalidKeyError, DeviceLimitError, NetworkError, LicenseError
 from PIL import Image, ImageTk
@@ -66,6 +67,11 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
     _CRF_RANGE = (28, 17)
     _CQ_RANGE = (30, 15)
 
+    # Appended to a GPU-only tonemapper's combobox label when it's unselectable
+    # (GPU tonemapping isn't active) -- the entry stays visible/greyed instead
+    # of being removed from the list, per _apply_tonemap_choices.
+    _GPU_ONLY_SUFFIX = " (GPU Only)"
+
     def __init__(self, root: "TkinterDnD.Tk", licensed: bool = False) -> None:
         """Initialize the GUI and set up all components."""
         self.root = root
@@ -88,6 +94,10 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.converted_image_base = None
         self.gpu_accel_var = tk.BooleanVar(value=_s['gpu_accel'])
         self.tonemap_var = tk.StringVar(value=_s['tonemapper'])
+        # Tracks the last selection that was actually valid, so a click on a
+        # greyed-out GPU-only row (still clickable -- see _on_tonemap_selected)
+        # has something sane to revert to.
+        self._last_valid_tonemapper = self.tonemap_var.get()
         self.quality_var = tk.IntVar(value=_s['quality'])
         self.format_var = tk.StringVar(value=_s['filetype'])
         # Not persisted to settings -- resets per file load, since it's only
@@ -335,13 +345,15 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.tonemap_frame, textvariable=self.tonemap_var,
             values=TONEMAP, state='readonly', width=15)
         self.tonemap_combobox.grid(row=0, column=0, padx=(0, 5))
-        self.tonemap_combobox.bind('<<ComboboxSelected>>', self.update_frame_preview)
+        self.tonemap_combobox.bind('<<ComboboxSelected>>', self._on_tonemap_selected)
         info_button_tonemap = ttk.Label(self.tonemap_frame, text="ⓘ", cursor="hand2")
         info_button_tonemap.grid(row=0, column=1)
         tooltip_text_tonemap = (
             "Reinhard: Basic HDR to SDR conversion\n"
             "Mobius: Natural-looking conversion\n"
-            "Hable: Game-like conversion (Cyberpunk 2077)"
+            "Hable: Game-like conversion (Cyberpunk 2077)\n"
+            "BT.2390: Broadcast-standard highlight rolloff (GPU Only)\n"
+            "Spline: Scene-adaptive libplacebo default (GPU Only)"
         )
         info_button_tonemap.bind('<Enter>',
                                   lambda e: self.show_tooltip(e, tooltip_text_tonemap))
@@ -524,6 +536,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         ]
 
         self._apply_quality_range()
+        self._apply_tonemap_choices()
 
     def configure_grid(self) -> None:
         """Configure the grid layout for the main window and frames."""
@@ -696,6 +709,35 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.quality_slider.configure(from_=worst, to=best)
         self.quality_slider.set(new_value)
         self.quality_var.set(int(round(new_value)))
+
+    def _apply_tonemap_choices(self) -> None:
+        """Always show all tonemapper entries; the GPU-only ones (BT.2390,
+        Spline) get a "(GPU Only)" suffix and are greyed out in the dropdown
+        instead of being removed when GPU tonemapping isn't actually active
+        (toggle on and the Vulkan/libplacebo probe passed). Resets the
+        selection to Mobius if it becomes unavailable while selected."""
+        gpu_active = self.gpu_accel_var.get() and vulkan_libplacebo_available()
+        display_values = [
+            t if gpu_active or t.lower() not in GPU_ONLY_TONEMAPPERS
+            else f"{t}{self._GPU_ONLY_SUFFIX}"
+            for t in TONEMAP
+        ]
+        self.tonemap_combobox.configure(values=display_values)
+        if not gpu_active and self.tonemap_var.get().lower() in GPU_ONLY_TONEMAPPERS:
+            self.tonemap_var.set('Mobius')
+        self._last_valid_tonemapper = self.tonemap_var.get()
+
+    def _on_tonemap_selected(self, event: tk.Event = None) -> None:  # type: ignore[type-arg]
+        """<<ComboboxSelected>> handler. A greyed GPU-only row is still
+        clickable in a plain Tk listbox (the grey is cosmetic only), so this
+        is the actual guard: any selection carrying the "(GPU Only)" suffix
+        is refused and reverted to the last valid selection instead."""
+        raw = self.tonemap_var.get()
+        if raw.endswith(self._GPU_ONLY_SUFFIX):
+            self.tonemap_var.set(self._last_valid_tonemapper)
+            return
+        self._last_valid_tonemapper = raw
+        self.update_frame_preview(event)
 
     def _on_quality_change(self, value: str) -> None:
         """Snap the Quality slider to whole CRF/CQ steps (the scale emits floats)."""
@@ -923,6 +965,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                     f"An error occurred while checking GPU acceleration:\n{e}")
         if hasattr(self, 'quality_slider'):
             self._apply_quality_range()
+        if hasattr(self, 'tonemap_combobox'):
+            self._apply_tonemap_choices()
 
     # ── Tooltips ───────────────────────────────────────────────────────────────
 

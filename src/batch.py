@@ -202,14 +202,20 @@ class _BatchMixin:
         quality = int(self.quality_var.get())
         bit_depth = self._selected_bit_depth()  # type: ignore[attr-defined]
 
-        conversion_manager.start_conversion(
-            input_path, output_path, gamma, use_gpu,
-            self.progress_var, self.interactable_elements, self,
-            self.open_after_conversion_var.get(), self.cancel_button,
-            tonemapper=tonemapper, quality=quality, bit_depth=bit_depth,
-            licensed=self._licensed,
-            on_complete=self._on_batch_item_complete
-        )
+        try:
+            conversion_manager.start_conversion(
+                input_path, output_path, gamma, use_gpu,
+                self.progress_var, self.interactable_elements, self,
+                self.open_after_conversion_var.get(), self.cancel_button,
+                tonemapper=tonemapper, quality=quality, bit_depth=bit_depth,
+                licensed=self._licensed,
+                on_complete=self._on_batch_item_complete
+            )
+        except Exception as e:
+            logging.error(f"Batch item failed to start ({input_path}): {e}")
+            item['status'] = 'Failed'
+            self._refresh_batch_list()
+            return self._start_next_batch_item()
         return True
 
     def _on_batch_item_complete(self, success: bool) -> None:

@@ -91,10 +91,50 @@ class TestConstruction(_GuiTestBase):
         self.assertTrue(self.gui.display_image_var.get())
         self.assertEqual(self.gui.progress_var.get(), 0)
 
-    def test_tonemap_combobox_matches_constant(self):
+    @patch('src.gui.vulkan_libplacebo_available', return_value=True)
+    def test_tonemap_combobox_shows_all_entries_when_gpu_tonemap_active(self, _avail):
+        self.gui.gpu_accel_var.set(True)
+        self.gui._apply_tonemap_choices()
         self.assertEqual(tuple(self.gui.tonemap_combobox.cget('values')),
                          tuple(TONEMAP))
         self.assertEqual(str(self.gui.tonemap_combobox.cget('state')), 'readonly')
+
+    @patch('src.gui.vulkan_libplacebo_available', return_value=False)
+    def test_tonemap_combobox_suffixes_gpu_only_when_unavailable(self, _avail):
+        self.gui.gpu_accel_var.set(False)
+        self.gui._apply_tonemap_choices()
+        values = tuple(self.gui.tonemap_combobox.cget('values'))
+        suffix = self.gui._GPU_ONLY_SUFFIX
+        self.assertIn(f'BT.2390{suffix}', values)
+        self.assertIn(f'Spline{suffix}', values)
+        self.assertNotIn('BT.2390', values)
+        self.assertNotIn('Spline', values)
+        self.assertIn('Reinhard', values)
+
+    @patch('src.gui.vulkan_libplacebo_available', return_value=False)
+    def test_tonemap_selection_resets_to_mobius_when_unavailable(self, _avail):
+        self.gui.tonemap_var.set('BT.2390')
+        self.gui.gpu_accel_var.set(False)
+        self.gui._apply_tonemap_choices()
+        self.assertEqual(self.gui.tonemap_var.get(), 'Mobius')
+
+    @patch('src.gui.vulkan_libplacebo_available', return_value=False)
+    def test_selecting_greyed_gpu_only_row_reverts_to_last_valid(self, _avail):
+        self.gui.gpu_accel_var.set(False)
+        self.gui._apply_tonemap_choices()
+        self.gui._last_valid_tonemapper = 'Hable'
+        self.gui.tonemap_var.set(f'BT.2390{self.gui._GPU_ONLY_SUFFIX}')
+        self.gui._on_tonemap_selected()
+        self.assertEqual(self.gui.tonemap_var.get(), 'Hable')
+
+    @patch('src.gui.vulkan_libplacebo_available', return_value=True)
+    def test_selecting_gpu_only_row_while_active_is_accepted(self, _avail):
+        self.gui.gpu_accel_var.set(True)
+        self.gui._apply_tonemap_choices()
+        self.gui.tonemap_var.set('BT.2390')
+        self.gui._on_tonemap_selected()
+        self.assertEqual(self.gui.tonemap_var.get(), 'BT.2390')
+        self.assertEqual(self.gui._last_valid_tonemapper, 'BT.2390')
 
     def test_gamma_slider_range(self):
         self.assertAlmostEqual(float(self.gui.gamma_slider.cget('from')), 0.1)

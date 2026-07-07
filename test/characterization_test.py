@@ -695,6 +695,61 @@ class TestPreviewPool(unittest.TestCase):
         gui._preview_pool.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
 
 
+class TestGpuOnlyTonemapperPreviewDispatch(unittest.TestCase):
+    """BT.2390/Spline have no CPU/zscale equivalent -- preview must route
+    them through the real libplacebo/Vulkan path, never approximate via
+    zscale, so the CPU and GPU extraction functions must be dispatched on
+    based on the selected tonemapper."""
+
+    @patch('src.preview.extract_frame_with_gpu_conversion', return_value='gpu-converted')
+    @patch('src.preview.extract_frame_with_conversion')
+    @patch('src.preview.extract_frame', return_value='orig')
+    def test_single_frame_dispatches_to_gpu_path_for_bt2390(
+            self, _extract, mock_cpu_convert, mock_gpu_convert):
+        gui = _bare_gui()
+        gui._preview_cache_original = {}
+        gui._preview_cache_converted = {}
+        original, converted = gui._extract_preview_images('in.mp4', 5.0, 'bt.2390')
+        self.assertEqual(converted, 'gpu-converted')
+        mock_gpu_convert.assert_called_once()
+        mock_cpu_convert.assert_not_called()
+
+    @patch('src.preview.extract_frame_with_gpu_conversion')
+    @patch('src.preview.extract_frame_with_conversion')
+    @patch('src.preview.extract_frame', return_value='orig')
+    def test_single_frame_still_uses_cpu_path_for_mobius(
+            self, _extract, mock_cpu_convert, mock_gpu_convert):
+        gui = _bare_gui()
+        gui._preview_cache_original = {}
+        gui._preview_cache_converted = {}
+        gui._extract_preview_images('in.mp4', 5.0, 'mobius')
+        mock_cpu_convert.assert_called_once()
+        mock_gpu_convert.assert_not_called()
+
+    @patch('src.preview.extract_frames_with_gpu_conversion_batch', return_value=['g0'])
+    @patch('src.preview.extract_frames_with_conversion_batch')
+    def test_batch_prewarm_dispatches_to_gpu_path_for_spline(
+            self, mock_cpu_batch, mock_gpu_batch):
+        gui = _bare_gui()
+        gui._preview_generation = 1
+        gui._preview_cache_converted = {}
+        gui._prewarm_batch_converted('v.mkv', [10.0], 'spline', generation=1)
+        mock_gpu_batch.assert_called_once()
+        mock_cpu_batch.assert_not_called()
+        self.assertIn(('v.mkv', 10.0, 'spline'), gui._preview_cache_converted)
+
+    @patch('src.preview.extract_frames_with_gpu_conversion_batch')
+    @patch('src.preview.extract_frames_with_conversion_batch', return_value=['c0'])
+    def test_batch_prewarm_still_uses_cpu_path_for_hable(
+            self, mock_cpu_batch, mock_gpu_batch):
+        gui = _bare_gui()
+        gui._preview_generation = 1
+        gui._preview_cache_converted = {}
+        gui._prewarm_batch_converted('v.mkv', [10.0], 'hable', generation=1)
+        mock_cpu_batch.assert_called_once()
+        mock_gpu_batch.assert_not_called()
+
+
 class TestPreviewWorkerThreadRender(unittest.TestCase):
     @patch('src.gui.ImageTk.PhotoImage')
     def test_render_updates_labels_and_caches(self, mock_photo):
@@ -1418,6 +1473,23 @@ class TestBatchProcessing(unittest.TestCase):
         gui._current_batch_item = gui.batch_items[0]
         gui._on_batch_item_complete(True)
         gui._load_input_file.assert_not_called()  # nothing left to preview
+
+    @patch('src.batch.conversion_manager')
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_start_conversion_raising_marks_item_failed_and_continues(
+            self, _isfile, mock_cm):
+        mock_cm.start_conversion.side_effect = [
+            ValueError("spline requires GPU tonemapping; this item's "
+                       "settings force CPU processing — change the "
+                       "tonemapper or output bit depth."),
+            None,
+        ]
+        gui = self._gui()
+        gui.batch_items = [self._item('a'), self._item('b')]
+        gui.start_batch()
+        self.assertEqual(gui.batch_items[0]['status'], 'Failed')
+        self.assertEqual(gui.batch_items[1]['status'], 'Converting')
+        self.assertEqual(mock_cm.start_conversion.call_count, 2)
 
 
 class TestPreviewExtractionCache(unittest.TestCase):

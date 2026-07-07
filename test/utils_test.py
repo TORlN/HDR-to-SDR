@@ -12,6 +12,7 @@ from src.utils import (
     get_maxcll, verify_ffmpeg_files, clear_video_properties_cache,
     clear_maxfall_cache,
     extract_frames_batch, extract_frames_with_conversion_batch, _split_png_frames,
+    extract_frame_with_gpu_conversion, extract_frames_with_gpu_conversion_batch,
 )
 import subprocess
 from PIL import Image  # Added import
@@ -1161,6 +1162,58 @@ class TestDolbyVisionDetection(unittest.TestCase):
         props = self._props_for(mock_popen, [record], 'dovi_str_profile.mkv')
         self.assertTrue(props['is_dolby_vision'])
         self.assertEqual(props['dovi_profile'], 8)
+
+
+class TestExtractFrameWithGpuConversion(unittest.TestCase):
+    """GPU (libplacebo) counterpart to extract_frame_with_conversion -- the
+    real preview path for tonemappers with no zscale equivalent (BT.2390,
+    Spline). Preview must render the true algorithm, never an approximation."""
+
+    @patch('src.utils.run_ffmpeg_command', return_value=_VALID_PNG)
+    @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
+    def test_uses_libplacebo_and_vulkan_device_args(self, _props, mock_run):
+        frame = extract_frame_with_gpu_conversion(
+            'input.mp4', gamma=1.0, tonemapper='bt.2390', time_position=10.0,
+            width=960, height=540)
+        self.assertIsInstance(frame, Image.Image)
+        cmd = mock_run.call_args[0][0]
+        self.assertIn('-init_hw_device', cmd)
+        self.assertIn('vulkan=vk:0', cmd)
+        vf = cmd[cmd.index('-vf') + 1]
+        self.assertIn('libplacebo', vf)
+        self.assertIn('tonemapping=bt.2390', vf)
+        self.assertEqual(cmd[cmd.index('-ss') + 1], '10.0')
+
+    @patch('src.utils.run_ffmpeg_command')
+    @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
+    def test_failure_raises_runtime_error(self, _props, mock_run):
+        mock_run.side_effect = RuntimeError('ffmpeg failed')
+        with self.assertRaises(RuntimeError):
+            extract_frame_with_gpu_conversion(
+                'input.mp4', gamma=1.0, tonemapper='spline', time_position=1.0)
+
+
+class TestExtractFramesWithGpuConversionBatch(unittest.TestCase):
+    """Loops the single-frame GPU extraction -- no batched Vulkan filter graph
+    (see design doc's Out of Scope: not worth the complexity for previews)."""
+
+    @patch('src.utils.extract_frame_with_gpu_conversion')
+    def test_loops_once_per_position(self, mock_single):
+        mock_single.side_effect = ['img0', 'img1', 'img2']
+        result = extract_frames_with_gpu_conversion_batch(
+            'vid.mkv', [5.0, 15.0, 25.0], 1.0, 'bt.2390', 960, 540)
+        self.assertEqual(result, ['img0', 'img1', 'img2'])
+        self.assertEqual(mock_single.call_count, 3)
+        first_kwargs = mock_single.call_args_list[0].kwargs
+        self.assertEqual(first_kwargs['time_position'], 5.0)
+        self.assertEqual(first_kwargs['tonemapper'], 'bt.2390')
+
+    @patch('src.utils.extract_frame_with_gpu_conversion')
+    def test_empty_positions_returns_empty_without_calling(self, mock_single):
+        result = extract_frames_with_gpu_conversion_batch(
+            'vid.mkv', [], 1.0, 'bt.2390', 960, 540)
+        self.assertEqual(result, [])
+        mock_single.assert_not_called()
 
 
 if __name__ == '__main__':

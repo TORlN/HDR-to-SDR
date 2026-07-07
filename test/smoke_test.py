@@ -87,6 +87,7 @@ from src.utils import (
     get_maxcll,
     extract_frame,
     extract_frame_with_conversion,
+    vulkan_libplacebo_available,
     FFMPEG_EXECUTABLE,
     FFPROBE_EXECUTABLE,
 )
@@ -115,6 +116,8 @@ _HDR10_10BIT_OK = _FFMPEG_OK and os.path.exists(HDR10_10BIT_VIDEO)
 _HDR10_12BIT_OK = _FFMPEG_OK and os.path.exists(HDR10_12BIT_VIDEO)
 _TRUEHD_ASS_OK = _FFMPEG_OK and os.path.exists(TRUEHD_ASS_MKV)
 _DOVI_OK = _FFMPEG_OK and os.path.exists(DOVI_VIDEO)
+
+_LIBPLACEBO_OK = _FFMPEG_OK and vulkan_libplacebo_available()
 
 
 def _x265_supports_12bit():
@@ -253,6 +256,44 @@ class TestRealHdr10TenBit(unittest.TestCase):
             transfer, _, _, pix_fmt = _probe_video(out_path)
             self.assertNotEqual(transfer, 'smpte2084')
             self.assertEqual(pix_fmt, 'yuv420p')
+
+
+@unittest.skipUnless(_LIBPLACEBO_OK, "Vulkan/libplacebo not available on this machine")
+class TestRealGpuOnlyTonemappers(unittest.TestCase):
+    """BT.2390 and Spline have no CPU/zscale implementation -- this proves the
+    real libplacebo filter strings the app constructs actually work against
+    genuine HDR input, covering the exact verification gap (mocked-only
+    tests) that let the original zscale-based design go uncaught."""
+
+    def _convert(self, tonemapper, out_name='out.mp4'):
+        props = get_video_properties(HDR10_10BIT_VIDEO)
+        with tempfile.TemporaryDirectory(prefix='hdr_smoke_gpu_only_') as tmpdir:
+            out_path = os.path.join(tmpdir, out_name)
+            manager = ConversionManager()
+            cmd = manager.construct_ffmpeg_command(
+                HDR10_10BIT_VIDEO, out_path, gamma=1.0, properties=props,
+                use_gpu=True, tonemapper=tonemapper,
+            )
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(
+                result.returncode, 0,
+                msg=f"ffmpeg failed:\n{result.stderr.decode('utf-8', 'replace')[-2000:]}",
+            )
+            transfer, _, _, _ = _probe_video(out_path)
+            self.assertNotEqual(transfer, 'smpte2084')
+
+    def test_bt2390_gpu_conversion_completes(self):
+        self._convert('BT.2390')
+
+    def test_spline_gpu_conversion_completes(self):
+        self._convert('Spline')
+
+    def test_gpu_preview_extraction_completes(self):
+        from src.utils import extract_frame_with_gpu_conversion
+        img = extract_frame_with_gpu_conversion(
+            HDR10_10BIT_VIDEO, gamma=1.0, tonemapper='bt.2390', time_position=0.5)
+        self.assertGreater(img.width, 0)
+        self.assertGreater(img.height, 0)
 
 
 @unittest.skipUnless(_HDR10_12BIT_OK, "sample 'smoke_test_videos/hdr10_12bit.mp4' / ffmpeg not available")

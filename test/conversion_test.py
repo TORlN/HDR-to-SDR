@@ -374,13 +374,11 @@ class TestConversionManager(unittest.TestCase):
             )
             self.assertEqual(process, mock_process)
 
+    @unittest.skipUnless(sys.platform == 'win32', "Windows platform required")
     @patch('src.conversion.subprocess.Popen')
     @patch('src.utils.subprocess.STARTUPINFO')
     def test_start_ffmpeg_process_windows(self, mock_startupinfo_cls, mock_popen):
         """Test start_ffmpeg_process on Windows platforms."""
-        if sys.platform != 'win32':
-            self.skipTest("Windows platform required for this test.")
-
         startupinfo_instance = MagicMock()
         startupinfo_instance.dwFlags = 0
         mock_startupinfo_cls.return_value = startupinfo_instance

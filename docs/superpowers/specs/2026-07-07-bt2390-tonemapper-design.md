@@ -1,5 +1,10 @@
 # BT.2390 Tonemapper — Design
 
+> **SUPERSEDED** by `2026-07-07-gpu-only-tonemappers-design.md`. This spec
+> incorrectly assumed zscale's `tonemap` filter supports a `bt2390` value;
+> verified against the real ffmpeg build that it does not. Kept for history
+> only — do not implement from this file.
+
 ## Problem
 
 The app currently offers three tonemappers (Reinhard, Mobius, Hable), driven by a

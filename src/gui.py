@@ -313,6 +313,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 'open_after_conversion': self.open_after_conversion_var.get(),
                 'display_preview': self.display_image_var.get(),
                 'quality': self.quality_var.get(),
+                'quality_mode': self._QUALITY_MODE_TO_INTERNAL.get(
+                    self.quality_mode_var.get(), 'cq'),
+                'quality_bitrate_kbps': self.bitrate_var.get(),
                 'filetype': self.format_var.get(),
             })
         except AttributeError:

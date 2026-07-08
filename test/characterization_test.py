@@ -2178,12 +2178,28 @@ class TestGuiLifecycle(unittest.TestCase):
         for name, val in [('gamma_var', 1.0),
                           ('tonemap_var', 'Mobius'), ('gpu_accel_var', False),
                           ('open_after_conversion_var', False), ('display_image_var', True),
-                          ('quality_var', 21), ('format_var', 'MKV')]:
+                          ('quality_var', 21), ('format_var', 'MKV'),
+                          ('quality_mode_var', 'Constant Quality'), ('bitrate_var', 15000)]:
             m = MagicMock(); m.get.return_value = val
             setattr(gui, name, m)
         gui._save_current_settings()
         self.assertEqual(mock_save.call_args[0][0]['quality'], 21)
         self.assertEqual(mock_save.call_args[0][0]['filetype'], 'MKV')
+        self.assertEqual(mock_save.call_args[0][0]['quality_mode'], 'cq')
+        self.assertEqual(mock_save.call_args[0][0]['quality_bitrate_kbps'], 15000)
+
+    @patch('src.gui.save_settings')
+    def test_save_current_settings_persists_bitrate_mode_choice(self, mock_save):
+        gui = _bare_gui()
+        for name, val in [('gamma_var', 1.0),
+                          ('tonemap_var', 'Mobius'), ('gpu_accel_var', False),
+                          ('open_after_conversion_var', False), ('display_image_var', True),
+                          ('quality_var', 21), ('format_var', 'MKV'),
+                          ('quality_mode_var', 'Target Bitrate'), ('bitrate_var', 42000)]:
+            m = MagicMock(); m.get.return_value = val
+            setattr(gui, name, m)
+        gui._save_current_settings()
+        self.assertEqual(mock_save.call_args[0][0]['quality_mode'], 'bitrate')
 
     @patch('src.gui.conversion_manager')
     def test_cancel_conversion_delegates_to_manager(self, mock_cm):

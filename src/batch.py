@@ -80,8 +80,10 @@ class _BatchMixin:
             fmt = self._format_for_input(path)  # type: ignore[attr-defined]
             base = os.path.splitext(path)[0]
             output_path = self._output_path_with_format(f"{base}_sdr", fmt)  # type: ignore[attr-defined]
-            self.batch_items.append(
-                {'input': path, 'output': output_path, 'format': fmt, 'status': 'Pending'})
+            self.batch_items.append({
+                'input': path, 'output': output_path, 'format': fmt, 'status': 'Pending',
+                'settings': self._current_settings_dict(),  # type: ignore[attr-defined]
+            })
         self._refresh_batch_list()
         if (self.batch_items and hasattr(self, 'input_path_var')
                 and not self.input_path_var.get()):

@@ -733,6 +733,29 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             return 12
         return 10
 
+    def _current_settings_dict(self) -> dict:  # type: ignore[type-arg]
+        """Snapshot every per-file conversion control's live value. Used to
+        seed a newly-queued item, to restore/compare a queued item's stored
+        settings against what's currently shown, and as the source for
+        "Apply to All"."""
+        gamma_var = getattr(self, 'gamma_var', None)
+        quality_mode_var = getattr(self, 'quality_mode_var', None)
+        quality_var = getattr(self, 'quality_var', None)
+        bitrate_var = getattr(self, 'bitrate_var', None)
+        tonemap_var = getattr(self, 'tonemap_var', None)
+        gpu_accel_var = getattr(self, 'gpu_accel_var', None)
+        bit_depth_var = getattr(self, 'bit_depth_var', None)
+        return {
+            'gamma': gamma_var.get() if gamma_var is not None else 1.0,
+            'quality_mode': self._QUALITY_MODE_TO_INTERNAL.get(
+                quality_mode_var.get() if quality_mode_var is not None else 'Constant Quality', 'cq'),
+            'quality': quality_var.get() if quality_var is not None else 21,
+            'bitrate': bitrate_var.get() if bitrate_var is not None else 8000,
+            'tonemapper': tonemap_var.get() if tonemap_var is not None else 'libplacebo',
+            'gpu_accel': gpu_accel_var.get() if gpu_accel_var is not None else True,
+            'bit_depth_choice': bit_depth_var.get() if bit_depth_var is not None else '10-bit',
+        }
+
     def _on_bit_depth_toggle(self) -> None:
         """Handle a 10/12-bit radio click: persist the choice on the queue
         entry for the loaded file (so batch runs honor it per item, surviving

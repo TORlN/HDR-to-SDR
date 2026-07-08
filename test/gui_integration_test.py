@@ -312,6 +312,22 @@ class TestBatchQueueWidgets(_GuiTestBase):
         self.assertEqual(self.gui.batch_listbox.size(), 2)
         self.assertIn('a.mp4', self.gui.batch_listbox.get(0))
 
+    def test_add_batch_files_seeds_settings_from_live_controls(self):
+        self.gui.gamma_var.set(1.7)
+        self.gui.gpu_accel_var.set(False)
+        self.gui.tonemap_var.set('Hable')
+        self.gui.quality_mode_var.set('Constant Quality')
+        self.gui.quality_var.set(21)
+        self.gui.bitrate_var.set(6000)
+        self.gui.bit_depth_var.set('10-bit')
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])
+        settings = self.gui.batch_items[0]['settings']
+        self.assertEqual(settings, {
+            'gamma': 1.7, 'quality_mode': 'cq', 'quality': 21, 'bitrate': 6000,
+            'tonemapper': 'Hable', 'gpu_accel': False, 'bit_depth_choice': '10-bit',
+        })
+
     def test_clear_batch_empties_listbox(self):
         with patch.object(self.gui, 'update_frame_preview'):
             self.gui.add_batch_files(['C:/v/a.mp4'])

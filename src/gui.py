@@ -110,10 +110,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.quality_mode_var = tk.StringVar(
             value=self._QUALITY_MODE_FROM_INTERNAL.get(_s['quality_mode'], 'Constant Quality'))
         self.quality_display_var = tk.StringVar()
-        # Only reseed Target Bitrate's value to 50% of the source on its first
-        # engagement if it's still sitting at the untouched fallback default --
-        # a real saved choice from a previous session must not be overwritten.
-        self._bitrate_seeded = _s['quality_bitrate_kbps'] != self._BITRATE_FALLBACK_KBPS
+        # Target Bitrate reseeds to 50% of the source whenever a new file is
+        # loaded (see _update_info_label) -- set True there, consumed here.
+        self._bitrate_needs_reseed = False
         self.quality_var.trace_add('write', self._sync_quality_display)
         self.bitrate_var.trace_add('write', self._sync_quality_display)
         self._sync_quality_display()
@@ -781,13 +780,20 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         (1,000 kbps to the source bitrate) is encoder-agnostic -- unlike
         Constant Quality, it does not depend on the GPU toggle."""
         ceiling = self._bitrate_ceiling_kbps()
-        if not self._bitrate_seeded:
-            # First-ever engagement with bitrate_var still at its untouched
-            # settings-default: seed to 50% of source instead of the floor or
-            # a stale default from a different file's session.
+        has_file = getattr(self, '_cached_props', None) is not None
+        if has_file and self._bitrate_needs_reseed:
+            # A new file was just loaded (see _update_info_label): reseed to
+            # 50% of its bitrate rather than keeping a value left over from
+            # a previous file or session.
             seed = max(self._BITRATE_FLOOR_KBPS, min(ceiling, round(ceiling * 0.5 / 500) * 500))
             self.bitrate_var.set(seed)
-            self._bitrate_seeded = True
+            self._bitrate_needs_reseed = False
+        elif not has_file:
+            # No file has been probed yet (e.g. this is the startup call in
+            # __init__, or the input was cleared): _bitrate_ceiling_kbps() is
+            # only the unknown-source fallback here, not a real file's
+            # bitrate, so it must not clamp down a real saved choice.
+            ceiling = max(ceiling, self.bitrate_var.get())
         value = min(max(self.bitrate_var.get(), self._BITRATE_FLOOR_KBPS), ceiling)
         self.quality_slider.configure(from_=self._BITRATE_FLOOR_KBPS, to=ceiling)
         self.quality_slider.set(value)
@@ -939,6 +945,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._update_bit_depth_choice()
         self._cached_props = props
         self._cached_maxcll = get_maxcll(file_path) if props else None
+        # A newly-loaded file gets its own 50%-of-source Target Bitrate seed,
+        # not whatever was left over from a previous file or session.
+        self._bitrate_needs_reseed = True
         if hasattr(self, 'quality_slider'):
             self._apply_quality_mode()
         self._refresh_info_label_text()

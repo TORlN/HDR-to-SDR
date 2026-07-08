@@ -2944,7 +2944,7 @@ class TestApplyQualityMode(unittest.TestCase):
     """_apply_quality_mode reconfigures the shared quality slider for whichever
     mode is selected: Constant Quality (existing CRF/CQ ranges, direct restore
     when just switched into) or Target Bitrate (1,000 kbps floor, source
-    bitrate ceiling, 50%-seeded on first engagement)."""
+    bitrate ceiling, 50%-seeded whenever a new file is loaded)."""
 
     def _gui(self, mode='Constant Quality', gpu=False, cached_bit_rate=None):
         gui = _bare_gui()
@@ -2955,7 +2955,7 @@ class TestApplyQualityMode(unittest.TestCase):
         gui.quality_slider = MagicMock()
         gui.quality_slider.cget.side_effect = lambda k: {'from': 28.0, 'to': 17.0}[k]
         gui.quality_slider.get.return_value = 23.0
-        gui._bitrate_seeded = True
+        gui._bitrate_needs_reseed = False
         if cached_bit_rate is not None:
             gui._cached_props = {'bit_rate': cached_bit_rate}
         return gui
@@ -3000,25 +3000,52 @@ class TestApplyQualityMode(unittest.TestCase):
         gui.quality_slider.set.assert_called_once_with(5000)
         gui.bitrate_var.set.assert_called_with(5000)
 
-    def test_first_engagement_seeds_fifty_percent_of_source(self):
+    def test_startup_with_no_file_loaded_does_not_clamp_saved_value(self):
+        # At app startup, _apply_quality_mode() runs once before any file is
+        # loaded (see __init__). _cached_props doesn't exist yet, so the
+        # "unknown source" fallback ceiling (8,000 kbps) must not be used to
+        # clamp/overwrite a real saved choice from a previous session.
+        gui = self._gui(mode='Target Bitrate')  # no cached_bit_rate -- unloaded
+        gui.bitrate_var.get.return_value = 28000
+        gui._apply_quality_mode()
+        gui.quality_slider.set.assert_called_once_with(28000)
+        gui.bitrate_var.set.assert_called_with(28000)
+
+    def test_new_file_load_seeds_fifty_percent_of_source(self):
         gui = self._gui(mode='Target Bitrate', cached_bit_rate=40_000_000)  # 40,000 kbps
-        gui._bitrate_seeded = False
+        gui._bitrate_needs_reseed = True  # set by _update_info_label on file load
         gui._apply_quality_mode()
         gui.bitrate_var.set.assert_any_call(20000)  # 50% of 40,000, already a 500-multiple
-        self.assertTrue(gui._bitrate_seeded)
+        self.assertFalse(gui._bitrate_needs_reseed)
 
-    def test_seeding_only_happens_once(self):
+    def test_reapplying_mode_without_a_new_file_does_not_reseed_again(self):
         gui = self._gui(mode='Target Bitrate', cached_bit_rate=40_000_000)
-        gui._bitrate_seeded = False
+        gui._bitrate_needs_reseed = True
         gui._apply_quality_mode()
         gui.bitrate_var.set.reset_mock()
         gui.bitrate_var.get.return_value = 20000
-        gui._apply_quality_mode()  # e.g. a second file probe -- must not reseed
+        gui._apply_quality_mode()  # e.g. a GPU toggle or mode switch -- not a new file load
         # A reseed would call bitrate_var.set twice here (once to seed 50% of
         # the source, once for the clamp passthrough) -- both landing on the
         # same 20000 value coincidentally, so only the call *count* (not the
         # value) can distinguish "seeded once" from "reseeded every call".
-        gui.bitrate_var.set.assert_called_once_with(20000)  # clamp passthrough only, no fresh seed
+        gui.bitrate_var.set.assert_called_once_with(20000)  # clamp passthrough only, no fresh reseed
+
+    def test_loading_a_second_file_reseeds_to_its_own_source(self):
+        # The user's real complaint: after loading one video and having the
+        # bitrate seed/adjusted, loading a *different* video must reseed to
+        # that new video's own 50%, not keep the previous file's value.
+        gui = self._gui(mode='Target Bitrate', cached_bit_rate=40_000_000)  # 40,000 kbps
+        gui._bitrate_needs_reseed = True
+        gui._apply_quality_mode()
+        gui.bitrate_var.set.assert_any_call(20000)  # 50% of first file's 40,000
+        gui.bitrate_var.get.return_value = 20000
+        # A new file is loaded (_update_info_label sets _cached_props and the
+        # reseed flag together -- see test_update_info_label_reapplies_bitrate_range_for_new_file).
+        gui._cached_props = {'bit_rate': 10_000_000}  # second file: 10,000 kbps
+        gui._bitrate_needs_reseed = True
+        gui._apply_quality_mode()
+        gui.bitrate_var.set.assert_any_call(5000)  # 50% of second file's 10,000
 
     # ── mode switch: Target Bitrate -> Constant Quality ─────────────────
 
@@ -3078,7 +3105,6 @@ class TestApplyQualityMode(unittest.TestCase):
     def test_update_info_label_reapplies_bitrate_range_for_new_file(self):
         gui = self._gui(mode='Target Bitrate')
         gui.quality_slider = MagicMock()
-        gui._bitrate_seeded = True
         gui.bitrate_var.get.return_value = 8000
         with patch('src.gui.get_video_properties',
                     return_value={'bit_rate': 40_000_000, 'bit_depth': 8}), \
@@ -3088,6 +3114,21 @@ class TestApplyQualityMode(unittest.TestCase):
             gui._refresh_info_label_text = MagicMock()
             gui._update_info_label('clip.mkv')
         gui.quality_slider.configure.assert_called_once_with(from_=1000, to=40000)
+
+    def test_update_info_label_seeds_fifty_percent_for_newly_loaded_file(self):
+        # The user's reported bug: loading a video should set Target Bitrate
+        # to half *that video's* bitrate, not leave whatever was there before.
+        gui = self._gui(mode='Target Bitrate')
+        gui.quality_slider = MagicMock()
+        gui.bitrate_var.get.return_value = 8000  # leftover value from before this file loaded
+        with patch('src.gui.get_video_properties',
+                    return_value={'bit_rate': 40_000_000, 'bit_depth': 8}), \
+             patch('src.gui.get_maxcll', return_value=None):
+            gui.info_label = MagicMock()
+            gui._update_bit_depth_choice = MagicMock()
+            gui._refresh_info_label_text = MagicMock()
+            gui._update_info_label('clip.mkv')
+        gui.bitrate_var.set.assert_any_call(20000)  # 50% of the new file's 40,000 kbps
 
 
 if __name__ == '__main__':

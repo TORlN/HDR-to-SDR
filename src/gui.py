@@ -614,7 +614,15 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 ("All files", "*.*"),
             ]
         )
-        if file_path:
+        if not file_path:
+            return
+        if self._licensed:
+            # Mirrors handle_file_drop's single-file licensed path: route
+            # through the queue so Browse and drag-and-drop behave the same.
+            self.add_batch_files([file_path])
+            if self.input_path_var.get() != file_path:
+                self._load_input_file(file_path)
+        else:
             self._load_input_file(file_path)
 
     def _load_input_file(self, file_path: str) -> None:

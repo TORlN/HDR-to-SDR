@@ -1171,6 +1171,52 @@ class TestBatchQueue(unittest.TestCase):
         gui.add_batch_files.assert_called_once_with(['C:/a.mkv'])
         gui._load_input_file.assert_not_called()
 
+    def test_browse_licensed_routes_through_queue(self):
+        # select_file (the main "Browse" button) must behave like a licensed
+        # single-file drop: route through the batch queue, not bypass it.
+        gui = _bare_gui()
+        gui._licensed = True
+        gui.add_batch_files = MagicMock()
+        gui._load_input_file = MagicMock()
+        gui.input_path_var = MagicMock()
+        gui.input_path_var.get.return_value = ''  # nothing previewed yet
+        with patch('src.gui.filedialog.askopenfilename', return_value='C:/a.mkv'):
+            gui.select_file()
+        gui.add_batch_files.assert_called_once_with(['C:/a.mkv'])
+        gui._load_input_file.assert_called_once_with('C:/a.mkv')
+
+    def test_browse_licensed_does_not_double_load_already_previewed_file(self):
+        gui = _bare_gui()
+        gui._licensed = True
+        gui.add_batch_files = MagicMock()
+        gui._load_input_file = MagicMock()
+        gui.input_path_var = MagicMock()
+        gui.input_path_var.get.return_value = 'C:/a.mkv'  # add_batch_files already loaded it
+        with patch('src.gui.filedialog.askopenfilename', return_value='C:/a.mkv'):
+            gui.select_file()
+        gui.add_batch_files.assert_called_once_with(['C:/a.mkv'])
+        gui._load_input_file.assert_not_called()
+
+    def test_browse_unlicensed_keeps_plain_load(self):
+        gui = _bare_gui()
+        gui._licensed = False
+        gui.add_batch_files = MagicMock()
+        gui._load_input_file = MagicMock()
+        with patch('src.gui.filedialog.askopenfilename', return_value='C:/a.mkv'):
+            gui.select_file()
+        gui.add_batch_files.assert_not_called()
+        gui._load_input_file.assert_called_once_with('C:/a.mkv')
+
+    def test_browse_cancelled_dialog_is_a_noop(self):
+        gui = _bare_gui()
+        gui._licensed = True
+        gui.add_batch_files = MagicMock()
+        gui._load_input_file = MagicMock()
+        with patch('src.gui.filedialog.askopenfilename', return_value=''):
+            gui.select_file()
+        gui.add_batch_files.assert_not_called()
+        gui._load_input_file.assert_not_called()
+
     def test_add_files_skips_paths_already_queued(self):
         gui = self._gui()
         gui.batch_items = [{'input': 'a.mkv', 'status': 'Pending'}]

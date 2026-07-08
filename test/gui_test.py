@@ -91,14 +91,22 @@ class TestHDRConverterGUI(TestCase):
     def test_file_selection(self, mock_file_dialog):
         """Test file selection functionality."""
         mock_file_dialog.return_value = 'test_input.mp4'
-        
+
+        # input_path_var needs its own mock (not the shared catch-all, which
+        # every StringVar() call aliases to) so its .get() reflects .set().
+        # select_file's licensed path (Pro users route through the batch
+        # queue, like drag-and-drop already does) reads it back to decide
+        # whether the queue's own load already covered this file.
+        input_value = ['']
+        self.gui.input_path_var = MagicMock()
+        self.gui.input_path_var.set.side_effect = lambda v: input_value.__setitem__(0, v)
+        self.gui.input_path_var.get.side_effect = lambda: input_value[0]
+
         self.gui.select_file()
 
         # Verify file path updates
-        self.mock_string_var.set.assert_has_calls([
-            call('test_input.mp4'),
-            call('test_input_sdr.mp4')
-        ])
+        self.gui.input_path_var.set.assert_called_once_with('test_input.mp4')
+        self.mock_string_var.set.assert_any_call('test_input_sdr.mp4')
 
         # Verify UI updates
         self._assert_frame_updates()

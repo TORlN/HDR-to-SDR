@@ -567,7 +567,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.bit_depth_10_radio, self.bit_depth_12_radio,
         ]
 
-        self._apply_quality_range()
+        self._apply_quality_mode()
         self._apply_tonemap_choices()
 
     def configure_grid(self) -> None:
@@ -861,6 +861,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
 
     def _on_quality_mode_selected(self, event: tk.Event = None) -> None:  # type: ignore[type-arg]
         """<<ComboboxSelected>> handler for the quality-mode dropdown."""
+        self._apply_quality_mode()
         if hasattr(self, 'quality_mode_combobox'):
             self.quality_mode_combobox.selection_clear()
 
@@ -925,6 +926,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._update_bit_depth_choice()
         self._cached_props = props
         self._cached_maxcll = get_maxcll(file_path) if props else None
+        if hasattr(self, 'quality_slider'):
+            self._apply_quality_mode()
         self._refresh_info_label_text()
 
     def _refresh_info_label_text(self) -> None:
@@ -1085,7 +1088,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                     "Error",
                     f"An error occurred while checking GPU acceleration:\n{e}")
         if hasattr(self, 'quality_slider'):
-            self._apply_quality_range()
+            self._apply_quality_mode()
         if hasattr(self, 'tonemap_combobox'):
             self._apply_tonemap_choices()
 

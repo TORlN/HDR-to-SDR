@@ -248,6 +248,13 @@ class TestConstruction(_GuiTestBase):
         self.assertIn('Constant Quality', text)
         self.assertIn('Target Bitrate', text)
 
+    def test_target_bitrate_selectable_and_reconfigures_slider(self):
+        self.gui._cached_props = {'bit_rate': 40_000_000}  # 40,000 kbps
+        self.gui.quality_mode_var.set('Target Bitrate')
+        self.gui._on_quality_mode_selected()
+        self.assertAlmostEqual(float(self.gui.quality_slider.cget('from')), 1000)
+        self.assertAlmostEqual(float(self.gui.quality_slider.cget('to')), 40000)
+
 
 class TestDarkTheme(_GuiTestBase):
     """The color-based dark clam theme (replaces image-based sv_ttk)."""

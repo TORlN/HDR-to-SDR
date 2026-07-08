@@ -3019,6 +3019,20 @@ class TestApplyQualityMode(unittest.TestCase):
         gui.quality_slider.configure.assert_called_once_with(from_=1000, to=40000)
         gui.quality_slider.set.assert_called_once_with(20000)
 
+    def test_update_info_label_reapplies_bitrate_range_for_new_file(self):
+        gui = self._gui(mode='Target Bitrate')
+        gui.quality_slider = MagicMock()
+        gui._bitrate_seeded = True
+        gui.bitrate_var.get.return_value = 8000
+        with patch('src.gui.get_video_properties',
+                    return_value={'bit_rate': 40_000_000, 'bit_depth': 8}), \
+             patch('src.gui.get_maxcll', return_value=None):
+            gui.info_label = MagicMock()
+            gui._update_bit_depth_choice = MagicMock()
+            gui._refresh_info_label_text = MagicMock()
+            gui._update_info_label('clip.mkv')
+        gui.quality_slider.configure.assert_called_once_with(from_=1000, to=40000)
+
 
 if __name__ == '__main__':
     unittest.main()

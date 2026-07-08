@@ -14,6 +14,11 @@ class TestHDRConverterGUI(TestCase):
         """Set up test fixtures before each test method."""
         # Create mock variables first with proper specs and methods
         self.mock_progress_var = MagicMock(spec=DoubleVar)
+        # quality_var/bitrate_var (IntVar) share this same mock during __init__
+        # (see the 'int_var' patch below); _apply_quality_mode() now reads
+        # quality_var.get() for range-clamping during create_widgets(), so it
+        # needs a real numeric value, not the default MagicMock return.
+        self.mock_progress_var.get.return_value = 23
         self.mock_string_var = MagicMock(spec=tk.StringVar)
         self.mock_string_var.set = MagicMock()
         self.mock_string_var.get = MagicMock(return_value='')
@@ -360,7 +365,8 @@ class TestWindowIcon(unittest.TestCase):
             'string_var': patch('src.gui.tk.StringVar', return_value=MagicMock(spec=tk.StringVar, get=MagicMock(return_value=''), set=MagicMock())),
             'double_var': patch('src.gui.tk.DoubleVar', return_value=MagicMock(spec=tk.DoubleVar)),
             'bool_var':   patch('src.gui.tk.BooleanVar', return_value=MagicMock(spec=tk.BooleanVar)),
-            'int_var':    patch('src.gui.tk.IntVar', return_value=MagicMock(spec=tk.IntVar)),
+            'int_var':    patch('src.gui.tk.IntVar', return_value=MagicMock(
+                spec=tk.IntVar, get=MagicMock(return_value=23), set=MagicMock())),
         }
         if extra_patches:
             patches.update(extra_patches)
@@ -464,7 +470,8 @@ class TestBatchCancel(TestCase):
                 spec=tk.StringVar, get=MagicMock(return_value=''), set=MagicMock())),
             'double_var': patch('src.gui.tk.DoubleVar', return_value=MagicMock(spec=tk.DoubleVar)),
             'bool_var':   patch('src.gui.tk.BooleanVar', return_value=MagicMock(spec=tk.BooleanVar)),
-            'int_var':    patch('src.gui.tk.IntVar', return_value=MagicMock(spec=tk.IntVar)),
+            'int_var':    patch('src.gui.tk.IntVar', return_value=MagicMock(
+                spec=tk.IntVar, get=MagicMock(return_value=23), set=MagicMock())),
         }
         self.patches = patches
         self.mocks = {name: p.start() for name, p in patches.items()}
@@ -522,7 +529,8 @@ class TestShowTooltip(TestCase):
                 spec=tk.StringVar, get=MagicMock(return_value=''), set=MagicMock())),
             'double_var': patch('src.gui.tk.DoubleVar', return_value=MagicMock(spec=tk.DoubleVar)),
             'bool_var':   patch('src.gui.tk.BooleanVar', return_value=MagicMock(spec=tk.BooleanVar)),
-            'int_var':    patch('src.gui.tk.IntVar', return_value=MagicMock(spec=tk.IntVar)),
+            'int_var':    patch('src.gui.tk.IntVar', return_value=MagicMock(
+                spec=tk.IntVar, get=MagicMock(return_value=23), set=MagicMock())),
         }
         self.patches = patches
         self.mocks = {name: p.start() for name, p in patches.items()}

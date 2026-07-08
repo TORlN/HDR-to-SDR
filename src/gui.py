@@ -67,6 +67,13 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
     _CRF_RANGE = (28, 17)
     _CQ_RANGE = (30, 15)
 
+    # Target Bitrate mode's slider bounds and unknown-source fallback.
+    _BITRATE_FLOOR_KBPS = 1000
+    _BITRATE_FALLBACK_KBPS = 8000  # matches conversion.py's nvenc/qsv zero-bitrate guard
+
+    _QUALITY_MODE_TO_INTERNAL = {'Constant Quality': 'cq', 'Target Bitrate': 'bitrate'}
+    _QUALITY_MODE_FROM_INTERNAL = {'cq': 'Constant Quality', 'bitrate': 'Target Bitrate'}
+
     # Appended to a GPU-only tonemapper's combobox label when it's unselectable
     # (GPU tonemapping isn't active) -- the entry stays visible/greyed instead
     # of being removed from the list, per _apply_tonemap_choices.
@@ -99,6 +106,17 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         # has something sane to revert to.
         self._last_valid_tonemapper = self.tonemap_var.get()
         self.quality_var = tk.IntVar(value=_s['quality'])
+        self.bitrate_var = tk.IntVar(value=_s['quality_bitrate_kbps'])
+        self.quality_mode_var = tk.StringVar(
+            value=self._QUALITY_MODE_FROM_INTERNAL.get(_s['quality_mode'], 'Constant Quality'))
+        self.quality_display_var = tk.StringVar()
+        # Only reseed Target Bitrate's value to 50% of the source on its first
+        # engagement if it's still sitting at the untouched fallback default --
+        # a real saved choice from a previous session must not be overwritten.
+        self._bitrate_seeded = _s['quality_bitrate_kbps'] != self._BITRATE_FALLBACK_KBPS
+        self.quality_var.trace_add('write', self._sync_quality_display)
+        self.bitrate_var.trace_add('write', self._sync_quality_display)
+        self._sync_quality_display()
         self.format_var = tk.StringVar(value=_s['filetype'])
         # Not persisted to settings -- resets per file load, since it's only
         # meaningful for the current source (see _update_bit_depth_choice).
@@ -379,6 +397,19 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.bit_depth_12_radio.grid(row=0, column=2, padx=(5, 0))
         self.bit_depth_frame.grid_remove()
 
+        self.quality_mode_frame = ttk.Frame(self.control_frame)
+        self.quality_mode_frame.grid(row=4, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))
+        self.quality_mode_combobox = ttk.Combobox(
+            self.quality_mode_frame, textvariable=self.quality_mode_var,
+            values=['Constant Quality', 'Target Bitrate'], state='readonly', width=15)
+        self.quality_mode_combobox.grid(row=0, column=0, padx=(0, 5))
+        self.quality_mode_combobox.bind('<<ComboboxSelected>>', self._on_quality_mode_selected)
+        info_button_quality_mode = ttk.Label(self.quality_mode_frame, text="ⓘ", cursor="hand2")
+        info_button_quality_mode.grid(row=0, column=1)
+        info_button_quality_mode.bind(
+            '<Enter>', lambda e: self.show_tooltip(e, self._quality_mode_tooltip_text()))
+        info_button_quality_mode.bind('<Leave>', self.hide_tooltip)
+
         quality_frame = ttk.Frame(self.control_frame)
         quality_frame.grid(row=5, column=0, columnspan=3, sticky=tk.W + tk.E, pady=(5, 0))
         ttk.Label(quality_frame, text="Quality:").grid(row=0, column=0, sticky=tk.W)
@@ -388,7 +419,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.quality_slider.grid(row=0, column=1, sticky=tk.W + tk.E, padx=(10, 8))
         self.quality_slider.set(self.quality_var.get())
         self.quality_slider.bind('<Button-1>', self._quality_slider_jump)
-        self.quality_value_label = ttk.Label(quality_frame, textvariable=self.quality_var, width=3)
+        self.quality_value_label = ttk.Label(
+            quality_frame, textvariable=self.quality_display_var, width=10)
         self.quality_value_label.grid(row=0, column=2, sticky=tk.W)
         ttk.Label(quality_frame, text="Smaller File  ◀──▶  Better Quality",
                   foreground='gray').grid(row=1, column=1, columnspan=2, sticky=tk.W, padx=(10, 0))
@@ -695,6 +727,85 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
 
     # ── Quality slider ─────────────────────────────────────────────────────────
 
+    def _sync_quality_display(self, *_args) -> None:
+        """Keep quality_display_var in sync with whichever backing var is
+        active for the current quality mode."""
+        if self.quality_mode_var.get() == 'Target Bitrate':
+            self.quality_display_var.set(f"{self.bitrate_var.get():,} kbps")
+        else:
+            self.quality_display_var.set(str(self.quality_var.get()))
+
+    def _quality_mode_tooltip_text(self) -> str:
+        """Built at hover-time (not a fixed string) so the 'This file' line
+        can reference the currently loaded source's probed bitrate."""
+        text = (
+            "Constant Quality: encoder auto-varies bitrate per scene to hit a "
+            "quality target. Typical good range: 18-23 (lower = better "
+            "quality, bigger file).\n\n"
+            "Target Bitrate: you set the average output bitrate directly. "
+            "Rule of thumb: 50-70% of the source usually keeps quality close "
+            "to unnoticeable while meaningfully shrinking the file."
+        )
+        props = getattr(self, '_cached_props', None)
+        if props and props.get('bit_rate'):
+            source_kbps = props['bit_rate'] // 1000
+            low, high = round(source_kbps * 0.5), round(source_kbps * 0.7)
+            text += f"\n  This file: source is {source_kbps:,} kbps -> try {low:,}-{high:,} kbps."
+        return text
+
+    def _source_bitrate_kbps(self) -> int:
+        """The loaded source's probed video bitrate in kbps, or the standard
+        8,000 kbps fallback (matches conversion.py's nvenc/qsv zero-bitrate
+        guard) when unprobed or reported as 0."""
+        props = getattr(self, '_cached_props', None) or {}
+        bit_rate = props.get('bit_rate') or 0
+        return (bit_rate // 1000) or self._BITRATE_FALLBACK_KBPS
+
+    def _bitrate_ceiling_kbps(self) -> int:
+        """Target Bitrate's slider ceiling: the source bitrate rounded to the
+        nearest 500 kbps step, never below the floor."""
+        source = self._source_bitrate_kbps()
+        return max(self._BITRATE_FLOOR_KBPS, round(source / 500) * 500)
+
+    def _apply_bitrate_range(self) -> None:
+        """Reconfigure the quality slider for Target Bitrate mode. The range
+        (1,000 kbps to the source bitrate) is encoder-agnostic -- unlike
+        Constant Quality, it does not depend on the GPU toggle."""
+        ceiling = self._bitrate_ceiling_kbps()
+        if not self._bitrate_seeded:
+            # First-ever engagement with bitrate_var still at its untouched
+            # settings-default: seed to 50% of source instead of the floor or
+            # a stale default from a different file's session.
+            seed = max(self._BITRATE_FLOOR_KBPS, min(ceiling, round(ceiling * 0.5 / 500) * 500))
+            self.bitrate_var.set(seed)
+            self._bitrate_seeded = True
+        value = min(max(self.bitrate_var.get(), self._BITRATE_FLOOR_KBPS), ceiling)
+        self.quality_slider.configure(from_=self._BITRATE_FLOOR_KBPS, to=ceiling)
+        self.quality_slider.set(value)
+        self.bitrate_var.set(value)
+
+    def _apply_quality_mode(self) -> None:
+        """Reconfigure the shared quality slider for the current quality-mode
+        selection. Called when the mode dropdown changes, the GPU toggle
+        changes, and a new file is probed."""
+        mode = self.quality_mode_var.get()
+        switched = getattr(self, '_last_quality_mode_applied', None) != mode
+        self._last_quality_mode_applied = mode
+        if mode == 'Target Bitrate':
+            self._apply_bitrate_range()
+        elif switched:
+            # Coming from Target Bitrate's unrelated kbps range (or the first
+            # build): a fractional remap would be meaningless here, so
+            # restore quality_var's own value directly instead.
+            worst, best = self._CQ_RANGE if self.gpu_accel_var.get() else self._CRF_RANGE
+            lo, hi = min(worst, best), max(worst, best)
+            value = min(max(self.quality_var.get(), lo), hi)
+            self.quality_slider.configure(from_=worst, to=best)
+            self.quality_slider.set(value)
+            self.quality_var.set(value)
+        else:
+            self._apply_quality_range()  # unchanged CRF<->CQ knob-preserving remap
+
     def _apply_quality_range(self) -> None:
         """Set the Quality slider's range for the current CPU/GPU mode."""
         worst, best = self._CQ_RANGE if self.gpu_accel_var.get() else self._CRF_RANGE
@@ -740,8 +851,18 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.update_frame_preview(event)
 
     def _on_quality_change(self, value: str) -> None:
-        """Snap the Quality slider to whole CRF/CQ steps (the scale emits floats)."""
-        self.quality_var.set(int(float(value)))
+        """Snap the slider to whole steps: CRF/CQ ints in Constant Quality
+        mode, or 500 kbps increments in Target Bitrate mode (the scale emits
+        floats either way)."""
+        if self.quality_mode_var.get() == 'Target Bitrate':
+            self.bitrate_var.set(round(float(value) / 500) * 500)
+        else:
+            self.quality_var.set(int(float(value)))
+
+    def _on_quality_mode_selected(self, event: tk.Event = None) -> None:  # type: ignore[type-arg]
+        """<<ComboboxSelected>> handler for the quality-mode dropdown."""
+        if hasattr(self, 'quality_mode_combobox'):
+            self.quality_mode_combobox.selection_clear()
 
     # ── Info strip ─────────────────────────────────────────────────────────────
 

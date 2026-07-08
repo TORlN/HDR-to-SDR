@@ -33,7 +33,7 @@ class TestLoadSettings(unittest.TestCase):
         data = {
             'gamma': 2.2, 'tonemapper': 'Hable',
             'gpu_accel': True, 'open_after_conversion': True, 'display_preview': False,
-            'quality': 19, 'filetype': 'MKV',
+            'quality': 19, 'quality_mode': 'cq', 'quality_bitrate_kbps': 8000, 'filetype': 'MKV',
         }
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
             json.dump(data, f)
@@ -76,6 +76,10 @@ class TestLoadSettings(unittest.TestCase):
             os.unlink(tmp)
         self.assertNotIn('unknown_key', result)
         self.assertEqual(result['gamma'], 1.5)
+
+    def test_defaults_include_quality_mode_and_bitrate(self):
+        self.assertEqual(DEFAULTS['quality_mode'], 'cq')
+        self.assertEqual(DEFAULTS['quality_bitrate_kbps'], 8000)
 
 
 class TestSaveSettings(unittest.TestCase):

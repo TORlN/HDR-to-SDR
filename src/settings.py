@@ -15,6 +15,8 @@ DEFAULTS = {
     'open_after_conversion': False,
     'display_preview': True,
     'quality': 23,  # encoder quality (CRF for CPU / CQ for GPU); lower = better
+    'quality_mode': 'cq',          # 'cq' (Constant Quality) | 'bitrate' (Target Bitrate)
+    'quality_bitrate_kbps': 8000,  # last chosen Target Bitrate value, in kbps
     'filetype': 'MP4',
 }
 

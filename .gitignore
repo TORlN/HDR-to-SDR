@@ -67,3 +67,5 @@ signing/
 # *.mkv rule above so the negation isn't re-shadowed).
 !test/smoke_test_videos/*.mp4
 !test/smoke_test_videos/*.mkv
+docs/
+.superpowers/

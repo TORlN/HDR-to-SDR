@@ -91,6 +91,20 @@ class TestConstruction(_GuiTestBase):
         self.assertTrue(self.gui.display_image_var.get())
         self.assertEqual(self.gui.progress_var.get(), 0)
 
+    def test_quality_mode_and_bitrate_defaults(self):
+        self.assertEqual(self.gui.quality_mode_var.get(), 'Constant Quality')
+        self.assertEqual(self.gui.bitrate_var.get(), DEFAULTS['quality_bitrate_kbps'])
+        self.assertEqual(self.gui.quality_display_var.get(), str(self.gui.quality_var.get()))
+
+    def test_quality_display_var_follows_quality_var_changes(self):
+        self.gui.quality_var.set(19)
+        self.assertEqual(self.gui.quality_display_var.get(), '19')
+
+    def test_quality_display_var_follows_bitrate_var_changes_in_target_bitrate_mode(self):
+        self.gui.quality_mode_var.set('Target Bitrate')
+        self.gui.bitrate_var.set(15000)
+        self.assertEqual(self.gui.quality_display_var.get(), '15,000 kbps')
+
     @patch('src.gui.vulkan_libplacebo_available', return_value=True)
     def test_tonemap_combobox_shows_all_entries_when_gpu_tonemap_active(self, _avail):
         self.gui.gpu_accel_var.set(True)
@@ -214,6 +228,25 @@ class TestConstruction(_GuiTestBase):
 
     def test_drop_target_registered_on_start(self):
         self.assertTrue(self.gui.drop_target_registered)
+
+    def test_quality_mode_combobox_grid_position(self):
+        info = self.gui.quality_mode_frame.grid_info()
+        self.assertEqual(int(info['row']), 4)
+        self.assertEqual(int(info['column']), 1)
+
+    def test_quality_mode_combobox_values_and_readonly(self):
+        self.assertEqual(tuple(self.gui.quality_mode_combobox.cget('values')),
+                         ('Constant Quality', 'Target Bitrate'))
+        self.assertEqual(str(self.gui.quality_mode_combobox.cget('state')), 'readonly')
+
+    def test_quality_value_label_shows_formatted_display_var(self):
+        self.assertEqual(self.gui.quality_value_label.cget('textvariable'),
+                         str(self.gui.quality_display_var))
+
+    def test_quality_mode_tooltip_mentions_both_modes(self):
+        text = self.gui._quality_mode_tooltip_text()
+        self.assertIn('Constant Quality', text)
+        self.assertIn('Target Bitrate', text)
 
 
 class TestDarkTheme(_GuiTestBase):

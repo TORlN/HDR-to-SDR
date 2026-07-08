@@ -2669,8 +2669,18 @@ class TestMiscCoverageGaps(unittest.TestCase):
     def test_on_quality_change_snaps_float_to_int(self):
         gui = _bare_gui()
         gui.quality_var = MagicMock()
+        gui.quality_mode_var = MagicMock()
+        gui.quality_mode_var.get.return_value = 'Constant Quality'
         gui._on_quality_change('22.7')
         gui.quality_var.set.assert_called_once_with(22)
+
+    def test_on_quality_change_snaps_to_500kbps_steps_in_bitrate_mode(self):
+        gui = _bare_gui()
+        gui.bitrate_var = MagicMock()
+        gui.quality_mode_var = MagicMock()
+        gui.quality_mode_var.get.return_value = 'Target Bitrate'
+        gui._on_quality_change('12234.0')
+        gui.bitrate_var.set.assert_called_once_with(12000)
 
     def test_hide_tooltip_destroys_existing_tooltip(self):
         gui = _bare_gui()
@@ -2846,6 +2856,168 @@ class TestBatchPassesLicenseTier(unittest.TestCase):
         gui.start_batch()
         self.assertIs(
             mock_cm.start_conversion.call_args.kwargs.get('licensed'), False)
+
+
+class TestSyncQualityDisplay(unittest.TestCase):
+    """quality_display_var mirrors whichever backing var is active: a plain
+    int string in Constant Quality mode, or a formatted 'N,NNN kbps' string
+    in Target Bitrate mode."""
+
+    def _gui(self):
+        gui = _bare_gui()
+        gui.quality_var = MagicMock(); gui.quality_var.get.return_value = 23
+        gui.bitrate_var = MagicMock(); gui.bitrate_var.get.return_value = 12000
+        gui.quality_mode_var = MagicMock()
+        gui.quality_display_var = MagicMock()
+        return gui
+
+    def test_constant_quality_shows_plain_int(self):
+        gui = self._gui()
+        gui.quality_mode_var.get.return_value = 'Constant Quality'
+        gui._sync_quality_display()
+        gui.quality_display_var.set.assert_called_once_with('23')
+
+    def test_target_bitrate_shows_formatted_kbps(self):
+        gui = self._gui()
+        gui.quality_mode_var.get.return_value = 'Target Bitrate'
+        gui._sync_quality_display()
+        gui.quality_display_var.set.assert_called_once_with('12,000 kbps')
+
+
+class TestApplyQualityMode(unittest.TestCase):
+    """_apply_quality_mode reconfigures the shared quality slider for whichever
+    mode is selected: Constant Quality (existing CRF/CQ ranges, direct restore
+    when just switched into) or Target Bitrate (1,000 kbps floor, source
+    bitrate ceiling, 50%-seeded on first engagement)."""
+
+    def _gui(self, mode='Constant Quality', gpu=False, cached_bit_rate=None):
+        gui = _bare_gui()
+        gui.quality_mode_var = MagicMock(); gui.quality_mode_var.get.return_value = mode
+        gui.gpu_accel_var = MagicMock(); gui.gpu_accel_var.get.return_value = gpu
+        gui.quality_var = MagicMock(); gui.quality_var.get.return_value = 23
+        gui.bitrate_var = MagicMock(); gui.bitrate_var.get.return_value = 8000
+        gui.quality_slider = MagicMock()
+        gui.quality_slider.cget.side_effect = lambda k: {'from': 28.0, 'to': 17.0}[k]
+        gui.quality_slider.get.return_value = 23.0
+        gui._bitrate_seeded = True
+        if cached_bit_rate is not None:
+            gui._cached_props = {'bit_rate': cached_bit_rate}
+        return gui
+
+    # ── source bitrate helpers ──────────────────────────────────────────
+
+    def test_source_bitrate_kbps_converts_bps_to_kbps(self):
+        gui = self._gui(cached_bit_rate=84_376_000)
+        self.assertEqual(gui._source_bitrate_kbps(), 84376)
+
+    def test_source_bitrate_kbps_falls_back_when_zero(self):
+        gui = self._gui(cached_bit_rate=0)
+        self.assertEqual(gui._source_bitrate_kbps(), 8000)
+
+    def test_source_bitrate_kbps_falls_back_when_unprobed(self):
+        gui = self._gui()  # no _cached_props set at all
+        self.assertEqual(gui._source_bitrate_kbps(), 8000)
+
+    def test_bitrate_ceiling_rounds_to_nearest_500(self):
+        gui = self._gui(cached_bit_rate=84_376_000)  # 84,376 kbps
+        self.assertEqual(gui._bitrate_ceiling_kbps(), 84500)
+
+    def test_bitrate_ceiling_never_below_floor(self):
+        gui = self._gui(cached_bit_rate=500_000)  # 500 kbps, below the 1,000 floor
+        self.assertEqual(gui._bitrate_ceiling_kbps(), 1000)
+
+    # ── mode switch: Constant Quality -> Target Bitrate ─────────────────
+
+    def test_switching_to_bitrate_mode_sets_range_and_restores_value(self):
+        gui = self._gui(mode='Target Bitrate', cached_bit_rate=40_000_000)  # 40,000 kbps
+        gui.bitrate_var.get.return_value = 15000
+        gui._apply_quality_mode()
+        gui.quality_slider.configure.assert_called_once_with(from_=1000, to=40000)
+        gui.quality_slider.set.assert_called_once_with(15000)
+
+    def test_bitrate_value_clamped_into_new_ceiling(self):
+        # A previously-saved bitrate (e.g. from a much higher-bitrate file)
+        # must be clamped down to the new file's lower ceiling.
+        gui = self._gui(mode='Target Bitrate', cached_bit_rate=5_000_000)  # 5,000 kbps
+        gui.bitrate_var.get.return_value = 50000
+        gui._apply_quality_mode()
+        gui.quality_slider.set.assert_called_once_with(5000)
+        gui.bitrate_var.set.assert_called_with(5000)
+
+    def test_first_engagement_seeds_fifty_percent_of_source(self):
+        gui = self._gui(mode='Target Bitrate', cached_bit_rate=40_000_000)  # 40,000 kbps
+        gui._bitrate_seeded = False
+        gui._apply_quality_mode()
+        gui.bitrate_var.set.assert_any_call(20000)  # 50% of 40,000, already a 500-multiple
+        self.assertTrue(gui._bitrate_seeded)
+
+    def test_seeding_only_happens_once(self):
+        gui = self._gui(mode='Target Bitrate', cached_bit_rate=40_000_000)
+        gui._bitrate_seeded = False
+        gui._apply_quality_mode()
+        gui.bitrate_var.set.reset_mock()
+        gui.bitrate_var.get.return_value = 20000
+        gui._apply_quality_mode()  # e.g. a second file probe -- must not reseed
+        # A reseed would call bitrate_var.set twice here (once to seed 50% of
+        # the source, once for the clamp passthrough) -- both landing on the
+        # same 20000 value coincidentally, so only the call *count* (not the
+        # value) can distinguish "seeded once" from "reseeded every call".
+        gui.bitrate_var.set.assert_called_once_with(20000)  # clamp passthrough only, no fresh seed
+
+    # ── mode switch: Target Bitrate -> Constant Quality ─────────────────
+
+    def test_switching_back_to_cq_restores_directly_not_fractionally(self):
+        # Slider is currently ranged for Target Bitrate (1,000-84,500); switching
+        # back to Constant Quality must NOT fractionally remap that position --
+        # it must restore quality_var's own value directly.
+        gui = self._gui(mode='Constant Quality', gpu=False)
+        gui.quality_slider.cget.side_effect = lambda k: {'from': 1000.0, 'to': 84500.0}[k]
+        gui.quality_slider.get.return_value = 15000.0
+        gui.quality_var.get.return_value = 19
+        gui._apply_quality_mode()
+        gui.quality_slider.configure.assert_called_once_with(from_=28, to=17)
+        gui.quality_slider.set.assert_called_once_with(19)
+
+    def test_switching_back_to_cq_uses_gpu_range_when_gpu_on(self):
+        gui = self._gui(mode='Constant Quality', gpu=True)
+        gui.quality_slider.cget.side_effect = lambda k: {'from': 1000.0, 'to': 84500.0}[k]
+        gui.quality_slider.get.return_value = 15000.0
+        gui.quality_var.get.return_value = 19
+        gui._apply_quality_mode()
+        gui.quality_slider.configure.assert_called_once_with(from_=30, to=15)
+
+    def test_switching_back_to_cq_clamps_out_of_range_value(self):
+        gui = self._gui(mode='Constant Quality', gpu=False)
+        gui.quality_slider.cget.side_effect = lambda k: {'from': 1000.0, 'to': 84500.0}[k]
+        gui.quality_var.get.return_value = 5  # better than CRF's best (17)
+        gui._apply_quality_mode()
+        gui.quality_slider.set.assert_called_once_with(17)
+        gui.quality_var.set.assert_called_once_with(17)
+
+    # ── GPU toggle while already in a mode (not a mode switch) ──────────
+
+    def test_gpu_toggle_while_in_cq_mode_uses_existing_fractional_remap(self):
+        gui = self._gui(mode='Constant Quality', gpu=False)
+        gui._apply_quality_mode()  # first call: establishes 'Constant Quality' as active
+        gui.quality_slider.configure.reset_mock()
+        gui.quality_slider.set.reset_mock()
+        gui.quality_slider.cget.side_effect = lambda k: {'from': 28.0, 'to': 17.0}[k]
+        gui.quality_slider.get.return_value = 23.0
+        gui.gpu_accel_var.get.return_value = True  # GPU toggled on, mode unchanged
+        gui._apply_quality_mode()
+        # _apply_quality_range's fractional-preserve math: fraction=(23-28)/(17-28)
+        gui.quality_slider.configure.assert_called_once_with(from_=30, to=15)
+
+    def test_gpu_toggle_while_in_bitrate_mode_is_a_noop(self):
+        gui = self._gui(mode='Target Bitrate', gpu=False, cached_bit_rate=40_000_000)
+        gui.bitrate_var.get.return_value = 20000
+        gui._apply_quality_mode()  # establishes Target Bitrate as active, seeds if needed
+        gui.quality_slider.configure.reset_mock()
+        gui.quality_slider.set.reset_mock()
+        gui.gpu_accel_var.get.return_value = True  # GPU toggled -- must not change bounds
+        gui._apply_quality_mode()
+        gui.quality_slider.configure.assert_called_once_with(from_=1000, to=40000)
+        gui.quality_slider.set.assert_called_once_with(20000)
 
 
 if __name__ == '__main__':

@@ -1706,6 +1706,83 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         self.assertEqual(mock_start.call_args.kwargs.get('quality'), 30000)
 
 
+class TestBitrateModeCommandConstruction(unittest.TestCase):
+    """quality_mode='bitrate' switches every encoder from its constant-quality
+    flag (-cq/-qp_*/-global_quality/-crf) to target-average-capped-burst
+    bitrate flags: -b:v=T, -maxrate=1.5xT, -bufsize=2xT, where T = quality(kbps)*1000."""
+
+    def setUp(self):
+        patcher = patch('src.conversion.vulkan_libplacebo_available', return_value=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    _BASE_PROPS = {
+        "width": 1920, "height": 1080, "bit_rate": 4000000,
+        "frame_rate": 30.0, "audio_codec": "aac", "audio_bit_rate": 128000,
+        "subtitle_streams": [],
+    }
+
+    def _cmd(self, encoder=None, use_gpu=False, quality=20000, quality_mode='bitrate'):
+        m = ConversionManager()
+        if encoder:
+            m._gpu_encoder = encoder
+        return m.construct_ffmpeg_command(
+            'in.mp4', 'out.mkv', 1.0, self._BASE_PROPS,
+            use_gpu=use_gpu, tonemapper='reinhard',
+            quality=quality, quality_mode=quality_mode,
+        )
+
+    def test_nvenc_bitrate_mode_has_no_cq_flag(self):
+        cmd = self._cmd('h264_nvenc', use_gpu=True, quality=20000)
+        self.assertNotIn('-cq', cmd)
+        self.assertEqual(cmd[cmd.index('-b:v') + 1], '20000000')
+        self.assertEqual(cmd[cmd.index('-maxrate') + 1], '30000000')
+        self.assertEqual(cmd[cmd.index('-bufsize') + 1], '40000000')
+        self.assertEqual(cmd[cmd.index('-rc') + 1], 'vbr')
+
+    def test_amf_bitrate_mode_uses_vbr_peak_not_cqp(self):
+        cmd = self._cmd('h264_amf', use_gpu=True, quality=20000)
+        self.assertNotIn('-qp_i', cmd)
+        self.assertNotIn('-qp_p', cmd)
+        self.assertNotIn('-qp_b', cmd)
+        self.assertEqual(cmd[cmd.index('-rc') + 1], 'vbr_peak')
+        self.assertEqual(cmd[cmd.index('-b:v') + 1], '20000000')
+        self.assertEqual(cmd[cmd.index('-maxrate') + 1], '30000000')
+        self.assertEqual(cmd[cmd.index('-bufsize') + 1], '40000000')
+
+    def test_qsv_bitrate_mode_has_no_global_quality_flag(self):
+        cmd = self._cmd('h264_qsv', use_gpu=True, quality=20000)
+        self.assertNotIn('-global_quality', cmd)
+        self.assertEqual(cmd[cmd.index('-b:v') + 1], '20000000')
+        self.assertEqual(cmd[cmd.index('-maxrate') + 1], '30000000')
+        self.assertEqual(cmd[cmd.index('-bufsize') + 1], '40000000')
+
+    def test_libx264_bitrate_mode_has_no_crf_flag(self):
+        cmd = self._cmd(None, use_gpu=False, quality=20000)
+        self.assertIn('libx264', cmd)
+        self.assertNotIn('-crf', cmd)
+        self.assertEqual(cmd[cmd.index('-b:v') + 1], '20000000')
+        self.assertEqual(cmd[cmd.index('-maxrate') + 1], '30000000')
+        self.assertEqual(cmd[cmd.index('-bufsize') + 1], '40000000')
+
+    def test_libx265_bitrate_mode_has_no_crf_flag(self):
+        """want_libx265 is forced whenever the source is already HEVC."""
+        props = {**self._BASE_PROPS, 'codec_name': 'hevc'}
+        m = ConversionManager()
+        cmd = m.construct_ffmpeg_command(
+            'in.mp4', 'out.mkv', 1.0, props, use_gpu=False, tonemapper='reinhard',
+            quality=20000, quality_mode='bitrate')
+        self.assertIn('libx265', cmd)
+        self.assertNotIn('-crf', cmd)
+        self.assertEqual(cmd[cmd.index('-b:v') + 1], '20000000')
+
+    def test_constant_quality_mode_is_unaffected(self):
+        """Default quality_mode='cq' must still produce -crf, not -b:v."""
+        cmd = self._cmd(None, use_gpu=False, quality=20, quality_mode='cq')
+        self.assertIn('-crf', cmd)
+        self.assertNotIn('-b:v', cmd)
+
+
 if __name__ == '__main__':
     unittest.main()
 

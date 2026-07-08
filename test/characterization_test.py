@@ -1301,6 +1301,8 @@ class TestBatchProcessing(unittest.TestCase):
         gui.gpu_accel_var = MagicMock(); gui.gpu_accel_var.get.return_value = False
         gui.tonemap_var = MagicMock(); gui.tonemap_var.get.return_value = 'Mobius'
         gui.quality_var = MagicMock(); gui.quality_var.get.return_value = 20
+        gui.quality_mode_var = MagicMock(); gui.quality_mode_var.get.return_value = 'Constant Quality'
+        gui.bitrate_var = MagicMock(); gui.bitrate_var.get.return_value = 8000
         gui._source_bit_depth = 8
         gui._licensed = True
         gui.open_after_conversion_var = MagicMock()
@@ -1330,6 +1332,18 @@ class TestBatchProcessing(unittest.TestCase):
         self.assertEqual(kwargs['on_complete'], gui._on_batch_item_complete)
         self.assertEqual(kwargs['quality'], 20)
         gui.unregister_drop_target.assert_called_once()  # like a single-file convert
+
+    @patch('src.batch.conversion_manager')
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_start_batch_forwards_bitrate_mode_and_value(self, _isfile, mock_cm):
+        gui = self._gui()
+        gui.quality_mode_var.get.return_value = 'Target Bitrate'
+        gui.bitrate_var.get.return_value = 30000
+        gui.batch_items = [self._item('a')]
+        gui.start_batch()
+        kwargs = mock_cm.start_conversion.call_args.kwargs
+        self.assertEqual(kwargs['quality_mode'], 'bitrate')
+        self.assertEqual(kwargs['quality'], 30000)
 
     @patch('src.batch.conversion_manager')
     @patch('src.gui.os.path.isfile', return_value=True)
@@ -2871,6 +2885,8 @@ class TestBatchPassesLicenseTier(unittest.TestCase):
         gui.gpu_accel_var = MagicMock(); gui.gpu_accel_var.get.return_value = False
         gui.tonemap_var = MagicMock(); gui.tonemap_var.get.return_value = 'Mobius'
         gui.quality_var = MagicMock(); gui.quality_var.get.return_value = 20
+        gui.quality_mode_var = MagicMock(); gui.quality_mode_var.get.return_value = 'Constant Quality'
+        gui.bitrate_var = MagicMock(); gui.bitrate_var.get.return_value = 8000
         gui._source_bit_depth = 8
         gui.open_after_conversion_var = MagicMock()
         gui.open_after_conversion_var.get.return_value = False

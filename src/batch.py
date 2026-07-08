@@ -33,6 +33,8 @@ class _BatchMixin:
         gpu_accel_var: tk.BooleanVar
         tonemap_var: tk.StringVar
         quality_var: tk.IntVar
+        quality_mode_var: tk.StringVar
+        bitrate_var: tk.IntVar
         open_after_conversion_var: tk.BooleanVar
         progress_var: tk.DoubleVar
         interactable_elements: list  # type: ignore[type-arg]
@@ -199,7 +201,10 @@ class _BatchMixin:
         gamma = self.gamma_var.get()
         use_gpu = self.gpu_accel_var.get()
         tonemapper = self.tonemap_var.get().lower()
-        quality = int(self.quality_var.get())
+        quality_mode = self._QUALITY_MODE_TO_INTERNAL.get(  # type: ignore[attr-defined]
+            self.quality_mode_var.get(), 'cq')
+        quality = (int(self.bitrate_var.get()) if quality_mode == 'bitrate'
+                   else int(self.quality_var.get()))
         bit_depth = self._selected_bit_depth()  # type: ignore[attr-defined]
 
         try:
@@ -207,8 +212,8 @@ class _BatchMixin:
                 input_path, output_path, gamma, use_gpu,
                 self.progress_var, self.interactable_elements, self,
                 self.open_after_conversion_var.get(), self.cancel_button,
-                tonemapper=tonemapper, quality=quality, bit_depth=bit_depth,
-                licensed=self._licensed,
+                tonemapper=tonemapper, quality=quality, quality_mode=quality_mode,
+                bit_depth=bit_depth, licensed=self._licensed,
                 on_complete=self._on_batch_item_complete
             )
         except Exception as e:

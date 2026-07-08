@@ -1676,6 +1676,35 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
                                     False, 1.0, 'reinhard')
         self.assertIs(mock_start.call_args.kwargs.get('licensed'), True)
 
+    def test_start_conversion_threads_quality_mode(self):
+        manager = ConversionManager()
+        mock_gui = MagicMock()
+        with patch('src.conversion.get_video_properties',
+                   return_value={'duration': 10.0, 'bit_rate': 4000000}), \
+             patch.object(manager, 'construct_ffmpeg_command',
+                          return_value=['ffmpeg']) as mock_build, \
+             patch.object(manager, 'start_ffmpeg_process', return_value=MagicMock()), \
+             patch.object(manager, 'monitor_progress'):
+            manager.start_conversion(
+                'in.mkv', 'out.mkv', 1.0, False, MagicMock(), [], mock_gui,
+                False, MagicMock(), quality=30000, quality_mode='bitrate')
+        self.assertEqual(mock_build.call_args.kwargs.get('quality_mode'), 'bitrate')
+        self.assertEqual(manager._quality_mode, 'bitrate')
+
+    def test_cpu_retry_preserves_quality_mode(self):
+        """A GPU-failure retry must keep targeting the same bitrate/CQ mode,
+        not silently fall back to Constant Quality."""
+        manager = ConversionManager()
+        manager._quality_mode = 'bitrate'  # as remembered by start_conversion(quality_mode='bitrate')
+        manager._quality = 30000
+        mock_gui = MagicMock()
+        with patch.object(manager, 'start_conversion') as mock_start, \
+             patch('src.conversion.messagebox.showwarning'):
+            manager._retry_with_cpu(mock_gui, [], MagicMock(), MagicMock(),
+                                    False, 1.0, 'reinhard')
+        self.assertEqual(mock_start.call_args.kwargs.get('quality_mode'), 'bitrate')
+        self.assertEqual(mock_start.call_args.kwargs.get('quality'), 30000)
+
 
 if __name__ == '__main__':
     unittest.main()

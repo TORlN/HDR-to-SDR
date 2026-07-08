@@ -410,6 +410,34 @@ class TestBatchQueueWidgets(_GuiTestBase):
         self.assertAlmostEqual(self.gui.gamma_var.get(), 2.4)
         self.assertEqual(self.gui.tonemap_var.get(), 'Hable')
 
+    def test_gamma_change_writes_back_to_selected_queue_item(self):
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])
+            self.gui.gamma_var.set(1.9)
+            self.gui.on_gamma_change()
+        self.assertAlmostEqual(self.gui.batch_items[0]['settings']['gamma'], 1.9)
+
+    def test_gpu_toggle_writes_back_to_selected_queue_item(self):
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])
+        self.gui.gpu_accel_var.set(True)
+        with patch.object(conversion_manager, 'is_gpu_acceleration_available', return_value=True):
+            self.gui.check_gpu_acceleration()
+        self.assertTrue(self.gui.batch_items[0]['settings']['gpu_accel'])
+
+    def test_quality_mode_change_writes_back_internal_form(self):
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])
+        self.gui.quality_mode_var.set('Target Bitrate')
+        self.gui._on_quality_mode_selected()
+        self.assertEqual(self.gui.batch_items[0]['settings']['quality_mode'], 'bitrate')
+
+    def test_quality_slider_drag_writes_back(self):
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])
+        self.gui._on_quality_change('19')
+        self.assertEqual(self.gui.batch_items[0]['settings']['quality'], 19)
+
 
 class TestStateAndLayout(_GuiTestBase):
 

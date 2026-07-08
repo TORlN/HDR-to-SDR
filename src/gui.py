@@ -638,10 +638,14 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.converted_image_base = None
         self._reset_custom_seek()
         self._reset_preview_cache()
-        self._update_info_label(file_path)
-        item = self._batch_item_for_current_input()
-        if item is not None and item.get('settings'):
-            self._restore_settings_dict(item['settings'])
+        self._restoring_batch_item_settings = True
+        try:
+            self._update_info_label(file_path)
+            item = self._batch_item_for_current_input()
+            if item is not None and item.get('settings'):
+                self._restore_settings_dict(item['settings'])
+        finally:
+            self._restoring_batch_item_settings = False
         self.button_frame.grid()
         self.image_frame.grid()
         self.action_frame.grid()
@@ -771,14 +775,35 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         if hasattr(self, 'tonemap_combobox'):
             self._apply_tonemap_choices()
 
+    def _write_back_current_settings(self) -> None:
+        """Persist the live controls' current values onto whichever queue
+        item is loaded, if any -- the counterpart to _restore_settings_dict.
+        Called from every control's change handler so editing a control
+        while a file is selected edits that file's settings only.
+
+        No-ops while _load_input_file is mid-restore: _update_info_label's
+        internal slider-range remap (_apply_quality_mode) and
+        _restore_settings_dict's own re-validation calls both move the
+        quality slider programmatically, which synchronously fires this
+        method via the slider's command callback -- before the target
+        item's settings have actually been restored into the live
+        controls. Without this guard, that premature write-back stamps
+        the *previous* item's stale live-control values onto the
+        newly-selected item, which _restore_settings_dict then faithfully
+        restores back into the widgets -- corrupting the newly-loaded
+        item's settings on every queue reselect."""
+        if getattr(self, '_restoring_batch_item_settings', False):
+            return
+        item = self._batch_item_for_current_input()
+        if item is not None:
+            item['settings'] = self._current_settings_dict()
+            self._refresh_batch_list()
+
     def _on_bit_depth_toggle(self) -> None:
         """Handle a 10/12-bit radio click: persist the choice on the queue
         entry for the loaded file (so batch runs honor it per item, surviving
         the reload that resets the live toggle) and refresh the info strip."""
-        item = self._batch_item_for_current_input()
-        if item is not None:
-            item.setdefault('settings', {})['bit_depth_choice'] = self.bit_depth_var.get()
-            self._refresh_batch_list()  # show/hide the (12-bit) marker
+        self._write_back_current_settings()
         self._refresh_info_label_text()
 
     # ── Quality slider ─────────────────────────────────────────────────────────
@@ -911,6 +936,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.tonemap_var.set(self._last_valid_tonemapper)
             return
         self._last_valid_tonemapper = raw
+        self._write_back_current_settings()
         self.update_frame_preview(event)
 
     def _on_quality_change(self, value: str) -> None:
@@ -921,10 +947,12 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.bitrate_var.set(round(float(value) / 500) * 500)
         else:
             self.quality_var.set(int(float(value)))
+        self._write_back_current_settings()
 
     def _on_quality_mode_selected(self, event: tk.Event = None) -> None:  # type: ignore[type-arg]
         """<<ComboboxSelected>> handler for the quality-mode dropdown."""
         self._apply_quality_mode()
+        self._write_back_current_settings()
         if hasattr(self, 'quality_mode_combobox'):
             self.quality_mode_combobox.selection_clear()
 
@@ -1158,6 +1186,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self._apply_quality_mode()
         if hasattr(self, 'tonemap_combobox'):
             self._apply_tonemap_choices()
+        self._write_back_current_settings()
 
     # ── Tooltips ───────────────────────────────────────────────────────────────
 

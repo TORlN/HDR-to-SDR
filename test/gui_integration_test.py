@@ -383,6 +383,33 @@ class TestBatchQueueWidgets(_GuiTestBase):
 
         mock_conv.assert_called_once()
 
+    def test_selecting_queue_item_restores_its_own_settings(self):
+        with patch.object(self.gui, 'update_frame_preview'):
+            # Item A auto-loads on add (it's the first file); stamp its own
+            # gamma/tonemapper onto its stored settings.
+            self.gui.add_batch_files(['C:/v/a.mp4'])
+            self.gui.gamma_var.set(2.4)
+            self.gui.tonemap_var.set('Hable')
+            self.gui.batch_items[0]['settings'] = self.gui._current_settings_dict()
+
+            # Item B is queued but NOT auto-loaded (a file is already loaded),
+            # so selecting it below is what actually triggers _load_input_file.
+            self.gui.add_batch_files(['C:/v/b.mp4'])
+            self.gui.batch_listbox.selection_clear(0, tk.END)
+            self.gui.batch_listbox.selection_set(1)
+            self.gui.on_batch_item_select()
+            self.gui.gamma_var.set(0.6)
+            self.gui.tonemap_var.set('Reinhard')
+            self.gui.batch_items[1]['settings'] = self.gui._current_settings_dict()
+
+            # Re-selecting A must restore A's own values, not leave B's live.
+            self.gui.batch_listbox.selection_clear(0, tk.END)
+            self.gui.batch_listbox.selection_set(0)
+            self.gui.on_batch_item_select()
+
+        self.assertAlmostEqual(self.gui.gamma_var.get(), 2.4)
+        self.assertEqual(self.gui.tonemap_var.get(), 'Hable')
+
 
 class TestStateAndLayout(_GuiTestBase):
 

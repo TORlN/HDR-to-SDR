@@ -639,6 +639,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._reset_custom_seek()
         self._reset_preview_cache()
         self._update_info_label(file_path)
+        item = self._batch_item_for_current_input()
+        if item is not None and item.get('settings'):
+            self._restore_settings_dict(item['settings'])
         self.button_frame.grid()
         self.image_frame.grid()
         self.action_frame.grid()
@@ -748,6 +751,25 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             'gpu_accel': self.gpu_accel_var.get(),
             'bit_depth_choice': self.bit_depth_var.get(),
         }
+
+    def _restore_settings_dict(self, settings: dict) -> None:  # type: ignore[type-arg]
+        """Push a stored settings snapshot into the live controls (the
+        counterpart to _current_settings_dict), then re-run the existing
+        range/fallback logic so the restored values are re-validated against
+        whichever file is now loaded -- e.g. Target Bitrate's ceiling clamps
+        to this file's own source bitrate, and a GPU-only tonemapper falls
+        back to Mobius if this file's load left GPU accel off."""
+        self.gamma_var.set(settings.get('gamma', self.gamma_var.get()))
+        self.gpu_accel_var.set(settings.get('gpu_accel', self.gpu_accel_var.get()))
+        self.tonemap_var.set(settings.get('tonemapper', self.tonemap_var.get()))
+        self.quality_mode_var.set(self._QUALITY_MODE_FROM_INTERNAL.get(
+            settings.get('quality_mode', 'cq'), 'Constant Quality'))
+        self.quality_var.set(settings.get('quality', self.quality_var.get()))
+        self.bitrate_var.set(settings.get('bitrate', self.bitrate_var.get()))
+        if hasattr(self, 'quality_slider'):
+            self._apply_quality_mode()
+        if hasattr(self, 'tonemap_combobox'):
+            self._apply_tonemap_choices()
 
     def _on_bit_depth_toggle(self) -> None:
         """Handle a 10/12-bit radio click: persist the choice on the queue

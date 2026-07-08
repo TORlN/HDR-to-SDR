@@ -119,8 +119,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.format_var = tk.StringVar(value=_s['filetype'])
         # Not persisted to settings -- resets per file load, since it's only
         # meaningful for the current source (see _update_bit_depth_choice).
-        # Queued files keep their own choice via the item's 'bit_depth_choice'
-        # key, restored on (re)load (see _on_bit_depth_toggle).
+        # Queued files keep their own choice via the item's
+        # settings['bit_depth_choice'] key, restored on (re)load (see
+        # _on_bit_depth_toggle).
         self.bit_depth_var = tk.StringVar(value='10-bit')
         self.custom_time_var = tk.StringVar()
         self.custom_time_position: float | None = None
@@ -708,7 +709,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             if self._licensed:
                 item = self._batch_item_for_current_input()
                 if item is not None:
-                    choice = item.get('bit_depth_choice', '10-bit')
+                    choice = item.get('settings', {}).get('bit_depth_choice', '10-bit')
             self.bit_depth_var.set(choice)
             pro_text = 'CPU Only' if self._licensed else 'Pro'
             self.bit_depth_12_radio.config(
@@ -738,7 +739,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         the reload that resets the live toggle) and refresh the info strip."""
         item = self._batch_item_for_current_input()
         if item is not None:
-            item['bit_depth_choice'] = self.bit_depth_var.get()
+            item.setdefault('settings', {})['bit_depth_choice'] = self.bit_depth_var.get()
             self._refresh_batch_list()  # show/hide the (12-bit) marker
         self._refresh_info_label_text()
 

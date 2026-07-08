@@ -149,7 +149,8 @@ class _BatchMixin:
             icon = self._STATUS_ICONS.get(item['status'], '•')
             # Surface the per-item 12-bit choice -- it's otherwise invisible
             # once another queue entry is being previewed.
-            marker = '  (12-bit)' if item.get('bit_depth_choice') == '12-bit' else ''
+            marker = ('  (12-bit)'
+                      if item.get('settings', {}).get('bit_depth_choice') == '12-bit' else '')
             self.batch_listbox.insert(
                 tk.END, f"{icon}  {os.path.basename(item['input'])}{marker}")
 

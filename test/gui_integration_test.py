@@ -1081,10 +1081,10 @@ class TestBitDepthToggle(unittest.TestCase):
     # ── Per-queue-item bit depth choice ──────────────────────────────────────
 
     @staticmethod
-    def _queued(path, **extra):
+    def _queued(path, **settings_overrides):
         item = {'input': path, 'output': f"{path.rsplit('.', 1)[0]}_sdr.mkv",
-                'format': 'MKV', 'status': 'Pending'}
-        item.update(extra)
+                'format': 'MKV', 'status': 'Pending', 'settings': {}}
+        item['settings'].update(settings_overrides)
         return item
 
     def test_toggle_stores_choice_on_matching_queue_item(self):
@@ -1095,10 +1095,10 @@ class TestBitDepthToggle(unittest.TestCase):
         gui._update_bit_depth_choice()
 
         gui.bit_depth_12_radio.invoke()
-        self.assertEqual(gui.batch_items[0].get('bit_depth_choice'), '12-bit')
+        self.assertEqual(gui.batch_items[0]['settings'].get('bit_depth_choice'), '12-bit')
 
         gui.bit_depth_10_radio.invoke()
-        self.assertEqual(gui.batch_items[0].get('bit_depth_choice'), '10-bit')
+        self.assertEqual(gui.batch_items[0]['settings'].get('bit_depth_choice'), '10-bit')
 
     def test_update_bit_depth_choice_restores_stored_queue_choice(self):
         """Re-loading a queued file (batch runs, queue clicks) must restore

@@ -1016,7 +1016,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             gamma = self.gamma_var.get()
             use_gpu = self.gpu_accel_var.get()
             tonemapper = self.tonemap_var.get().lower()
-            quality = int(self.quality_var.get())
+            quality_mode = self._QUALITY_MODE_TO_INTERNAL.get(self.quality_mode_var.get(), 'cq')
+            quality = (int(self.bitrate_var.get()) if quality_mode == 'bitrate'
+                       else int(self.quality_var.get()))
             bit_depth = self._selected_bit_depth()
 
             output_path = self._output_path_with_format(output_path, self.format_var.get())
@@ -1046,8 +1048,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 input_path, output_path, gamma, use_gpu,
                 self.progress_var, self.interactable_elements, self,
                 self.open_after_conversion_var.get(), self.cancel_button,
-                tonemapper=tonemapper, quality=quality, bit_depth=bit_depth,
-                licensed=self._licensed,
+                tonemapper=tonemapper, quality=quality, quality_mode=quality_mode,
+                bit_depth=bit_depth, licensed=self._licensed,
             )
         except Exception as e:
             logging.error(f"Conversion error: {str(e)}", exc_info=True)

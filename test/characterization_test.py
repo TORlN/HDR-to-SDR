@@ -1662,6 +1662,8 @@ class TestConvertVideoBranches(unittest.TestCase):
         gui.gpu_accel_var = MagicMock(); gui.gpu_accel_var.get.return_value = False
         gui.tonemap_var = MagicMock(); gui.tonemap_var.get.return_value = 'Mobius'
         gui.quality_var = MagicMock(); gui.quality_var.get.return_value = 21
+        gui.quality_mode_var = MagicMock(); gui.quality_mode_var.get.return_value = 'Constant Quality'
+        gui.bitrate_var = MagicMock(); gui.bitrate_var.get.return_value = 8000
         gui.format_var = MagicMock(); gui.format_var.get.return_value = 'MKV'
         gui._source_bit_depth = 8
         gui._licensed = True
@@ -1739,6 +1741,27 @@ class TestConvertVideoBranches(unittest.TestCase):
         _, kwargs = mock_cm.start_conversion.call_args
         self.assertEqual(kwargs['quality'], 19)
         gui.output_path_var.set.assert_called_with('out.mp4')  # MP4 container forced
+
+    @patch('src.gui.conversion_manager')
+    @patch('src.gui.messagebox')
+    @patch('src.gui.os.path.exists', return_value=False)
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_convert_passes_bitrate_value_and_mode(self, _isfile, _exists, mock_mb, mock_cm):
+        gui = self._gui()
+        gui.quality_mode_var.get.return_value = 'Target Bitrate'
+        gui.bitrate_var.get.return_value = 42000
+        gui.drop_target_registered = False
+        gui.cancel_button = MagicMock()
+        gui.progress_var = MagicMock()
+        gui.interactable_elements = []
+        gui.open_after_conversion_var = MagicMock()
+        gui.open_after_conversion_var.get.return_value = False
+
+        gui.convert_video()
+
+        _, kwargs = mock_cm.start_conversion.call_args
+        self.assertEqual(kwargs['quality_mode'], 'bitrate')
+        self.assertEqual(kwargs['quality'], 42000)
 
     @patch('src.gui.conversion_manager')
     @patch('src.gui.messagebox')

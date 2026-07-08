@@ -1069,6 +1069,13 @@ class TestBatchQueue(unittest.TestCase):
         gui.batch_items = []
         gui.batch_listbox = MagicMock()
         gui._refresh_batch_list = MagicMock()
+        gui.gamma_var = MagicMock(get=MagicMock(return_value=1.0))
+        gui.quality_mode_var = MagicMock(get=MagicMock(return_value='Constant Quality'))
+        gui.quality_var = MagicMock(get=MagicMock(return_value=23))
+        gui.bitrate_var = MagicMock(get=MagicMock(return_value=8000))
+        gui.tonemap_var = MagicMock(get=MagicMock(return_value='Mobius'))
+        gui.gpu_accel_var = MagicMock(get=MagicMock(return_value=False))
+        gui.bit_depth_var = MagicMock(get=MagicMock(return_value='10-bit'))
         return gui
 
     def test_add_batch_files_builds_items_with_output_paths(self):

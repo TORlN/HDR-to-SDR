@@ -738,22 +738,15 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         seed a newly-queued item, to restore/compare a queued item's stored
         settings against what's currently shown, and as the source for
         "Apply to All"."""
-        gamma_var = getattr(self, 'gamma_var', None)
-        quality_mode_var = getattr(self, 'quality_mode_var', None)
-        quality_var = getattr(self, 'quality_var', None)
-        bitrate_var = getattr(self, 'bitrate_var', None)
-        tonemap_var = getattr(self, 'tonemap_var', None)
-        gpu_accel_var = getattr(self, 'gpu_accel_var', None)
-        bit_depth_var = getattr(self, 'bit_depth_var', None)
         return {
-            'gamma': gamma_var.get() if gamma_var is not None else 1.0,
+            'gamma': self.gamma_var.get(),
             'quality_mode': self._QUALITY_MODE_TO_INTERNAL.get(
-                quality_mode_var.get() if quality_mode_var is not None else 'Constant Quality', 'cq'),
-            'quality': quality_var.get() if quality_var is not None else 21,
-            'bitrate': bitrate_var.get() if bitrate_var is not None else 8000,
-            'tonemapper': tonemap_var.get() if tonemap_var is not None else 'libplacebo',
-            'gpu_accel': gpu_accel_var.get() if gpu_accel_var is not None else True,
-            'bit_depth_choice': bit_depth_var.get() if bit_depth_var is not None else '10-bit',
+                self.quality_mode_var.get(), 'cq'),
+            'quality': self.quality_var.get(),
+            'bitrate': self.bitrate_var.get(),
+            'tonemapper': self.tonemap_var.get(),
+            'gpu_accel': self.gpu_accel_var.get(),
+            'bit_depth_choice': self.bit_depth_var.get(),
         }
 
     def _on_bit_depth_toggle(self) -> None:

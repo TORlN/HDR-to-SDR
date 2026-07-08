@@ -597,6 +597,36 @@ class TestBuildInfoText(TestCase):
         self.assertNotIn('1000.0', text)
 
 
+class TestBuildInfoTextBitrate(TestCase):
+    """The info strip shows the probed source bitrate when known, omitted
+    entirely when it isn't (matching the existing DoVi-tag omission pattern)."""
+
+    def _props(self, bit_rate=None):
+        props = {
+            'width': 3840, 'height': 2160,
+            'frame_rate': 23.976,
+            'codec_name': 'hevc',
+            'audio_codec': 'eac3',
+            'color_primaries': 'bt2020',
+            'color_transfer': 'smpte2084',
+        }
+        if bit_rate is not None:
+            props['bit_rate'] = bit_rate
+        return props
+
+    def test_shows_formatted_bitrate_before_audio(self):
+        text = HDRConverterGUI._build_info_text(self._props(bit_rate=84_376_000), maxcll=1000.0)
+        self.assertIn('Bitrate: 84,376 kbps | Audio: EAC3', text)
+
+    def test_omits_bitrate_segment_when_zero(self):
+        text = HDRConverterGUI._build_info_text(self._props(bit_rate=0), maxcll=1000.0)
+        self.assertNotIn('Bitrate', text)
+
+    def test_omits_bitrate_segment_when_missing(self):
+        text = HDRConverterGUI._build_info_text(self._props(), maxcll=1000.0)
+        self.assertNotIn('Bitrate', text)
+
+
 class TestBuildInfoTextOutputBitDepth(TestCase):
     """The info strip shows "{source}-bit -> {output}-bit" whenever the actual
     resolved output (passed in directly as *bit_depth* -- the live 10/12-bit

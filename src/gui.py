@@ -919,8 +919,12 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         format_tags = []
         if properties.get('is_dolby_vision'):
             format_tags.append('Dolby Vision')
+        bit_rate = properties.get('bit_rate') or 0
         parts = [f"{w}×{h}", fps_str, codec, *format_tags,
-                 f"{hdr_tag}{maxcll_str}", bit_depth_str, f"Audio: {audio}"]
+                 f"{hdr_tag}{maxcll_str}", bit_depth_str]
+        if bit_rate:
+            parts.append(f"Bitrate: {bit_rate // 1000:,} kbps")
+        parts.append(f"Audio: {audio}")
         return " | ".join(parts)
 
     def _update_info_label(self, file_path: str) -> None:

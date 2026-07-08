@@ -23,6 +23,7 @@ from tkinter import ttk
 from tkinterdnd2 import TkinterDnD
 
 from src.gui import HDRConverterGUI, DEFAULT_MIN_SIZE
+from src.conversion import conversion_manager
 from src.utils import TONEMAP
 from src.settings import DEFAULTS
 
@@ -370,7 +371,7 @@ class TestBatchQueueWidgets(_GuiTestBase):
 class TestStateAndLayout(_GuiTestBase):
 
     def test_disable_ui_sets_widgets_disabled(self):
-        self.gui.disable_ui(self.gui.interactable_elements)
+        conversion_manager.disable_ui(self.gui.interactable_elements)
         for widget in self.gui.interactable_elements:
             self.assertIn('disabled', str(widget.cget('state')))
 

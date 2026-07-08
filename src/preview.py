@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import TYPE_CHECKING, Callable
 import tkinter as tk
 from tkinter import ttk
@@ -35,26 +35,7 @@ _RESIZE_DEBOUNCE_MS = 60
 _PREVIEW_WIDTH_RESERVE = 160
 _PREVIEW_HEIGHT_RESERVE = 130
 _MIN_SIZE_MARGIN = (16, 16)
-
-
-# ── _PreviewFuture ─────────────────────────────────────────────────────────────
-
-class _PreviewFuture:
-    """Thin wrapper around a concurrent.futures.Future that exposes .join().
-
-    Lets callers (and existing tests) treat a pool Future like a Thread without
-    requiring them to know about the executor.
-    """
-    __slots__ = ('_future',)
-
-    def __init__(self, future: object) -> None:
-        self._future = future
-
-    def join(self, timeout: float | None = None) -> None:
-        try:
-            self._future.result(timeout=timeout)  # type: ignore[union-attr]
-        except Exception:
-            pass
+_INITIAL_WIDTH_STRETCH = 400
 
 
 # ── _HDRPreviewMixin ───────────────────────────────────────────────────────────
@@ -74,7 +55,7 @@ class _HDRPreviewMixin:
         original_image: Image.Image | None
         converted_image_base: Image.Image | None
         _converted_preview_base: Image.Image | None
-        _preview_render_size: tuple[int, int]
+        _preview_render_size: tuple[int, int] | None
         original_image_label: ttk.Label
         converted_image_label: ttk.Label
         original_title_label: ttk.Label
@@ -103,7 +84,7 @@ class _HDRPreviewMixin:
         cancel_button: ttk.Button
         _preview_generation: int
         _preview_pool: ThreadPoolExecutor
-        _preview_thread: _PreviewFuture | None
+        _preview_thread: Future | None
         _preview_cache_original: dict[tuple[str, float], Image.Image]
         _preview_cache_converted: dict[tuple[str, float, str], Image.Image]
         _cache_lock: threading.Lock
@@ -152,26 +133,51 @@ class _HDRPreviewMixin:
         """Smallest window that keeps every control visible (the preview may shrink).
 
         Derived from the chrome that must never be clipped -- the controls, the
-        batch queue and the action buttons -- but deliberately *excludes* the
-        preview pane. Falls back to ``DEFAULT_MIN_SIZE`` on bare/mocked instances.
+        batch queue, the action buttons, and the parts of the preview pane that
+        aren't the preview images themselves (titles, the frame-jump buttons,
+        the custom seek box, the progress bar). Those live in the same row as
+        the (deliberately shrinkable) preview images, so they're measured
+        separately rather than via the whole image_frame. Falls back to
+        ``DEFAULT_MIN_SIZE`` on bare/mocked instances.
         """
         try:
             self.root.update_idletasks()
-            frames = (self.control_frame, self.batch_frame, self.action_frame)
-            widths = [f.winfo_reqwidth() for f in frames]
-            heights = [f.winfo_reqheight() for f in frames]
+            stacked = (self.control_frame, self.batch_frame, self.action_frame)
+            widths = [f.winfo_reqwidth() for f in stacked]
+            heights = [f.winfo_reqheight() for f in stacked]
+            title_w = (self.original_title_label.winfo_reqwidth()
+                       + self.converted_title_label.winfo_reqwidth())
+            title_h = max(self.original_title_label.winfo_reqheight(),
+                          self.converted_title_label.winfo_reqheight())
+            preview_chrome_h = (title_h
+                                 + self.button_container.winfo_reqheight()
+                                 + self.button_frame.winfo_reqheight()
+                                 + self.progress_bar.winfo_reqheight())
+            widths.append(self.button_container.winfo_reqwidth())
+            widths.append(title_w)
         except Exception:
             return DEFAULT_MIN_SIZE
-        if not all(isinstance(v, int) for v in widths + heights):
+        if not all(isinstance(v, int) for v in widths + heights + [preview_chrome_h]):
             return DEFAULT_MIN_SIZE
         margin_w, margin_h = _MIN_SIZE_MARGIN
         min_w = max(widths) + margin_w
-        min_h = sum(heights) + margin_h
+        min_h = sum(heights) + preview_chrome_h + margin_h
         return (max(min_w, DEFAULT_MIN_SIZE[0]), max(min_h, DEFAULT_MIN_SIZE[1]))
 
     def _apply_min_window_size(self) -> None:
         """Apply the computed minimum window size (``DEFAULT_MIN_SIZE`` pre-layout)."""
         self.root.minsize(*getattr(self, '_min_window_size', DEFAULT_MIN_SIZE))
+
+    def _apply_initial_window_geometry(self) -> None:
+        """Open the window wider than the strict minimum, for a comfortable first look.
+
+        The computed minimum (see ``_compute_min_window_size``) is the smallest
+        size that keeps every control visible, not a pleasant starting size --
+        at that width the window looks cramped. Called once, at startup, so it
+        never fights a size the user has since chosen themselves.
+        """
+        min_w, min_h = getattr(self, '_min_window_size', DEFAULT_MIN_SIZE)
+        self.root.geometry(f"{min_w + _INITIAL_WIDTH_STRETCH}x{min_h}")
 
     def adjust_window_size(self) -> None:
         """Fit the window to the previews on first reveal; keep minsize small.
@@ -278,6 +284,19 @@ class _HDRPreviewMixin:
         self._resize_job = None
         if getattr(self, 'original_image', None) is None:
             return
+        # A live window move/resize (e.g. Windows pumps <Configure> events
+        # during a native drag) can leave Tk's geometry manager with a
+        # pending recompute queued when this debounced callback fires.
+        # Flush it first so winfo_width()/height() below reflect the
+        # settled layout, not a stale, too-small transitional value.
+        self.root.update_idletasks()
+        if self.loading_frame.winfo_ismapped():
+            # A new file's frames are still being extracted: the image this
+            # would re-render is the PREVIOUS file's (hidden) preview, and the
+            # window may still be mid-drag, so any size measured now can be
+            # unreliable. Skip it entirely rather than caching a bad size --
+            # _render_preview_images measures fresh once the new frame lands.
+            return
         self._render_preview_at_size(self._preview_target_size())
 
     def resize_images(self, max_width: int, max_height: int) -> None:
@@ -332,10 +351,12 @@ class _HDRPreviewMixin:
 
     def _show_preview_loading(self) -> None:
         """Show the loading spinner and hide the preview until frames are ready."""
-        if hasattr(self, 'root'):
-            w, h = self.root.winfo_width(), self.root.winfo_height()
-            if w > 1 and h > 1:
-                self.root.minsize(w, h)
+        # A window move/resize while this load is in flight (see
+        # _rescale_preview_to_window) can cache a size measured under
+        # unreliable conditions into _preview_render_size. Invalidate it so
+        # the eventual render always measures the settled frame fresh,
+        # instead of possibly reusing a stale/bad size from mid-load.
+        self._preview_render_size = None
         self.original_title_label.grid_remove()
         self.converted_title_label.grid_remove()
         self.button_container.grid_remove()
@@ -645,7 +666,7 @@ class _HDRPreviewMixin:
         if not hasattr(self, '_preview_pool'):
             self._preview_pool = ThreadPoolExecutor(
                 max_workers=_PREVIEW_POOL_WORKERS, thread_name_prefix='frame-fetch')
-        self._preview_thread = _PreviewFuture(self._preview_pool.submit(worker))
+        self._preview_thread = self._preview_pool.submit(worker)
 
     def _render_preview_images(
         self,

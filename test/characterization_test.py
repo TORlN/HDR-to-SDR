@@ -279,7 +279,7 @@ class TestPreviewWorkerThread(unittest.TestCase):
 
         with patch('src.preview.get_video_properties', return_value={'duration': 100.0}):
             gui.display_frames('in.mp4')
-            gui._preview_thread.join(timeout=5)
+            gui._preview_thread.result(timeout=5)
 
         # Extraction happened on a worker thread, not the main thread.
         self.assertIsNotNone(seen.get('thread'))
@@ -316,7 +316,7 @@ class TestPreviewWorkerThread(unittest.TestCase):
 
         with patch('src.preview.get_video_properties', return_value={'duration': 100.0}):
             gui.display_frames('in.mp4')
-            gui._preview_thread.join(timeout=5)
+            gui._preview_thread.result(timeout=5)
 
         # This worker is now stale, so it must not schedule a render.
         gui.root.after.assert_not_called()
@@ -360,7 +360,7 @@ class TestPreviewWorkerThread(unittest.TestCase):
         # get_video_properties returning None makes the worker raise.
         with patch('src.preview.get_video_properties', return_value=None):
             gui.display_frames('in.mp4')
-            gui._preview_thread.join(timeout=5)
+            gui._preview_thread.result(timeout=5)
 
         gui.root.after.assert_called_once()
         callback = gui.root.after.call_args[0][1]
@@ -379,7 +379,7 @@ class TestPreviewWorkerThread(unittest.TestCase):
 
         with patch('src.preview.get_video_properties', return_value={'duration': 60.0}):
             gui.display_frames('in.mp4')
-            gui._preview_thread.join(timeout=5)
+            gui._preview_thread.result(timeout=5)
 
         gui._prewarm_other_frames.assert_called_once()
         vp, duration, tm, gen = gui._prewarm_other_frames.call_args[0]
@@ -469,28 +469,10 @@ class TestPreviewPool(unittest.TestCase):
         expected = max(1, (os.cpu_count() or 1) // 4)
         self.assertEqual(_PREVIEW_POOL_WORKERS, expected)
 
-    # ── _PreviewFuture ──────────────────────────────────────────────────────
-
-    def test_preview_future_join_blocks_until_done(self):
-        from src.gui import _PreviewFuture
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            sentinel = []
-            future = pool.submit(lambda: sentinel.append(1))
-            _PreviewFuture(future).join(timeout=5)
-        self.assertEqual(sentinel, [1])
-
-    def test_preview_future_join_swallows_worker_exception(self):
-        from src.gui import _PreviewFuture
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(lambda: 1 / 0)
-            _PreviewFuture(future).join(timeout=5)  # must not raise
-
     # ── display_frames uses the pool ────────────────────────────────────────
 
     def test_display_frames_returns_preview_future(self):
-        from src.gui import _PreviewFuture
+        from concurrent.futures import Future
         gui = _bare_gui()
         gui.root = MagicMock()
         gui.current_frame_index = 1
@@ -506,7 +488,7 @@ class TestPreviewPool(unittest.TestCase):
         with patch('src.preview.get_video_properties', return_value={'duration': 30.0}):
             gui.display_frames('v.mp4')
 
-        self.assertIsInstance(gui._preview_thread, _PreviewFuture)
+        self.assertIsInstance(gui._preview_thread, Future)
 
     def test_display_frames_worker_runs_off_main_thread(self):
         """The pool submits the worker to a background thread, not the caller."""
@@ -530,7 +512,7 @@ class TestPreviewPool(unittest.TestCase):
 
         with patch('src.preview.get_video_properties', return_value={'duration': 30.0}):
             gui.display_frames('v.mp4')
-            gui._preview_thread.join(timeout=5)
+            gui._preview_thread.result(timeout=5)
 
         self.assertIsNot(seen['thread'], threading.main_thread())
 
@@ -1683,9 +1665,9 @@ class TestPreviewPerformance(unittest.TestCase):
         with patch('src.preview.get_video_properties',
                    return_value={'duration': 100.0}) as mock_props:
             gui.display_frames('in.mp4')
-            gui._preview_thread.join(timeout=5)
+            gui._preview_thread.result(timeout=5)
             gui.display_frames('in.mp4')
-            gui._preview_thread.join(timeout=5)
+            gui._preview_thread.result(timeout=5)
 
         # Second preview of the same file reuses the cached duration.
         self.assertEqual(mock_props.call_count, 1)
@@ -2116,13 +2098,41 @@ class TestResponsivePreview(unittest.TestCase):
 
     def test_rescale_renders_at_target_size(self):
         gui = _bare_gui()
+        gui.root = MagicMock()
         gui.original_image = MagicMock()
+        gui.loading_frame = MagicMock()
+        gui.loading_frame.winfo_ismapped.return_value = False  # no load in flight
         gui._preview_target_size = MagicMock(return_value=(320, 180))
         gui._render_preview_at_size = MagicMock()
         gui._resize_job = 'job'
         gui._rescale_preview_to_window()
         gui._render_preview_at_size.assert_called_once_with((320, 180))
         self.assertIsNone(gui._resize_job)
+
+    def test_rescale_flushes_pending_geometry_before_measuring(self):
+        # A live window drag on Windows can leave Tk's geometry manager with
+        # a pending recompute queued when the debounced rescale fires (this
+        # is exactly why adjust_window_size elsewhere in this file always
+        # calls update_idletasks() before reading geometry) -- without an
+        # explicit flush here too, winfo_width()/height() can return a stale,
+        # too-small transitional value and permanently render a tiny preview.
+        gui = _bare_gui()
+        gui.original_image = MagicMock()
+        gui.loading_frame = MagicMock()
+        gui.loading_frame.winfo_ismapped.return_value = False
+        gui.image_frame = MagicMock()
+        gui.root = MagicMock()
+        flushed = {'done': False}
+        gui.root.update_idletasks.side_effect = lambda: flushed.__setitem__('done', True)
+        gui.image_frame.winfo_width.side_effect = lambda: 1360 if flushed['done'] else 40
+        gui.image_frame.winfo_height.side_effect = lambda: 800 if flushed['done'] else 28
+        gui._render_preview_at_size = MagicMock()
+
+        gui._rescale_preview_to_window()
+
+        gui.root.update_idletasks.assert_called_once()
+        size = gui._render_preview_at_size.call_args[0][0]
+        self.assertGreater(size[0], 100)  # not the stale 40px-wide measurement
 
     def test_initial_preview_size_is_generous(self):
         # Issue 1: the first preview should open noticeably larger than the
@@ -2186,6 +2196,15 @@ class TestMinWindowSize(unittest.TestCase):
         f.winfo_reqheight.return_value = h
         return f
 
+    def _set_preview_chrome(self, gui, title_w=(50, 60), title_h=(15, 15),
+                             button_container=(90, 250), button_frame=(20, 5),
+                             progress_bar=(10, 20)):
+        gui.original_title_label = self._frame(title_w[0], title_h[0])
+        gui.converted_title_label = self._frame(title_w[1], title_h[1])
+        gui.button_container = self._frame(*button_container)
+        gui.button_frame = self._frame(*button_frame)
+        gui.progress_bar = self._frame(*progress_bar)
+
     def test_compute_min_from_chrome(self):
         from src.gui import _MIN_SIZE_MARGIN
         gui = _bare_gui()
@@ -2193,10 +2212,31 @@ class TestMinWindowSize(unittest.TestCase):
         gui.control_frame = self._frame(700, 200)
         gui.batch_frame = self._frame(500, 120)
         gui.action_frame = self._frame(400, 60)
+        self._set_preview_chrome(gui)
         w, h = gui._compute_min_window_size()
-        # width = widest chrome frame, height = the three stacked (+ margin)
+        # width = widest chrome frame, height = the three stacked frames plus
+        # the non-shrinkable part of the preview pane (titles, frame-jump
+        # buttons/seek box, progress bar) -- everything except the preview
+        # images themselves, which are allowed to shrink.
         self.assertEqual(w, 700 + _MIN_SIZE_MARGIN[0])
-        self.assertEqual(h, 200 + 120 + 60 + _MIN_SIZE_MARGIN[1])
+        self.assertEqual(h, 200 + 120 + 60 + 15 + 250 + 5 + 20 + _MIN_SIZE_MARGIN[1])
+
+    def test_button_container_height_is_never_clipped_by_vertical_shrink(self):
+        # The frame-jump buttons (1-5) and custom seek box live in
+        # button_container, in the SAME (shrinkable) row as the preview
+        # panes. Unlike control/batch/action frames, this chrome was never
+        # counted here, so a vertical resize could shrink the window below
+        # what's needed to show it fully -- the preview pane shrinks
+        # gracefully, but button_container just gets clipped off past the
+        # window's bottom edge.
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui.control_frame = self._frame(700, 100)
+        gui.batch_frame = self._frame(500, 80)
+        gui.action_frame = self._frame(400, 60)
+        self._set_preview_chrome(gui, button_container=(90, 320))
+        _, h = gui._compute_min_window_size()
+        self.assertGreaterEqual(h, 100 + 80 + 60 + 320)
 
     def test_compute_min_floors_at_default(self):
         gui = _bare_gui()
@@ -2204,6 +2244,9 @@ class TestMinWindowSize(unittest.TestCase):
         gui.control_frame = self._frame(100, 30)
         gui.batch_frame = self._frame(80, 20)
         gui.action_frame = self._frame(60, 10)
+        self._set_preview_chrome(
+            gui, title_w=(20, 25), title_h=(8, 8),
+            button_container=(30, 40), button_frame=(5, 0), progress_bar=(5, 10))
         self.assertEqual(gui._compute_min_window_size(), DEFAULT_MIN_SIZE)
 
     def test_compute_min_falls_back_on_mocked_geometry(self):
@@ -2226,6 +2269,22 @@ class TestMinWindowSize(unittest.TestCase):
         gui.root = MagicMock()
         gui._apply_min_window_size()
         gui.root.minsize.assert_called_once_with(*DEFAULT_MIN_SIZE)
+
+    def test_initial_geometry_stretches_width_beyond_computed_minimum(self):
+        from src.gui import _INITIAL_WIDTH_STRETCH
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui._min_window_size = (700, 400)
+        gui._apply_initial_window_geometry()
+        gui.root.geometry.assert_called_once_with(f"{700 + _INITIAL_WIDTH_STRETCH}x400")
+
+    def test_initial_geometry_defaults_before_layout(self):
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui._apply_initial_window_geometry()
+        from src.gui import _INITIAL_WIDTH_STRETCH
+        gui.root.geometry.assert_called_once_with(
+            f"{DEFAULT_MIN_SIZE[0] + _INITIAL_WIDTH_STRETCH}x{DEFAULT_MIN_SIZE[1]}")
 
 
 class TestGuiLifecycle(unittest.TestCase):
@@ -2466,6 +2525,66 @@ class TestPreviewLoadingIndicator(unittest.TestCase):
 
         gui.loading_bar.stop.assert_called_once()
         gui.loading_frame.grid_remove.assert_called_once()
+
+    def test_show_loading_invalidates_stale_cached_render_size(self):
+        # A window move/resize mid-load (see _rescale_preview_to_window) can
+        # cache a size computed under unreliable conditions (e.g. the frame
+        # briefly mismeasured while the OS is dragging the window) into
+        # _preview_render_size. Starting a new load must not let a stale
+        # cached size from before/during it leak into the next render.
+        gui = _bare_gui()
+        self._loading_widgets(gui)
+        gui._preview_render_size = (50, 28)  # stale/bad cached size
+        gui._show_preview_loading()
+        self.assertIsNone(gui._preview_render_size)
+
+    def test_rescale_while_loading_does_not_cache_a_bad_size(self):
+        # Continuing to move/resize the window WHILE a new file's frames are
+        # still being extracted (spinner visible) must not let
+        # _rescale_preview_to_window measure and cache a size at all -- the
+        # window can still be mid-drag, and the original_image it would
+        # re-render belongs to the PREVIOUS file anyway.
+        gui = _bare_gui()
+        self._loading_widgets(gui)
+        gui.root = MagicMock()
+        gui.loading_frame.winfo_ismapped.return_value = True
+        gui.original_image = MagicMock(spec=Image.Image)
+        gui._preview_target_size = MagicMock(return_value=(50, 28))
+        gui._render_preview_at_size = MagicMock()
+
+        gui._rescale_preview_to_window()
+
+        gui._render_preview_at_size.assert_not_called()
+        self.assertIsNone(getattr(gui, '_preview_render_size', None))
+
+    def test_continued_dragging_during_load_does_not_leak_into_new_render(self):
+        # Reproduces the reported bug: the user keeps moving the window for
+        # the whole duration of a new file's load, not just before it starts.
+        gui = _bare_gui()
+        self._loading_widgets(gui)
+        gui.root = MagicMock()
+        gui.root.winfo_width.return_value = 1200
+        gui.root.winfo_height.return_value = 800
+        gui._window_auto_fitted = True
+        gui.original_image = MagicMock(spec=Image.Image)  # previous file's image, still held
+        gui._preview_target_size = MagicMock(return_value=(50, 28))  # bad mid-drag measurement
+        gui._render_preview_at_size = MagicMock()
+        gui._hide_preview_loading = MagicMock()
+        gui._reveal_preview = MagicMock()
+        gui.adjust_window_size = MagicMock()
+
+        gui._show_preview_loading()
+        gui.loading_frame.winfo_ismapped.return_value = True
+
+        # user keeps dragging the window while the new file's frames extract
+        gui._rescale_preview_to_window()
+        gui._rescale_preview_to_window()
+
+        # frames finish extracting once the window has settled
+        gui._preview_target_size.return_value = (960, 540)
+        gui._render_preview_images(MagicMock(), MagicMock(), time_position=5.0)
+
+        gui._render_preview_at_size.assert_called_once_with((960, 540))
 
     def test_render_hides_spinner_then_reveals(self):
         gui = _bare_gui()
@@ -2892,7 +3011,7 @@ class TestConversionManagerInternals(unittest.TestCase):
     def test_nvidia_present_true_when_smi_exits_zero(self):
         m = ConversionManager()
         with patch('subprocess.run') as mock_run, \
-             patch.object(m, '_startupinfo', return_value=(None, 0)):
+             patch('src.conversion._utils_startupinfo', return_value=(None, 0)):
             mock_run.return_value = MagicMock(returncode=0)
             self.assertTrue(m._nvidia_present())
 
@@ -2912,7 +3031,7 @@ class TestConversionManagerInternals(unittest.TestCase):
         mock_proc.communicate.return_value = ('H264_NVENC H264_AMF\n', '')
         mock_proc.returncode = 0
         with patch('subprocess.Popen', return_value=mock_proc), \
-             patch.object(m, '_startupinfo', return_value=(None, 0)):
+             patch('src.conversion._utils_startupinfo', return_value=(None, 0)):
             result = m._list_encoders()
         self.assertIn('h264_nvenc', result)
 

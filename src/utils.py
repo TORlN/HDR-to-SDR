@@ -10,7 +10,6 @@ import shutil
 import threading
 
 # Constants and initialization
-LOGGING_ENABLED = False
 TONEMAP = ["Reinhard", "Mobius", "Hable", "BT.2390", "Spline"]
 # npl=100 is the SDR reference white (100 nits). Lower values push the average
 # frame toward full white and crush highlight detail; higher values darken the
@@ -53,7 +52,6 @@ FFPROBE_EXECUTABLE = None
 # Initialize logging
 def setup_logging():
     logging.basicConfig(level=logging.WARNING, format='%(levelname)s - %(message)s')
-    return False
 
 # Initialize FFmpeg paths
 def get_executable_path(filename):

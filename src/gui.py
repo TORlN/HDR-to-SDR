@@ -14,14 +14,14 @@ from PIL import Image, ImageTk
 from tkinterdnd2 import DND_FILES, TkinterDnD
 import logging
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 
 from dialogs import _LicenseDialog, _UpdateDialog, activate_license
 from preview import (
     DEFAULT_MIN_SIZE, PREVIEW_SIZE, INITIAL_PANE_SIZE,
     _MIN_PANE_W, _RESIZE_DEBOUNCE_MS, _PREVIEW_WIDTH_RESERVE,
     _PREVIEW_HEIGHT_RESERVE, _MIN_SIZE_MARGIN, _PREVIEW_POOL_WORKERS,
-    _PreviewFuture, _HDRPreviewMixin,
+    _INITIAL_WIDTH_STRETCH, _HDRPreviewMixin,
 )
 from batch import _BatchMixin
 
@@ -133,7 +133,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._preview_generation = 0
         self._preview_pool = ThreadPoolExecutor(
             max_workers=_PREVIEW_POOL_WORKERS, thread_name_prefix='frame-fetch')
-        self._preview_thread: _PreviewFuture | None = None
+        self._preview_thread: Future | None = None
         self._converted_preview_base: Image.Image | None = None
         self._duration_path: str | None = None
         self._duration_value: float | None = None
@@ -148,6 +148,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
 
         self._min_window_size = self._compute_min_window_size()
         self._apply_min_window_size()
+        self._apply_initial_window_geometry()
 
         self.root.drop_target_register(DND_FILES)
         self.root.dnd_bind('<<Drop>>', self.handle_file_drop)
@@ -1092,11 +1093,6 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         if self.drop_target_registered:
             self.root.drop_target_unregister()
             self.drop_target_registered = False
-
-    def disable_ui(self, elements: list) -> None:  # type: ignore[type-arg]
-        """Disable the specified UI elements."""
-        for element in elements:
-            element.config(state='disabled')
 
     # ── GPU acceleration ───────────────────────────────────────────────────────
 

@@ -470,7 +470,7 @@ class ConversionManager:
 
     def start_ffmpeg_process(self, cmd):
         """Start the FFmpeg process without showing a console window."""
-        startupinfo, creationflags = self._startupinfo()
+        startupinfo, creationflags = _utils_startupinfo()
 
         process = subprocess.Popen(
             cmd,
@@ -610,13 +610,10 @@ class ConversionManager:
             if hasattr(gui_instance, 'register_drop_target'):
                 gui_instance.register_drop_target()
 
-    def _startupinfo(self):
-        return _utils_startupinfo()
-
     def _nvidia_present(self):
         """Return True if nvidia-smi reports a usable NVIDIA GPU."""
         try:
-            si, flags = self._startupinfo()
+            si, flags = _utils_startupinfo()
             result = subprocess.run(
                 ['nvidia-smi'],
                 stdout=subprocess.PIPE,
@@ -631,7 +628,7 @@ class ConversionManager:
     def _list_encoders(self):
         """Return lowercase stdout of 'ffmpeg -encoders', or '' on failure."""
         try:
-            si, flags = self._startupinfo()
+            si, flags = _utils_startupinfo()
             process = subprocess.Popen(
                 [FFMPEG_EXECUTABLE, '-encoders'],
                 stdout=subprocess.PIPE,

@@ -308,13 +308,6 @@ class TestHDRConverterGUI(TestCase):
         kwargs = mock_start_conversion.call_args.kwargs
         self.assertIs(kwargs.get('licensed'), True)  # setUp builds licensed=True
 
-    def test_ui_state_management(self):
-        """Test UI element state management."""
-        test_elements = [MagicMock(), MagicMock()]
-        self.gui.disable_ui(test_elements)
-        for element in test_elements:
-            element.config.assert_called_with(state='disabled')
-
     def _assert_frame_updates(self):
         """Helper method to verify frame updates."""
         for frame in [self.gui.button_frame, self.gui.image_frame, 

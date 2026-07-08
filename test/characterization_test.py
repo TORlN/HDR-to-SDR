@@ -2546,6 +2546,7 @@ class TestApplyLicenseStateUnlicensed(unittest.TestCase):
         gui.gpu_accel_var = MagicMock()
         gui.gpu_accel_checkbutton = MagicMock()
         gui.quality_slider = MagicMock()
+        gui.quality_mode_combobox = MagicMock()
         gui._apply_quality_range = MagicMock()
         gui.format_var = MagicMock()
         gui.format_combobox = MagicMock()

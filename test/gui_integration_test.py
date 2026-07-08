@@ -218,7 +218,7 @@ class TestConstruction(_GuiTestBase):
             self.gui.display_image_checkbutton, self.gui.input_entry,
             self.gui.output_entry, self.gui.gamma_entry,
             self.gui.gpu_accel_checkbutton,
-            self.gui.quality_slider, self.gui.format_combobox,
+            self.gui.quality_slider, self.gui.quality_mode_combobox, self.gui.format_combobox,
             self.gui.custom_time_entry, self.gui.custom_seek_button,
             self.gui.add_files_button, self.gui.clear_batch_button,
             self.gui.remove_batch_button,
@@ -732,6 +732,9 @@ class TestUnlicensedState(_LicensingBase):
     def test_disables_quality_slider(self):
         self.assertTrue(self.gui.quality_slider.instate(['disabled']))
 
+    def test_disables_quality_mode_combobox(self):
+        self.assertTrue(self.gui.quality_mode_combobox.instate(['disabled']))
+
     def test_disables_custom_seek(self):
         self.assertTrue(self.gui.custom_time_entry.instate(['disabled']))
         self.assertTrue(self.gui.custom_seek_button.instate(['disabled']))
@@ -752,7 +755,7 @@ class TestUnlicensedState(_LicensingBase):
         # GPU is free, so gpu_accel_checkbutton IS included even when unlicensed.
         # 10-bit is free too, so bit_depth_10_radio is included; 12-bit is Pro.
         premium = [
-            self.gui.quality_slider,
+            self.gui.quality_slider, self.gui.quality_mode_combobox,
             self.gui.format_combobox, self.gui.custom_time_entry,
             self.gui.custom_seek_button, self.gui.add_files_button,
             self.gui.clear_batch_button, self.gui.remove_batch_button,
@@ -796,6 +799,9 @@ class TestLicensedState(_LicensingBase):
     def test_enables_quality_slider(self):
         self.assertFalse(self.gui.quality_slider.instate(['disabled']))
 
+    def test_enables_quality_mode_combobox(self):
+        self.assertFalse(self.gui.quality_mode_combobox.instate(['disabled']))
+
     def test_enables_custom_seek(self):
         self.assertFalse(self.gui.custom_time_entry.instate(['disabled']))
         self.assertFalse(self.gui.custom_seek_button.instate(['disabled']))
@@ -815,6 +821,7 @@ class TestLicensedState(_LicensingBase):
     def test_includes_premium_in_interactable_elements(self):
         premium = [
             self.gui.gpu_accel_checkbutton, self.gui.quality_slider,
+            self.gui.quality_mode_combobox,
             self.gui.format_combobox, self.gui.custom_time_entry,
             self.gui.custom_seek_button, self.gui.add_files_button,
             self.gui.clear_batch_button, self.gui.remove_batch_button,

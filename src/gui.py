@@ -234,6 +234,11 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         pro = 'normal' if licensed else 'disabled'
 
         self.quality_slider.config(state=pro)
+        # A ttk.Combobox must stay 'readonly' when enabled, not 'normal' (which
+        # would let the user free-type into it) -- matching format_combobox's
+        # existing pattern, where 'state' is never set to the plain pro/disabled
+        # toggle directly.
+        self.quality_mode_combobox.config(state='readonly' if licensed else 'disabled')
         self.custom_time_entry.config(state=pro)
         self.custom_seek_button.config(state=pro)
 
@@ -272,7 +277,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.gpu_accel_checkbutton, self.bit_depth_10_radio,
         ]
         premium = [
-            self.quality_slider, self.format_combobox,
+            self.quality_slider, self.quality_mode_combobox, self.format_combobox,
             self.custom_time_entry, self.custom_seek_button,
             self.add_files_button, self.clear_batch_button, self.remove_batch_button,
             self.bit_depth_12_radio,
@@ -561,7 +566,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.browse_button, self.convert_button, self.gamma_slider,
             self.open_after_conversion_checkbutton, self.display_image_checkbutton,
             self.input_entry, self.output_entry, self.gamma_entry,
-            self.gpu_accel_checkbutton, self.quality_slider, self.format_combobox,
+            self.gpu_accel_checkbutton, self.quality_slider, self.quality_mode_combobox,
+            self.format_combobox,
             self.custom_time_entry, self.custom_seek_button,
             self.add_files_button, self.clear_batch_button, self.remove_batch_button,
             self.bit_depth_10_radio, self.bit_depth_12_radio,

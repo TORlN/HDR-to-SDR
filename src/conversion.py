@@ -272,10 +272,13 @@ class ConversionManager:
         # burst" ffmpeg args, standard on every encoder here (GPU or CPU).
         quality = str(quality)
         target_bv = maxrate = bufsize = None
+        bitrate_rc_args: list = []  # type: ignore[type-arg]
         if quality_mode == 'bitrate':
             target_bv = int(quality) * 1000
             maxrate = int(target_bv * 1.5)
             bufsize = target_bv * 2
+            bitrate_rc_args = ['-b:v', str(target_bv), '-maxrate', str(maxrate),
+                                '-bufsize', str(bufsize)]
 
         if active_encoder in ('h264_nvenc', 'hevc_nvenc'):
             if quality_mode == 'bitrate':
@@ -284,10 +287,7 @@ class ConversionManager:
                     '-preset', 'p4',
                     '-tune', 'hq',
                     '-rc', 'vbr',
-                    '-b:v', str(target_bv),
-                    '-maxrate', str(maxrate),
-                    '-bufsize', str(bufsize),
-                ]
+                ] + bitrate_rc_args
             else:
                 # MKV containers often report bit_rate=0; fall back to 8 Mbps
                 # so nvenc doesn't receive -b:v 0 / -maxrate 0 / -bufsize 0.
@@ -308,10 +308,7 @@ class ConversionManager:
                     '-c:v', active_encoder,
                     '-quality', 'balanced',
                     '-rc', 'vbr_peak',
-                    '-b:v', str(target_bv),
-                    '-maxrate', str(maxrate),
-                    '-bufsize', str(bufsize),
-                ]
+                ] + bitrate_rc_args
             else:
                 cmd += [
                     '-c:v', active_encoder,
@@ -323,10 +320,7 @@ class ConversionManager:
             if quality_mode == 'bitrate':
                 cmd += [
                     '-c:v', active_encoder,
-                    '-b:v', str(target_bv),
-                    '-maxrate', str(maxrate),
-                    '-bufsize', str(bufsize),
-                ]
+                ] + bitrate_rc_args
             else:
                 _bv = properties['bit_rate'] or 8_000_000
                 cmd += [
@@ -344,10 +338,7 @@ class ConversionManager:
                 cmd += [
                     '-c:v', 'libx265',
                     '-preset', 'veryfast',
-                    '-b:v', str(target_bv),
-                    '-maxrate', str(maxrate),
-                    '-bufsize', str(bufsize),
-                ]
+                ] + bitrate_rc_args
             else:
                 cmd += [
                     '-c:v', 'libx265',
@@ -360,10 +351,7 @@ class ConversionManager:
                     '-c:v', 'libx264',
                     '-preset', 'veryfast',
                     '-tune', 'film',
-                    '-b:v', str(target_bv),
-                    '-maxrate', str(maxrate),
-                    '-bufsize', str(bufsize),
-                ]
+                ] + bitrate_rc_args
             else:
                 # No -b:v here: libx264 in CRF (constant-quality) mode ignores
                 # a target bitrate, so it was dead weight.

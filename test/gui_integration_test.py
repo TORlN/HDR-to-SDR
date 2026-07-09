@@ -468,6 +468,33 @@ class TestBatchQueueWidgets(_GuiTestBase):
 
         self.assertEqual(self.gui.quality_var.get(), 26)
 
+    def test_selecting_queue_item_restores_quality_despite_differing_gpu_range(self):
+        """Same corruption as above, but triggered by a *different* GPU
+        setting rather than a stale drag: item A (GPU off, CRF range 28-17)
+        is loaded, then item B (GPU on, CQ range 30-15, quality=20 saved) is
+        selected. Since quality_mode doesn't change (both 'cq'),
+        _apply_quality_mode used to fall into _apply_quality_range's
+        knob-preserving remap, which read the slider's *stale* CRF bounds
+        instead of B's own CQ bounds and fractionally distorted B's saved 20
+        into a different value (~19)."""
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])  # auto-loads A
+            self.gui.quality_mode_var.set('Constant Quality')
+            self.gui.gpu_accel_var.set(False)
+            self.gui.quality_slider.set(22)
+            self.gui.batch_items[0]['settings'] = self.gui._current_settings_dict()
+
+            self.gui.add_batch_files(['C:/v/b.mp4'])  # queued, not auto-loaded
+            self.gui.batch_items[1]['settings']['quality_mode'] = 'cq'
+            self.gui.batch_items[1]['settings']['gpu_accel'] = True
+            self.gui.batch_items[1]['settings']['quality'] = 20
+
+            self.gui.batch_listbox.selection_clear(0, tk.END)
+            self.gui.batch_listbox.selection_set(1)
+            self.gui.on_batch_item_select()
+
+        self.assertEqual(self.gui.quality_var.get(), 20)
+
     def test_gamma_change_writes_back_to_selected_queue_item(self):
         with patch.object(self.gui, 'update_frame_preview'):
             self.gui.add_batch_files(['C:/v/a.mp4'])
@@ -543,6 +570,27 @@ class TestBatchQueueWidgets(_GuiTestBase):
             self.gui._restore_settings_dict(self.gui.batch_items[0]['settings'])
 
         self.assertEqual(self.gui.tonemap_var.get(), 'Mobius')
+
+    def test_restore_settings_dict_does_not_leak_writeback_onto_a_different_item(self):
+        """_restore_settings_dict must guard itself against its own internal
+        slider moves triggering a premature write-back, rather than relying
+        on its only production caller (_load_input_file) to wrap it. Without
+        a self-guard, calling it directly to restore item B's settings while
+        input_path_var still points at item A lets the intermediate
+        _apply_quality_mode() slider move fire _write_back_current_settings,
+        which stamps B's (still mid-restore) values onto item A instead."""
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4', 'C:/v/b.mp4'])  # a.mp4 auto-loads
+        a_settings_before = dict(self.gui.batch_items[0]['settings'])
+
+        b_settings = dict(self.gui.batch_items[1]['settings'])
+        b_settings['quality_mode'] = 'cq'
+        b_settings['gpu_accel'] = True
+        b_settings['quality'] = 20
+
+        self.gui._restore_settings_dict(b_settings)  # called directly, not via _load_input_file
+
+        self.assertEqual(self.gui.batch_items[0]['settings'], a_settings_before)
 
     def test_apply_to_all_button_exists(self):
         self.assertIsInstance(self.gui.apply_settings_button, ttk.Button)

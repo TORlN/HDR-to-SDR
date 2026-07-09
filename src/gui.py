@@ -787,25 +787,38 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         range/fallback logic so the restored values are re-validated against
         whichever file is now loaded -- e.g. Target Bitrate's ceiling clamps
         to this file's own source bitrate, and a GPU-only tonemapper falls
-        back to Mobius if this file's load left GPU accel off."""
-        self.gamma_var.set(settings.get('gamma', self.gamma_var.get()))
-        self.gpu_accel_var.set(settings.get('gpu_accel', self.gpu_accel_var.get()))
-        self.tonemap_var.set(settings.get('tonemapper', self.tonemap_var.get()))
-        self.quality_mode_var.set(self._QUALITY_MODE_FROM_INTERNAL.get(
-            settings.get('quality_mode', 'cq'), 'Constant Quality'))
-        self.quality_var.set(settings.get('quality', self.quality_var.get()))
-        self._bitrate_customized_for_current_item = settings.get('bitrate_customized', False)
-        if self._bitrate_customized_for_current_item:
-            ceiling = self._bitrate_ceiling_kbps()
-            fraction = settings.get('bitrate_fraction', 0.5)
-            value = round(fraction * ceiling / 500) * 500
-            value = min(max(value, self._BITRATE_FLOOR_KBPS), ceiling)
-            self.bitrate_var.set(value)
-            self._bitrate_needs_reseed = False
-        if hasattr(self, 'quality_slider'):
-            self._apply_quality_mode()
-        if hasattr(self, 'tonemap_combobox'):
-            self._apply_tonemap_choices()
+        back to Mobius if this file's load left GPU accel off.
+
+        Self-guarded against _write_back_current_settings: the slider moves
+        below are internal, intermediate state, not a user edit, and must
+        not be stamped onto whichever item is currently loaded before this
+        restore completes. _load_input_file (the only production caller)
+        already wraps this in the same guard, but that's a caller
+        convention, not an enforced invariant -- guarding here too means a
+        future direct caller can't reintroduce the leak."""
+        already_restoring = getattr(self, '_restoring_batch_item_settings', False)
+        self._restoring_batch_item_settings = True
+        try:
+            self.gamma_var.set(settings.get('gamma', self.gamma_var.get()))
+            self.gpu_accel_var.set(settings.get('gpu_accel', self.gpu_accel_var.get()))
+            self.tonemap_var.set(settings.get('tonemapper', self.tonemap_var.get()))
+            self.quality_mode_var.set(self._QUALITY_MODE_FROM_INTERNAL.get(
+                settings.get('quality_mode', 'cq'), 'Constant Quality'))
+            self.quality_var.set(settings.get('quality', self.quality_var.get()))
+            self._bitrate_customized_for_current_item = settings.get('bitrate_customized', False)
+            if self._bitrate_customized_for_current_item:
+                ceiling = self._bitrate_ceiling_kbps()
+                fraction = settings.get('bitrate_fraction', 0.5)
+                value = round(fraction * ceiling / 500) * 500
+                value = min(max(value, self._BITRATE_FLOOR_KBPS), ceiling)
+                self.bitrate_var.set(value)
+                self._bitrate_needs_reseed = False
+            if hasattr(self, 'quality_slider'):
+                self._apply_quality_mode()
+            if hasattr(self, 'tonemap_combobox'):
+                self._apply_tonemap_choices()
+        finally:
+            self._restoring_batch_item_settings = already_restoring
 
     def _write_back_current_settings(self) -> None:
         """Persist the live controls' current values onto whichever queue
@@ -939,10 +952,13 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._last_quality_mode_applied = mode
         if mode == 'Target Bitrate':
             self._apply_bitrate_range()
-        elif switched:
-            # Coming from Target Bitrate's unrelated kbps range (or the first
-            # build): a fractional remap would be meaningless here, so
-            # restore quality_var's own value directly instead.
+        elif switched or getattr(self, '_restoring_batch_item_settings', False):
+            # Direct restore: either coming from Target Bitrate's unrelated
+            # kbps range (or the first build), or mid-restore of a batch item
+            # whose GPU setting may differ from whatever item's range the
+            # slider widget currently reflects. In both cases a fractional
+            # remap against that (unrelated or stale) range would be
+            # meaningless -- restore quality_var's own value directly instead.
             worst, best = self._CQ_RANGE if self.gpu_accel_var.get() else self._CRF_RANGE
             lo, hi = min(worst, best), max(worst, best)
             value = min(max(self.quality_var.get(), lo), hi)

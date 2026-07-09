@@ -274,6 +274,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.add_files_button.config(state=pro)
         self.remove_batch_button.config(state=pro)
         self.clear_batch_button.config(state=pro)
+        self.apply_settings_button.config(state=pro)
 
         # Refresh the 12-bit toggle's label/enabled state and the info strip's
         # Pro hint immediately, in case a >10-bit file is already loaded when

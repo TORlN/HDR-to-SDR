@@ -2879,6 +2879,7 @@ class TestApplyLicenseStateUnlicensed(unittest.TestCase):
         gui.add_files_button = MagicMock()
         gui.remove_batch_button = MagicMock()
         gui.clear_batch_button = MagicMock()
+        gui.apply_settings_button = MagicMock()
         gui._rebuild_interactable_elements = MagicMock()
         gui._pro_banner = MagicMock()
         return gui

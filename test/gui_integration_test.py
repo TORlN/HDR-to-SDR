@@ -1260,6 +1260,7 @@ class TestUnlicensedState(_LicensingBase):
         self.assertTrue(self.gui.add_files_button.instate(['disabled']))
         self.assertTrue(self.gui.remove_batch_button.instate(['disabled']))
         self.assertTrue(self.gui.clear_batch_button.instate(['disabled']))
+        self.assertTrue(self.gui.apply_settings_button.instate(['disabled']))
 
     def test_shows_pro_banner(self):
         self.assertNotEqual(self.gui._pro_banner.grid_info(), {})
@@ -1327,6 +1328,7 @@ class TestLicensedState(_LicensingBase):
         self.assertFalse(self.gui.add_files_button.instate(['disabled']))
         self.assertFalse(self.gui.remove_batch_button.instate(['disabled']))
         self.assertFalse(self.gui.clear_batch_button.instate(['disabled']))
+        self.assertFalse(self.gui.apply_settings_button.instate(['disabled']))
 
     def test_hides_pro_banner(self):
         self.assertEqual(self.gui._pro_banner.grid_info(), {})

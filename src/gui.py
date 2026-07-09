@@ -910,7 +910,15 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             ceiling = max(ceiling, self.bitrate_var.get())
         value = min(max(self.bitrate_var.get(), self._BITRATE_FLOOR_KBPS), ceiling)
         self.quality_slider.configure(from_=self._BITRATE_FLOOR_KBPS, to=ceiling)
-        self.quality_slider.set(value)
+        # ttk.Scale.set() fires its own -command (_on_quality_change) even for
+        # this purely programmatic call, which would otherwise misread the
+        # reseed/clamp as a deliberate user drag and wrongly mark this file
+        # "customized". Suppress just that side effect for this one call.
+        self._applying_bitrate_range = True
+        try:
+            self.quality_slider.set(value)
+        finally:
+            self._applying_bitrate_range = False
         self.bitrate_var.set(value)
 
     def _apply_quality_mode(self) -> None:
@@ -994,6 +1002,12 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         """Snap the slider to whole steps: CRF/CQ ints in Constant Quality
         mode, or 500 kbps increments in Target Bitrate mode (the scale emits
         floats either way)."""
+        if getattr(self, '_applying_bitrate_range', False):
+            # This call is _apply_bitrate_range's own programmatic .set(),
+            # not a user drag -- it already applies bitrate_var itself and
+            # every caller of _apply_bitrate_range already writes settings
+            # back explicitly afterward, so there is nothing left to do here.
+            return
         if self.quality_mode_var.get() == 'Target Bitrate':
             self.bitrate_var.set(round(float(value) / 500) * 500)
             self._bitrate_customized_for_current_item = True

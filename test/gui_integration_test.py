@@ -713,10 +713,17 @@ class TestBatchQueueWidgets(_GuiTestBase):
         """If the currently displayed file's Target Bitrate is still on its
         auto-reseeded value (never deliberately customized), Apply to All
         must not stamp a stale bitrate/fraction onto other items -- each
-        item stays free to reseed to its own 50% when it's next loaded."""
+        item stays free to reseed to its own 50% when it's next loaded.
+
+        A's source (3,500 kbps) is deliberately NOT a clean multiple of the
+        500 kbps rounding step, so its reseed fraction (0.5714) differs from
+        a genuine 0.5 -- this is what actually exercises the un-customized
+        restore branch. A clean-multiple source would make the customized
+        and un-customized branches numerically indistinguishable and pass
+        even if the un-customized branch were broken."""
         props_by_path = {
-            'C:/v/a.mp4': self._props_for(4_000_000),   # 4,000 kbps -> 2,000 kbps seed
-            'C:/v/b.mp4': self._props_for(10_000_000),  # 10,000 kbps -> 5,000 kbps seed
+            'C:/v/a.mp4': self._props_for(3_500_000),   # odd multiple -> 2,000 kbps seed (57.1%)
+            'C:/v/b.mp4': self._props_for(10_000_000),  # 10,000 kbps -> 5,000 kbps seed (50%)
         }
 
         def fake_probe(path):
@@ -730,13 +737,16 @@ class TestBatchQueueWidgets(_GuiTestBase):
             self.gui.quality_mode_var.set('Target Bitrate')
             self.gui._on_quality_mode_selected()  # A reseeds to 2,000, never customized
 
+            self.assertFalse(self.gui._bitrate_customized_for_current_item)
+            self.assertFalse(self.gui.batch_items[0]['settings']['bitrate_customized'])
+
             self.gui.apply_settings_to_all_batch_items()
 
             self.gui.batch_listbox.selection_clear(0, tk.END)
             self.gui.batch_listbox.selection_set(1)
             self.gui.on_batch_item_select()
 
-            self.assertEqual(self.gui.bitrate_var.get(), 5000)  # B's own 50%, not A's 2,000
+            self.assertEqual(self.gui.bitrate_var.get(), 5000)  # B's own 50%, not a 5,500 skew from A's
 
     def test_batch_settings_info_button_exists_and_shows_tooltip(self):
         self.assertEqual(self.gui.batch_settings_info_button.cget('text'), 'ⓘ')

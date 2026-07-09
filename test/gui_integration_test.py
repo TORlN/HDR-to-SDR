@@ -438,6 +438,54 @@ class TestBatchQueueWidgets(_GuiTestBase):
         self.gui._on_quality_change('19')
         self.assertEqual(self.gui.batch_items[0]['settings']['quality'], 19)
 
+    def test_batch_run_uses_each_items_own_gamma(self):
+        """Two queued files with different gammas must each convert with
+        their own value, not whichever was showing last."""
+        with patch('src.gui.get_video_properties', return_value=None), \
+             patch.object(self.gui, 'update_frame_preview'), \
+             patch.object(self.gui, 'highlight_frame_button'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])  # auto-loads A
+            self.gui.gamma_var.set(1.2)
+            self.gui.on_gamma_change()  # writes back onto A
+
+            self.gui.add_batch_files(['C:/v/b.mp4'])  # does NOT auto-load (A is loaded)
+            self.gui.batch_listbox.selection_clear(0, tk.END)
+            self.gui.batch_listbox.selection_set(1)
+            self.gui.on_batch_item_select()  # actually loads B
+            self.gui.gamma_var.set(0.7)
+            self.gui.on_gamma_change()  # writes back onto B, not A
+
+        with patch('src.gui.get_video_properties', return_value=None), \
+             patch.object(self.gui, 'update_frame_preview'), \
+             patch.object(self.gui, 'highlight_frame_button'), \
+             patch('src.batch.conversion_manager') as mock_cm, \
+             patch('src.batch.os.path.isfile', return_value=True), \
+             patch('src.batch.os.path.exists', return_value=False):
+            self.gui.start_batch()
+            first_gamma = mock_cm.start_conversion.call_args.args[2]
+            self.gui.batch_items[0]['status'] = 'Done'
+            self.gui._current_batch_item = None
+            self.gui._start_next_batch_item()
+            second_gamma = mock_cm.start_conversion.call_args.args[2]
+
+        self.assertAlmostEqual(first_gamma, 1.2)
+        self.assertAlmostEqual(second_gamma, 0.7)
+
+    def test_copied_gpu_only_tonemapper_falls_back_when_target_lacks_gpu(self):
+        """A settings dict carrying a GPU-only tonemapper (e.g. via a future
+        Apply-to-All copy) must not reach ffmpeg for an item that ends up
+        loading with GPU accel off -- _apply_tonemap_choices' existing
+        fallback-to-Mobius logic must still run on restore."""
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])
+        self.gui.batch_items[0]['settings']['tonemapper'] = 'BT.2390'
+        self.gui.batch_items[0]['settings']['gpu_accel'] = False
+
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui._restore_settings_dict(self.gui.batch_items[0]['settings'])
+
+        self.assertEqual(self.gui.tonemap_var.get(), 'Mobius')
+
 
 class TestStateAndLayout(_GuiTestBase):
 

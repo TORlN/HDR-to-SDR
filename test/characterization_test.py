@@ -2211,6 +2211,81 @@ class TestResponsivePreview(unittest.TestCase):
         gui._initial_preview_size.assert_not_called()
 
 
+class TestBatchListRefreshDebounce(unittest.TestCase):
+    """A slider's command= callback fires on every tick of a drag, not just
+    on release. _write_back_current_settings must always persist the value
+    immediately (cheap), but its listbox rebuild is expensive (full
+    delete+reinsert with a per-item settings comparison) and must coalesce
+    rapid-fire calls into one refresh, same as the existing window-resize
+    debounce (_on_window_configure/_resize_job)."""
+
+    def _gui(self):
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        item = {'settings': {}}
+        gui._batch_item_for_current_input = MagicMock(return_value=item)
+        gui._current_settings_dict = MagicMock(return_value={'x': 1})
+        gui._refresh_batch_list = MagicMock()
+        gui._item = item
+        return gui
+
+    def test_default_call_refreshes_synchronously(self):
+        gui = self._gui()
+        gui._write_back_current_settings()
+        gui._refresh_batch_list.assert_called_once()
+        gui.root.after.assert_not_called()
+
+    def test_debounced_call_writes_settings_immediately_but_defers_refresh(self):
+        gui = self._gui()
+        gui.root.after.return_value = 'job1'
+        gui._write_back_current_settings(debounce_listbox=True)
+        self.assertEqual(gui._item['settings'], {'x': 1})  # written right away
+        gui._refresh_batch_list.assert_not_called()  # rebuild deferred
+        gui.root.after.assert_called_once()
+        self.assertEqual(gui._batch_list_refresh_job, 'job1')
+
+    def test_repeated_debounced_calls_coalesce_into_one_pending_refresh(self):
+        gui = self._gui()
+        gui.root.after.side_effect = ['job1', 'job2', 'job3']
+        gui._write_back_current_settings(debounce_listbox=True)
+        gui._write_back_current_settings(debounce_listbox=True)
+        gui._write_back_current_settings(debounce_listbox=True)
+        gui.root.after_cancel.assert_any_call('job1')
+        gui.root.after_cancel.assert_any_call('job2')
+        self.assertEqual(gui.root.after_cancel.call_count, 2)
+        self.assertEqual(gui._batch_list_refresh_job, 'job3')
+        gui._refresh_batch_list.assert_not_called()
+
+    def test_debounced_timer_firing_calls_refresh_batch_list(self):
+        gui = self._gui()
+        captured = {}
+        gui.root.after.side_effect = lambda ms, cb: captured.setdefault('cb', cb) or 'job1'
+        gui._write_back_current_settings(debounce_listbox=True)
+        captured['cb']()  # simulate the timer elapsing
+        gui._refresh_batch_list.assert_called_once()
+
+    def test_gamma_change_defers_batch_list_refresh(self):
+        gui = self._gui()
+        gui.root.after.return_value = 'job1'
+        gui.gamma_var = MagicMock()
+        gui.display_image_var = MagicMock()
+        gui.display_image_var.get.return_value = False
+        gui.update_frame_preview = MagicMock()
+        gui.on_gamma_change()
+        gui._refresh_batch_list.assert_not_called()
+        gui.root.after.assert_called_once()
+
+    def test_quality_slider_drag_defers_batch_list_refresh(self):
+        gui = self._gui()
+        gui.root.after.return_value = 'job1'
+        gui.quality_mode_var = MagicMock()
+        gui.quality_mode_var.get.return_value = 'Constant Quality'
+        gui.quality_var = MagicMock()
+        gui._on_quality_change('19')
+        gui._refresh_batch_list.assert_not_called()
+        gui.root.after.assert_called_once()
+
+
 class TestMinWindowSize(unittest.TestCase):
     """Min window size is derived from the controls so they can't be clipped (issue 3)."""
 

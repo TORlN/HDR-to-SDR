@@ -159,8 +159,10 @@ class _BatchMixin:
         right now, this file would convert differently than what's on
         screen." Never marks the currently-loaded item, since its settings
         equal the live panel by construction (see _restore_settings_dict /
-        _write_back_current_settings)."""
-        if not hasattr(self, 'batch_listbox'):
+        _write_back_current_settings). May run from a debounced timer (see
+        _schedule_batch_list_refresh), which can still be pending after the
+        window is torn down -- winfo_exists() guards against that."""
+        if not hasattr(self, 'batch_listbox') or not self.batch_listbox.winfo_exists():
             return
         selected_input = self._batch_item_for_current_input()
         self.batch_listbox.delete(0, tk.END)

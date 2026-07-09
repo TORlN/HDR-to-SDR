@@ -71,6 +71,11 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
     _BITRATE_FLOOR_KBPS = 1000
     _BITRATE_FALLBACK_KBPS = 8000  # matches conversion.py's nvenc/qsv zero-bitrate guard
 
+    # Coalesces rapid-fire batch-listbox rebuilds (e.g. every tick of a
+    # gamma/quality slider drag) into one refresh -- see
+    # _write_back_current_settings/_schedule_batch_list_refresh.
+    _BATCH_LIST_REFRESH_DEBOUNCE_MS = 150
+
     _QUALITY_MODE_TO_INTERNAL = {'Constant Quality': 'cq', 'Target Bitrate': 'bitrate'}
     _QUALITY_MODE_FROM_INTERNAL = {'cq': 'Constant Quality', 'bitrate': 'Target Bitrate'}
 
@@ -164,6 +169,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self._resize_job: str | None = None
+        self._batch_list_refresh_job: str | None = None
         self._window_auto_fitted = False
         self.root.bind('<Configure>', self._on_window_configure)
 
@@ -826,7 +832,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         finally:
             self._restoring_batch_item_settings = already_restoring
 
-    def _write_back_current_settings(self) -> None:
+    def _write_back_current_settings(self, debounce_listbox: bool = False) -> None:
         """Persist the live controls' current values onto whichever queue
         item is loaded, if any -- the counterpart to _restore_settings_dict.
         Called from every control's change handler so editing a control
@@ -842,13 +848,37 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         the *previous* item's stale live-control values onto the
         newly-selected item, which _restore_settings_dict then faithfully
         restores back into the widgets -- corrupting the newly-loaded
-        item's settings on every queue reselect."""
+        item's settings on every queue reselect.
+
+        debounce_listbox=True (used by the gamma/quality slider drag
+        handlers, whose command= callback fires on every tick of a drag, not
+        just on release) always writes the settings dict immediately -- that
+        part is cheap -- but coalesces the listbox rebuild itself (a full
+        delete+reinsert with a per-item settings comparison) into a single
+        refresh shortly after the last call, the same debounce pattern
+        already used for window-resize (_on_window_configure/_resize_job)."""
         if getattr(self, '_restoring_batch_item_settings', False):
             return
         item = self._batch_item_for_current_input()
         if item is not None:
             item['settings'] = self._current_settings_dict()
-            self._refresh_batch_list()
+            if debounce_listbox:
+                self._schedule_batch_list_refresh()
+            else:
+                self._refresh_batch_list()
+
+    def _schedule_batch_list_refresh(self) -> None:
+        """Coalesce rapid-fire batch-listbox rebuilds (see
+        _write_back_current_settings) into one refresh after the calls
+        settle."""
+        job = getattr(self, '_batch_list_refresh_job', None)
+        if job is not None:
+            try:
+                self.root.after_cancel(job)
+            except Exception:
+                pass
+        self._batch_list_refresh_job = self.root.after(
+            self._BATCH_LIST_REFRESH_DEBOUNCE_MS, self._refresh_batch_list)
 
     def _on_bit_depth_toggle(self) -> None:
         """Handle a 10/12-bit radio click: persist the choice on the queue
@@ -1051,7 +1081,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self._bitrate_customized_for_current_item = True
         else:
             self.quality_var.set(int(float(value)))
-        self._write_back_current_settings()
+        self._write_back_current_settings(debounce_listbox=True)
 
     def _on_quality_mode_selected(self, event: tk.Event = None) -> None:  # type: ignore[type-arg]
         """<<ComboboxSelected>> handler for the quality-mode dropdown."""

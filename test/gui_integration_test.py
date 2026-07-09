@@ -658,6 +658,15 @@ class TestBatchQueueWidgets(_GuiTestBase):
         self.assertNotIn('*', self.gui.batch_listbox.get(1))
         self.assertIn('*', self.gui.batch_listbox.get(0))
 
+    def test_refresh_batch_list_tolerates_a_destroyed_listbox(self):
+        """A debounced refresh (see _schedule_batch_list_refresh) can still
+        be pending when the window is torn down -- it must not raise once
+        the underlying Tk listbox no longer exists."""
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])
+        self.gui.batch_listbox.destroy()
+        self.gui._refresh_batch_list()  # must not raise
+
     @staticmethod
     def _props_for(bit_rate):
         return {

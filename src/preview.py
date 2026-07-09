@@ -392,7 +392,7 @@ class _HDRPreviewMixin:
 
     def on_gamma_change(self, event: object = None) -> None:
         """Handle gamma slider/entry changes."""
-        self._write_back_current_settings()  # type: ignore[attr-defined]
+        self._write_back_current_settings(debounce_listbox=True)  # type: ignore[attr-defined]
         if self.display_image_var.get() and self._converted_preview_base is not None:
             self._apply_gamma_to_preview()
         else:

@@ -11,12 +11,13 @@ The [latest release](https://github.com/TORlN/HDR-to-SDR/releases) is free to do
 - **Live Frame Preview**: See the original (HDR) frame next to the converted (SDR) result side by side. Five evenly-spaced frame buttons let you scrub through the video, and the previews scale smoothly as you resize the window.
 - **Adjust Gamma Value**: Drag a slider (or type a value) to fine-tune the gamma of the output; the preview updates instantly.
 - **Conversion Methods**: Choose between a **Static** or **Dynamic** method. Static applies the same conversion regardless of the file; Dynamic analyzes the original's brightness (MAXFALL) for a more faithful result.
-- **Tonemappers**: Pick between Reinhard, Mobius, and Hable.
-- **Video Info Strip**: After a file loads, a one-line summary shows resolution, frame rate, codec, HDR/SDR, and audio codec. Dolby Vision sources are detected automatically and flagged in this strip.
+- **Tonemappers**: Pick between Reinhard, Mobius, Hable, BT.2390, and Spline. BT.2390 and Spline are GPU-only (libplacebo) and shown greyed out until GPU tonemapping is active.
+- **Video Info Strip**: After a file loads, a one-line summary shows resolution, frame rate, codec, HDR/SDR, audio codec, and the probed source bitrate (estimated from the container total when a source, e.g. MKV, doesn't expose a per-stream bitrate). Dolby Vision sources are detected automatically and flagged in this strip.
 - **Monitor & Cancel**: A progress bar tracks the active conversion, and a Cancel button stops it cleanly.
 - **Open Output File**: Optionally open the output automatically when the conversion completes.
 - **Dark Theme**: A flat, color-based dark UI that stays smooth during window resizing.
 - **GPU Acceleration**: Runs HDR→SDR tonemapping on the GPU via libplacebo (Vulkan) and encodes with the detected hardware encoder (`h264_nvenc` / `h264_amf` / `h264_qsv`). Because tonemapping (not encoding) is the real bottleneck, moving it to the GPU can roughly halve conversion time on capable hardware. Falls back automatically to CPU tonemapping when Vulkan/libplacebo isn't available, and to CPU encoding if the GPU encoder fails.
+- **H.265/HEVC Preservation**: An HEVC source is re-encoded back to HEVC instead of being converted to H.264.
 - **10-Bit Output**: Encode the SDR output at 10-bit color depth to avoid banding on gradients.
 - **Dolby Vision Support (Stereo Audio)**: Dolby Vision (profile 5) RPU metadata is routed through the libplacebo tonemapper for an accurate conversion. The source audio track is downmixed to 2-channel stereo AAC in the output.
 - **Persistent Settings**: Gamma, conversion method, tonemapper, quality, container, GPU toggle, preview toggle, and "open after conversion" are saved between sessions.
@@ -25,10 +26,11 @@ The [latest release](https://github.com/TORlN/HDR-to-SDR/releases) is free to do
 
 All free features, plus:
 
-- **Quality Control**: A Quality slider (CRF 17–28 on CPU, CQ 15–30 on GPU) trades file size against quality.
+- **Quality Control**: A Quality Mode dropdown switches between **Constant Quality** (a CRF 17–28 on CPU / CQ 15–30 on GPU slider that lets the encoder auto-vary bitrate per scene) and **Target Bitrate** (you set the average output bitrate directly, up to the source's own bitrate).
 - **Output Container**: Explicitly choose the output container (MP4 / MKV / MOV); it defaults to match the input. Audio and subtitles are stream-copied when the container allows, and transcoded or dropped only when it can't hold them (e.g. TrueHD audio or PGS subtitles into MP4).
 - **Custom Frame Seek**: Jump the preview to any exact timestamp (`HH:MM:SS`, `MM:SS`, or plain seconds) in addition to the five frame buttons.
-- **Batch Conversion Queue**: Add multiple files (via "Add Files" or by dropping several at once) and convert them sequentially. The queue shows a per-file status (pending / converting / done / failed), lets you click an entry to preview it, remove or clear entries, and reports a summary when it finishes.
+- **Batch Conversion Queue**: Add multiple files (via "Add Files" or by dropping several at once) and convert them sequentially. The queue shows a per-file status (pending / converting / done / failed), lets you click an entry to preview it, remove or clear entries, and reports a summary when it finishes. Each item remembers its own settings (quality mode, quality/bitrate value, bit depth) and restores them when you reselect it, and the list marks any item whose settings you've customized away from the shared defaults.
+- **Apply to All**: Copy the currently displayed settings onto every item in the batch queue in one click.
 - **12-Bit Output**: Encode the SDR output at 12-bit color depth (CPU only) for the widest gradient headroom.
 - **Dolby Vision Support (Full Audio)**: The source audio track is preserved (stream-copied or transcoded to fit the container) instead of being downmixed to stereo.
 
@@ -49,7 +51,7 @@ The license token is stored in `%APPDATA%\HDR-to-SDR\license.dat` as an HMAC-sig
 ## Installation
 
 1. Download the latest release from the [releases page](https://github.com/TORlN/HDR-to-SDR/releases).
-2. Run the `HDR_to_SDR_Converter.exe` file.
+2. Run the `HDR_to_SDR_Setup.exe` installer.
 
 ## License
 

@@ -3184,6 +3184,40 @@ class TestApplyQualityMode(unittest.TestCase):
         gui = self._gui()  # no _cached_props set at all
         self.assertEqual(gui._source_bitrate_kbps(), 8000)
 
+    def test_source_bitrate_kbps_nets_out_known_audio_from_an_estimated_total(self):
+        # An MKV lacking a per-stream video bit_rate falls back to
+        # format.bit_rate (video+audio+overhead combined -- see utils.py).
+        # When the audio stream's own bit_rate IS known, subtracting it
+        # gives a tighter video-only figure instead of inflating the Target
+        # Bitrate ceiling/default by the audio track's own share.
+        gui = self._gui()
+        gui._cached_props = {
+            'bit_rate': 20_000_000, 'bit_rate_estimated': True,
+            'audio_bit_rate': 5_000_000,
+        }
+        self.assertEqual(gui._source_bitrate_kbps(), 15000)
+
+    def test_source_bitrate_kbps_keeps_full_estimate_when_audio_bit_rate_unknown(self):
+        # Some codecs (e.g. TrueHD) don't report a per-stream audio bit_rate
+        # either -- with nothing to subtract, the container total is still
+        # the best available figure.
+        gui = self._gui()
+        gui._cached_props = {
+            'bit_rate': 20_000_000, 'bit_rate_estimated': True,
+            'audio_bit_rate': 0,
+        }
+        self.assertEqual(gui._source_bitrate_kbps(), 20000)
+
+    def test_source_bitrate_kbps_unaffected_when_not_estimated(self):
+        # A real per-stream video bit_rate is exact and video-only already;
+        # audio_bit_rate must not be subtracted from it.
+        gui = self._gui()
+        gui._cached_props = {
+            'bit_rate': 20_000_000, 'bit_rate_estimated': False,
+            'audio_bit_rate': 5_000_000,
+        }
+        self.assertEqual(gui._source_bitrate_kbps(), 20000)
+
     def test_bitrate_ceiling_rounds_to_nearest_500(self):
         gui = self._gui(cached_bit_rate=84_376_000)  # 84,376 kbps
         self.assertEqual(gui._bitrate_ceiling_kbps(), 84500)

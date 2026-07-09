@@ -909,6 +909,13 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         guard) when unprobed or reported as 0."""
         props = getattr(self, '_cached_props', None) or {}
         bit_rate = props.get('bit_rate') or 0
+        if props.get('bit_rate_estimated') and props.get('audio_bit_rate'):
+            # An estimated bit_rate is format.bit_rate -- the whole
+            # container's total (video+audio+overhead), not a per-stream
+            # video reading. Net out the known audio share so the Target
+            # Bitrate ceiling/default reflect the video stream alone rather
+            # than inflating both by the audio track's own bitrate.
+            bit_rate = max(bit_rate - props['audio_bit_rate'], 0)
         return (bit_rate // 1000) or self._BITRATE_FALLBACK_KBPS
 
     def _bitrate_ceiling_kbps(self) -> int:

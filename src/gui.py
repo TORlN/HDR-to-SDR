@@ -785,7 +785,6 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             'quality_mode': self._QUALITY_MODE_TO_INTERNAL.get(
                 self.quality_mode_var.get(), 'cq'),
             'quality': self.quality_var.get(),
-            'bitrate': self.bitrate_var.get(),
             'bitrate_fraction': self.bitrate_var.get() / self._bitrate_ceiling_kbps(),
             'tonemapper': self.tonemap_var.get(),
             'gpu_accel': self.gpu_accel_var.get(),

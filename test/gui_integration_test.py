@@ -332,7 +332,7 @@ class TestBatchQueueWidgets(_GuiTestBase):
             self.gui.add_batch_files(['C:/v/a.mp4'])
         settings = self.gui.batch_items[0]['settings']
         self.assertEqual(settings, {
-            'gamma': 1.7, 'quality_mode': 'cq', 'quality': 21, 'bitrate': 6000,
+            'gamma': 1.7, 'quality_mode': 'cq', 'quality': 21,
             'tonemapper': 'Hable', 'gpu_accel': False, 'bit_depth_choice': '10-bit',
             'bitrate_customized': False, 'bitrate_fraction': 0.75,
         })

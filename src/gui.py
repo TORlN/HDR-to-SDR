@@ -689,6 +689,12 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._source_bit_depth = 8
         self._cached_props = None
         self._cached_maxcll = None
+        # A deliberate Target Bitrate customization is only meaningful for
+        # the file it was made on -- without this, a later unrelated file
+        # queued while nothing is loaded would inherit the stale flag (and
+        # get seeded from a bogus fraction computed against the
+        # unknown-source fallback ceiling, since it hasn't been probed yet).
+        self._bitrate_customized_for_current_item = False
         self._update_bit_depth_choice()  # hides the 10/12-bit toggle
         if hasattr(self, 'info_label'):
             self.info_label.config(text='')

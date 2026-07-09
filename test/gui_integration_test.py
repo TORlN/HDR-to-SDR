@@ -344,6 +344,23 @@ class TestBatchQueueWidgets(_GuiTestBase):
         self.assertEqual(self.gui.batch_listbox.size(), 0)
         self.assertEqual(self.gui.batch_items, [])
 
+    def test_clear_queue_then_add_file_does_not_inherit_stale_customized_bitrate(self):
+        """A deliberately customized Target Bitrate on file A must not
+        survive into an unrelated file B added after clearing the queue --
+        otherwise B gets seeded from a bogus fraction (A's leftover kbps
+        divided by the unknown-source 8,000 kbps fallback, since B hasn't
+        been probed yet) and clamped to 100% of its own real bitrate on
+        restore, instead of getting the normal 50% default."""
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])  # auto-loads A
+            self.gui.quality_mode_var.set('Target Bitrate')
+            self.gui._on_quality_change('20000')  # a real user drag: marks customized
+
+            self.gui.clear_batch_queue()
+            self.gui.add_batch_files(['C:/v/b.mp4'])
+
+        self.assertFalse(self.gui.batch_items[0]['settings']['bitrate_customized'])
+
     @patch('src.gui.filedialog.askopenfilenames')
     def test_browse_batch_files_adds_selection(self, mock_dialog):
         mock_dialog.return_value = ('C:/v/a.mkv', 'C:/v/b.mkv')

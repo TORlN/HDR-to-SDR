@@ -334,7 +334,7 @@ class TestBatchQueueWidgets(_GuiTestBase):
         self.assertEqual(settings, {
             'gamma': 1.7, 'quality_mode': 'cq', 'quality': 21, 'bitrate': 6000,
             'tonemapper': 'Hable', 'gpu_accel': False, 'bit_depth_choice': '10-bit',
-            'bitrate_customized': False,
+            'bitrate_customized': False, 'bitrate_fraction': 0.75,
         })
 
     def test_clear_batch_empties_listbox(self):

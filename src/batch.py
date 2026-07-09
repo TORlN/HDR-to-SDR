@@ -153,16 +153,23 @@ class _BatchMixin:
         self._load_input_file(item['input'])  # type: ignore[attr-defined]
 
     def _refresh_batch_list(self) -> None:
-        """Redraw the queue listbox from batch_items with per-file status icons."""
+        """Redraw the queue listbox from batch_items with per-file status
+        icons and a "*" marker on any item whose stored settings differ from
+        what the control panel currently shows -- i.e. "if the batch started
+        right now, this file would convert differently than what's on
+        screen." Never marks the currently-loaded item, since its settings
+        equal the live panel by construction (see _restore_settings_dict /
+        _write_back_current_settings)."""
         if not hasattr(self, 'batch_listbox'):
             return
         self.batch_listbox.delete(0, tk.END)
+        current_live = (self._current_settings_dict()  # type: ignore[attr-defined]
+                        if hasattr(self, 'gamma_var') else None)
         for item in self.batch_items:
             icon = self._STATUS_ICONS.get(item['status'], '•')
-            # Surface the per-item 12-bit choice -- it's otherwise invisible
-            # once another queue entry is being previewed.
-            marker = ('  (12-bit)'
-                      if item.get('settings', {}).get('bit_depth_choice') == '12-bit' else '')
+            marker = ''
+            if current_live is not None and item.get('settings') not in (None, current_live):
+                marker = '  *'
             self.batch_listbox.insert(
                 tk.END, f"{icon}  {os.path.basename(item['input'])}{marker}")
 

@@ -1252,13 +1252,14 @@ class TestBitDepthToggle(unittest.TestCase):
         gui._update_bit_depth_choice()
         self.assertEqual(gui.bit_depth_var.get(), '12-bit')
 
-    def test_batch_list_marks_twelve_bit_items(self):
+    def test_batch_list_marks_items_whose_settings_differ_from_live_panel(self):
         gui = self._make_gui(licensed=True)
         gui.batch_items = [self._queued('C:/a.mkv', bit_depth_choice='12-bit'),
                            self._queued('C:/b.mkv')]
+        gui.batch_items[1]['settings'] = gui._current_settings_dict()
         gui._refresh_batch_list()
-        self.assertIn('(12-bit)', gui.batch_listbox.get(0))
-        self.assertNotIn('(12-bit)', gui.batch_listbox.get(1))
+        self.assertIn('*', gui.batch_listbox.get(0))
+        self.assertNotIn('*', gui.batch_listbox.get(1))
 
     def _run_one_item_batch(self, gui):
         """Drive start_batch with probing/preview mocked; return start_conversion kwargs."""

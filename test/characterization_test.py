@@ -1991,6 +1991,24 @@ class TestGuiErrorAndResizePaths(unittest.TestCase):
         # minsize stays small so the user can always drag below the previews
         gui.root.minsize.assert_called_with(*DEFAULT_MIN_SIZE)
 
+    def test_adjust_window_size_repins_geometry_after_natural_fit(self):
+        # Regression: geometry("") hands the toplevel back to Tk's automatic
+        # ("natural") sizing, and it stays that way forever after -- so every
+        # later preview-loading spinner (which grid_removes the big preview
+        # images) shrinks the real window, and it slowly grows back once the
+        # images return. Re-pinning an explicit WxH right after the one-time
+        # auto-fit puts the window back in user-specified-size mode so later
+        # content changes (the loading spinner) don't move it.
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui._window_auto_fitted = False
+        gui.root.winfo_screenwidth.return_value = 1920
+        gui.root.winfo_screenheight.return_value = 1080
+        gui.root.winfo_width.return_value = 900
+        gui.root.winfo_height.return_value = 500
+        gui.adjust_window_size()
+        gui.root.geometry.assert_called_with("900x500")
+
     def test_adjust_window_size_only_auto_fits_once(self):
         gui = _bare_gui()
         gui.root = MagicMock()

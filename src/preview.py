@@ -203,6 +203,14 @@ class _HDRPreviewMixin:
             self.resize_images(screen_width - 100, screen_height - 100)
             self.root.geometry("")
             self.root.update_idletasks()
+        # geometry("") hands the toplevel to Tk's automatic sizing, which
+        # stays in effect until geometry() is called again -- so without
+        # this, every later preview-loading spinner (which grid_removes the
+        # big preview images) would shrink the real window, then slowly grow
+        # it back once the images return. Re-pin the settled natural size
+        # explicitly so the window holds still through future content
+        # changes, the same way it already does once maximized.
+        self.root.geometry(f"{self.root.winfo_width()}x{self.root.winfo_height()}")
         self._window_auto_fitted = True
 
     # ── Preview sizing ─────────────────────────────────────────────────────────

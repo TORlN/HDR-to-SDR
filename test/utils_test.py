@@ -65,6 +65,7 @@ class TestGetVideoProperties(unittest.TestCase):
             "bit_depth": 8,
             "is_dolby_vision": False,
             "dovi_profile": None,
+            "bit_rate_estimated": False,
         }
 
         properties = get_video_properties(input_file)
@@ -129,6 +130,7 @@ class TestGetVideoProperties(unittest.TestCase):
             "bit_depth": 8,
             "is_dolby_vision": False,
             "dovi_profile": None,
+            "bit_rate_estimated": False,
         }
         self.assertEqual(properties, expected_properties)
 
@@ -817,6 +819,43 @@ class TestGetVideoPropertiesRobustness(unittest.TestCase):
         self.assertIsNotNone(props, "should return valid props, not None")
         self.assertEqual(props['bit_rate'], 0)
         self.assertEqual(props['audio_bit_rate'], 0)
+        self.assertFalse(props['bit_rate_estimated'])
+
+    @patch('src.utils.subprocess.Popen')
+    def test_estimates_bitrate_from_container_when_stream_bit_rate_missing(self, mock_popen):
+        """Matroska rarely reports a per-stream bit_rate (confirmed via ffprobe
+        on real MKV fixtures: the video stream has no bit_rate key at all).
+        When that happens, fall back to the container's overall bit_rate
+        (format.bit_rate = file_size*8/duration, the same figure a manual
+        size/duration calculation would produce) rather than showing nothing,
+        and flag it as estimated since it includes audio/overhead too."""
+        proc = mock_popen.return_value
+        proc.returncode = 0
+        proc.communicate.return_value = (json.dumps({
+            "streams": [{"codec_type": "video", "width": 1920, "height": 1080,
+                         "codec_name": "vp9", "avg_frame_rate": "24/1"},
+                        {"codec_type": "audio", "codec_name": "aac"}],
+            "format": {"duration": "126.592000", "bit_rate": "28424731"},
+        }).encode(), b'')
+        props = get_video_properties('example.mkv')
+        self.assertEqual(props['bit_rate'], 28424731)
+        self.assertTrue(props['bit_rate_estimated'])
+
+    @patch('src.utils.subprocess.Popen')
+    def test_prefers_real_stream_bit_rate_over_container_estimate(self, mock_popen):
+        """When ffprobe does report a per-stream video bit_rate, use it as-is
+        (it's video-only and exact) instead of the coarser container total."""
+        proc = mock_popen.return_value
+        proc.returncode = 0
+        proc.communicate.return_value = (json.dumps({
+            "streams": [{"codec_type": "video", "width": 1920, "height": 1080,
+                         "codec_name": "h264", "avg_frame_rate": "24/1",
+                         "bit_rate": "5000000"}],
+            "format": {"duration": "120.0", "bit_rate": "5200000"},
+        }).encode(), b'')
+        props = get_video_properties('regular.mp4')
+        self.assertEqual(props['bit_rate'], 5000000)
+        self.assertFalse(props['bit_rate_estimated'])
 
 
 class TestVideoPropertiesCache(unittest.TestCase):

@@ -627,6 +627,21 @@ class TestBuildInfoTextBitrate(TestCase):
         text = HDRConverterGUI._build_info_text(self._props(), maxcll=1000.0)
         self.assertNotIn('Bitrate', text)
 
+    def test_estimated_bitrate_shows_tilde_prefix(self):
+        """Bitrate derived from format.bit_rate (Matroska with no per-stream
+        reading) is video+audio+overhead combined, not exact -- mark it so
+        it reads differently from a real per-stream figure."""
+        props = self._props(bit_rate=28_424_731)
+        props['bit_rate_estimated'] = True
+        text = HDRConverterGUI._build_info_text(props, maxcll=1000.0)
+        self.assertIn('Bitrate: ~28,424 kbps', text)
+
+    def test_real_bitrate_has_no_tilde_prefix(self):
+        text = HDRConverterGUI._build_info_text(
+            self._props(bit_rate=84_376_000), maxcll=1000.0)
+        self.assertIn('Bitrate: 84,376 kbps', text)
+        self.assertNotIn('~', text)
+
 
 class TestBuildInfoTextOutputBitDepth(TestCase):
     """The info strip shows "{source}-bit -> {output}-bit" whenever the actual

@@ -756,10 +756,25 @@ def get_video_properties(input_file):
 
         is_dolby_vision, dovi_profile = _parse_dovi(video_stream)
 
+        # Matroska rarely declares a per-stream bit_rate the way MP4's stsd/esds
+        # boxes do -- ffprobe then omits the video stream's bit_rate entirely.
+        # Fall back to the container's overall bit_rate (format.bit_rate, which
+        # ffprobe already computes as file_size*8/duration) rather than showing
+        # nothing. It includes audio/subtitle overhead, so it's an estimate, not
+        # the exact video-only figure a real per-stream reading would give.
+        bit_rate = _int_or_zero(video_stream.get('bit_rate'))
+        bit_rate_estimated = False
+        if not bit_rate:
+            container_bit_rate = _int_or_zero(data['format'].get('bit_rate'))
+            if container_bit_rate:
+                bit_rate = container_bit_rate
+                bit_rate_estimated = True
+
         props = {
             "width": int(video_stream.get('width', 0)),
             "height": int(video_stream.get('height', 0)),
-            "bit_rate": _int_or_zero(video_stream.get('bit_rate')),
+            "bit_rate": bit_rate,
+            "bit_rate_estimated": bit_rate_estimated,
             "codec_name": video_stream.get('codec_name', ''),
             "frame_rate": float(frame_rate),
             "duration": duration,

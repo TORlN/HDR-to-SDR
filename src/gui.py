@@ -872,7 +872,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         if props and props.get('bit_rate'):
             source_kbps = props['bit_rate'] // 1000
             low, high = round(source_kbps * 0.5), round(source_kbps * 0.7)
-            text += f"\n  This file: source is {source_kbps:,} kbps -> try {low:,}-{high:,} kbps."
+            tilde = '~' if props.get('bit_rate_estimated') else ''
+            text += (f"\n  This file: source is {tilde}{source_kbps:,} kbps "
+                     f"-> try {low:,}-{high:,} kbps.")
         return text
 
     def _source_bitrate_kbps(self) -> int:
@@ -1074,7 +1076,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         parts = [f"{w}×{h}", fps_str, codec, *format_tags,
                  f"{hdr_tag}{maxcll_str}", bit_depth_str]
         if bit_rate:
-            parts.append(f"Bitrate: {bit_rate // 1000:,} kbps")
+            tilde = '~' if properties.get('bit_rate_estimated') else ''
+            parts.append(f"Bitrate: {tilde}{bit_rate // 1000:,} kbps")
         parts.append(f"Audio: {audio}")
         return " | ".join(parts)
 

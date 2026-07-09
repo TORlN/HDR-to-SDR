@@ -3321,5 +3321,27 @@ class TestApplyQualityMode(unittest.TestCase):
         gui.bitrate_var.set.assert_any_call(20000)  # 50% of the new file's 40,000 kbps
 
 
+class TestQualityModeTooltipEstimatedBitrate(unittest.TestCase):
+    """The tooltip's 'This file: source is N kbps' line must flag an estimated
+    (container-derived) bitrate the same way the info strip does, since it
+    isn't the exact video-only figure a real per-stream reading would give."""
+
+    def _gui(self, bit_rate, estimated):
+        gui = _bare_gui()
+        gui._cached_props = {'bit_rate': bit_rate, 'bit_rate_estimated': estimated}
+        return gui
+
+    def test_estimated_bitrate_shows_tilde_prefix(self):
+        gui = self._gui(bit_rate=28_424_731, estimated=True)
+        text = gui._quality_mode_tooltip_text()
+        self.assertIn('source is ~28,424 kbps', text)
+
+    def test_real_bitrate_has_no_tilde_prefix(self):
+        gui = self._gui(bit_rate=84_376_000, estimated=False)
+        text = gui._quality_mode_tooltip_text()
+        self.assertIn('source is 84,376 kbps', text)
+        self.assertNotIn('~', text)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -658,6 +658,29 @@ class TestBatchQueueWidgets(_GuiTestBase):
         self.assertNotIn('*', self.gui.batch_listbox.get(1))
         self.assertIn('*', self.gui.batch_listbox.get(0))
 
+    def test_marker_ignores_inactive_mode_leftover_field(self):
+        """Two items in Target Bitrate mode with the identical operative
+        bitrate must not be marked '*' just because their leftover, INACTIVE
+        Constant-Quality 'quality' field differs -- both would produce
+        byte-identical ffmpeg commands."""
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])  # auto-loads A
+            self.gui.quality_mode_var.set('Target Bitrate')
+            self.gui._on_quality_change('5000')  # marks customized, writes back onto A
+
+            self.gui.add_batch_files(['C:/v/b.mp4'])  # queued only, not auto-loaded
+
+        # Give B the SAME Target Bitrate settings as the live panel, but a
+        # different inactive CQ 'quality' left over from before it switched
+        # modes.
+        current_live = self.gui._current_settings_dict()
+        self.gui.batch_items[1]['settings'] = dict(current_live)
+        self.gui.batch_items[1]['settings']['quality'] = current_live['quality'] + 5
+
+        self.gui._refresh_batch_list()
+
+        self.assertNotIn('*', self.gui.batch_listbox.get(1))
+
     def test_refresh_batch_list_tolerates_a_destroyed_listbox(self):
         """A debounced refresh (see _schedule_batch_list_refresh) can still
         be pending when the window is torn down -- it must not raise once

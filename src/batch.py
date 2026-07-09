@@ -152,6 +152,31 @@ class _BatchMixin:
             return
         self._load_input_file(item['input'])  # type: ignore[attr-defined]
 
+    @staticmethod
+    def _settings_relevant_for_comparison(settings: dict) -> dict:  # type: ignore[type-arg]
+        """Reduce a stored settings dict to the fields that actually affect
+        the resulting ffmpeg command for its own quality_mode. quality_mode's
+        two field groups (quality vs. bitrate/bitrate_fraction/
+        bitrate_customized) are mutually exclusive at conversion time, so an
+        inactive mode's leftover value (e.g. a stale CQ 'quality' on an item
+        that's actually in Target Bitrate mode) must not affect equality --
+        two items that would produce byte-identical ffmpeg commands must
+        compare equal even if that leftover field differs."""
+        mode = settings.get('quality_mode', 'cq')
+        relevant = {
+            'gamma': settings.get('gamma'),
+            'quality_mode': mode,
+            'tonemapper': settings.get('tonemapper'),
+            'gpu_accel': settings.get('gpu_accel'),
+            'bit_depth_choice': settings.get('bit_depth_choice'),
+        }
+        if mode == 'bitrate':
+            relevant['bitrate_customized'] = settings.get('bitrate_customized', False)
+            relevant['bitrate_fraction'] = settings.get('bitrate_fraction')
+        else:
+            relevant['quality'] = settings.get('quality')
+        return relevant
+
     def _refresh_batch_list(self) -> None:
         """Redraw the queue listbox from batch_items with per-file status
         icons and a "*" marker on any item whose stored settings differ from
@@ -168,10 +193,16 @@ class _BatchMixin:
         self.batch_listbox.delete(0, tk.END)
         current_live = (self._current_settings_dict()  # type: ignore[attr-defined]
                         if hasattr(self, 'gamma_var') else None)
+        current_live_relevant = (
+            self._settings_relevant_for_comparison(current_live)
+            if current_live is not None else None)
         for index, item in enumerate(self.batch_items):
             icon = self._STATUS_ICONS.get(item['status'], '•')
             marker = ''
-            if current_live is not None and item.get('settings') not in (None, current_live):
+            stored = item.get('settings')
+            if current_live_relevant is not None and (
+                    stored is None
+                    or self._settings_relevant_for_comparison(stored) != current_live_relevant):
                 marker = '  *'
             self.batch_listbox.insert(
                 tk.END, f"{icon}  {os.path.basename(item['input'])}{marker}")

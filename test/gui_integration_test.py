@@ -419,6 +419,38 @@ class TestBatchQueueWidgets(_GuiTestBase):
         self.assertAlmostEqual(self.gui.gamma_var.get(), 2.4)
         self.assertEqual(self.gui.tonemap_var.get(), 'Hable')
 
+    def test_selecting_queue_item_restores_its_own_quality_in_constant_quality_mode(self):
+        """Two queued items both in Constant Quality mode with different
+        quality values: selecting B must show B's OWN quality, not a value
+        clobbered by A's still-physically-in-place slider widget position
+        via _apply_quality_range's knob-preserving remap (see
+        .superpowers/sdd/task-10-report.md, "Third interaction effect
+        found")."""
+        with patch.object(self.gui, 'update_frame_preview'):
+            # Item A auto-loads on add; drag its quality slider for real
+            # (moves both the widget and quality_var, like an actual user
+            # drag) and pin the mode explicitly to Constant Quality.
+            self.gui.add_batch_files(['C:/v/a.mp4'])
+            self.gui.quality_mode_var.set('Constant Quality')
+            self.gui.quality_slider.set(18)
+            self.gui.batch_items[0]['settings'] = self.gui._current_settings_dict()
+
+            # Item B is queued but NOT auto-loaded (A is already loaded), so
+            # its own quality is stamped directly onto its stored settings
+            # (as if set on an earlier visit) rather than via the live
+            # slider -- the widget itself is left showing A's position.
+            self.gui.add_batch_files(['C:/v/b.mp4'])
+            self.gui.batch_items[1]['settings']['quality_mode'] = 'cq'
+            self.gui.batch_items[1]['settings']['quality'] = 26
+
+            # Selecting B must restore B's OWN quality (26), not a value
+            # derived from A's stale slider position (18).
+            self.gui.batch_listbox.selection_clear(0, tk.END)
+            self.gui.batch_listbox.selection_set(1)
+            self.gui.on_batch_item_select()
+
+        self.assertEqual(self.gui.quality_var.get(), 26)
+
     def test_gamma_change_writes_back_to_selected_queue_item(self):
         with patch.object(self.gui, 'update_frame_preview'):
             self.gui.add_batch_files(['C:/v/a.mp4'])

@@ -935,7 +935,17 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         worst, best = self._CQ_RANGE if self.gpu_accel_var.get() else self._CRF_RANGE
         old_from = float(self.quality_slider.cget('from'))
         old_to = float(self.quality_slider.cget('to'))
-        current = float(self.quality_slider.get())
+        if getattr(self, '_restoring_batch_item_settings', False):
+            # Mid-restore (see _load_input_file): _restore_settings_dict just
+            # set quality_var directly without moving the slider widget, so
+            # the widget's position is stale -- trust the var instead. Outside
+            # a restore (e.g. a GPU toggle), the widget and quality_var are
+            # always in sync, so reading the widget's exact float position is
+            # both correct and preserves knob-position precision across
+            # repeated toggles (see test_knob_position_held_across_gpu_toggle).
+            current = float(self.quality_var.get())
+        else:
+            current = float(self.quality_slider.get())
         if old_to != old_from:
             fraction = min(max((current - old_from) / (old_to - old_from), 0.0), 1.0)
         else:

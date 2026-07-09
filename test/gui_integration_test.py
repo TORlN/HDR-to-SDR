@@ -509,6 +509,23 @@ class TestBatchQueueWidgets(_GuiTestBase):
         self.gui.batch_items[0]['settings']['gamma'] = 99.0
         self.assertNotEqual(self.gui.batch_items[1]['settings']['gamma'], 99.0)
 
+    def test_batch_settings_info_button_exists_and_shows_tooltip(self):
+        self.assertEqual(self.gui.batch_settings_info_button.cget('text'), 'ⓘ')
+        event = types.SimpleNamespace(widget=MagicMock())
+        event.widget.winfo_rootx.return_value = 100
+        event.widget.winfo_rooty.return_value = 100
+
+        self.gui.show_tooltip(event, self.gui._batch_settings_tooltip_text())
+        labels = [w for w in self.gui.tooltip.winfo_children() if isinstance(w, ttk.Label)]
+        self.assertTrue(labels)
+        self.gui.hide_tooltip()
+
+    def test_batch_settings_tooltip_text_covers_the_three_behaviors(self):
+        text = self.gui._batch_settings_tooltip_text()
+        self.assertIn('own settings', text.lower())
+        self.assertIn('*', text)
+        self.assertIn('apply to all', text.lower())
+
 
 class TestStateAndLayout(_GuiTestBase):
 

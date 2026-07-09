@@ -555,6 +555,12 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.apply_settings_button = ttk.Button(
             batch_buttons, text="Apply to All", command=self.apply_settings_to_all_batch_items)
         self.apply_settings_button.grid(row=0, column=3, padx=(0, 5))
+        self.batch_settings_info_button = ttk.Label(
+            batch_buttons, text="ⓘ", cursor="hand2")
+        self.batch_settings_info_button.grid(row=0, column=4, padx=(5, 0))
+        self.batch_settings_info_button.bind(
+            '<Enter>', lambda e: self.show_tooltip(e, self._batch_settings_tooltip_text()))
+        self.batch_settings_info_button.bind('<Leave>', self.hide_tooltip)
 
         ttk.Label(self.batch_frame, foreground='gray',
                   text="Add or drop multiple files to convert them in sequence.").grid(
@@ -578,6 +584,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.custom_time_entry, self.custom_seek_button,
             self.add_files_button, self.clear_batch_button, self.remove_batch_button,
             self.bit_depth_10_radio, self.bit_depth_12_radio, self.apply_settings_button,
+            self.batch_settings_info_button,
         ]
 
         self._apply_quality_mode()
@@ -818,6 +825,22 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.quality_display_var.set(f"{self.bitrate_var.get():,} kbps")
         else:
             self.quality_display_var.set(str(self.quality_var.get()))
+
+    def _batch_settings_tooltip_text(self) -> str:
+        """Explains the per-file batch settings model -- see design doc
+        docs/superpowers/specs/2026-07-08-batch-per-file-settings-design.md
+        section 6 for why this exists."""
+        return (
+            "Each queued file remembers its own settings (gamma, quality, "
+            "tonemapper, GPU accel, bit depth).\n\n"
+            "Selecting a queued file loads its own settings into the controls "
+            "above; changing a control while a file is selected edits that "
+            "file's settings only.\n\n"
+            "A \"*\" next to a queued file means its settings differ from what "
+            "the controls currently show.\n\n"
+            "\"Apply to All\" copies the currently-displayed settings onto "
+            "every other queued file."
+        )
 
     def _quality_mode_tooltip_text(self) -> str:
         """Built at hover-time (not a fixed string) so the 'This file' line

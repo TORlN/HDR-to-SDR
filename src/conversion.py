@@ -533,6 +533,12 @@ class ConversionManager:
                         progress_var, open_after_conversion, gamma, tonemapper):
         """Restart the conversion on the CPU after a GPU failure. Runs on the main thread."""
         gui_instance.gpu_accel_var.set(False)
+        # A raw Variable.set() doesn't fire the checkbox's command= callback
+        # (check_gpu_acceleration), which is normally what persists a GPU
+        # toggle onto the current batch item's stored settings -- without
+        # this, reselecting the item later would restore the stale,
+        # pre-failure gpu_accel=True.
+        gui_instance._write_back_current_settings()
         messagebox.showwarning("GPU Acceleration Failed",
                                "GPU acceleration failed. Switching to CPU encoding.")
         self.start_conversion(

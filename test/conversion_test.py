@@ -1705,6 +1705,21 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         self.assertEqual(mock_start.call_args.kwargs.get('quality_mode'), 'bitrate')
         self.assertEqual(mock_start.call_args.kwargs.get('quality'), 30000)
 
+    def test_cpu_retry_writes_back_gpu_accel_off_to_current_batch_item(self):
+        """gpu_accel_var.set(False) alone doesn't persist -- it's a raw
+        Variable.set(), which doesn't fire the checkbutton's command= callback
+        that normally triggers a settings write-back. Without an explicit
+        write-back here, reselecting the batch item this retry ran for would
+        restore the stale (pre-failure) gpu_accel=True and silently re-enable
+        GPU on a file that just proved it fails on GPU."""
+        manager = ConversionManager()
+        mock_gui = MagicMock()
+        with patch.object(manager, 'start_conversion'), \
+             patch('src.conversion.messagebox.showwarning'):
+            manager._retry_with_cpu(mock_gui, [], MagicMock(), MagicMock(),
+                                    False, 1.0, 'reinhard')
+        mock_gui._write_back_current_settings.assert_called_once()
+
 
 class TestBitrateModeCommandConstruction(unittest.TestCase):
     """quality_mode='bitrate' switches every encoder from its constant-quality

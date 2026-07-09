@@ -2784,13 +2784,16 @@ class TestHandleFileDropGuards(unittest.TestCase):
 class TestApplyLicenseStateUnlicensed(unittest.TestCase):
     """_apply_license_state(False) disables Pro widgets and forces MP4."""
 
-    def _gui(self, output_path=''):
+    def _gui(self, output_path='', quality_mode='Constant Quality'):
         gui = _bare_gui()
         gui.gpu_accel_var = MagicMock()
         gui.gpu_accel_checkbutton = MagicMock()
         gui.quality_slider = MagicMock()
         gui.quality_mode_combobox = MagicMock()
+        gui.quality_mode_var = MagicMock()
+        gui.quality_mode_var.get.return_value = quality_mode
         gui._apply_quality_range = MagicMock()
+        gui._apply_quality_mode = MagicMock()
         gui.format_var = MagicMock()
         gui.format_combobox = MagicMock()
         gui.output_path_var = MagicMock()
@@ -2825,6 +2828,23 @@ class TestApplyLicenseStateUnlicensed(unittest.TestCase):
         gui = self._gui()
         gui._apply_license_state(False)
         gui._pro_banner.grid.assert_called_once()
+
+    def test_resets_quality_mode_to_constant_quality_when_bitrate_mode_active(self):
+        # A saved 'Target Bitrate' choice must not survive a license lapse --
+        # the mode combobox is only disabled, not reset, so without this the
+        # backing var (and thus convert_video's quality_mode) stays on the
+        # Pro-only mode for an unlicensed session (see conversion.py's
+        # quality_mode plumbing, which has no license gate of its own).
+        gui = self._gui(quality_mode='Target Bitrate')
+        gui._apply_license_state(False)
+        gui.quality_mode_var.set.assert_called_with('Constant Quality')
+        gui._apply_quality_mode.assert_called_once()
+
+    def test_does_not_touch_quality_mode_when_already_constant_quality(self):
+        gui = self._gui(quality_mode='Constant Quality')
+        gui._apply_license_state(False)
+        gui.quality_mode_var.set.assert_not_called()
+        gui._apply_quality_mode.assert_not_called()
 
 
 class TestArrangeWidgets(unittest.TestCase):

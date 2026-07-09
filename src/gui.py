@@ -257,6 +257,13 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             current = self.output_path_var.get()
             if current:
                 self.output_path_var.set(self._output_path_with_format(current, 'MP4'))
+            # The mode combobox only gets disabled below, not reset -- a
+            # Target Bitrate choice saved while licensed would otherwise
+            # survive into an unlicensed session (convert_video has no
+            # license gate of its own on quality_mode).
+            if self.quality_mode_var.get() != 'Constant Quality':
+                self.quality_mode_var.set('Constant Quality')
+                self._apply_quality_mode()
 
         self.add_files_button.config(state=pro)
         self.remove_batch_button.config(state=pro)

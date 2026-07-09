@@ -162,16 +162,20 @@ class _BatchMixin:
         _write_back_current_settings)."""
         if not hasattr(self, 'batch_listbox'):
             return
+        selected_input = self._batch_item_for_current_input()
         self.batch_listbox.delete(0, tk.END)
         current_live = (self._current_settings_dict()  # type: ignore[attr-defined]
                         if hasattr(self, 'gamma_var') else None)
-        for item in self.batch_items:
+        for index, item in enumerate(self.batch_items):
             icon = self._STATUS_ICONS.get(item['status'], '•')
             marker = ''
             if current_live is not None and item.get('settings') not in (None, current_live):
                 marker = '  *'
             self.batch_listbox.insert(
                 tk.END, f"{icon}  {os.path.basename(item['input'])}{marker}")
+            if item is selected_input:
+                self.batch_listbox.selection_set(index)
+                self.batch_listbox.activate(index)
 
     # ── Batch execution ────────────────────────────────────────────────────────
 

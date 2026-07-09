@@ -419,6 +419,23 @@ class TestBatchQueueWidgets(_GuiTestBase):
         self.assertAlmostEqual(self.gui.gamma_var.get(), 2.4)
         self.assertEqual(self.gui.tonemap_var.get(), 'Hable')
 
+    def test_selecting_queue_item_keeps_it_highlighted(self):
+        """Regression: _load_input_file ends with _write_back_current_settings,
+        which calls _refresh_batch_list -- and that rebuilds the listbox with
+        delete(0, END) + reinsert, silently dropping whatever row Tk had just
+        selected on click. Only the already-loaded item (which short-circuits
+        before ever reaching _load_input_file) kept its highlight; every other
+        queue item appeared to select then immediately lose its highlight."""
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])  # auto-loads A
+            self.gui.add_batch_files(['C:/v/b.mp4'])  # queued, not auto-loaded
+
+            self.gui.batch_listbox.selection_clear(0, tk.END)
+            self.gui.batch_listbox.selection_set(1)
+            self.gui.on_batch_item_select()  # loads B
+
+        self.assertEqual(self.gui.batch_listbox.curselection(), (1,))
+
     def test_selecting_queue_item_restores_its_own_quality_in_constant_quality_mode(self):
         """Two queued items both in Constant Quality mode with different
         quality values: selecting B must show B's OWN quality, not a value

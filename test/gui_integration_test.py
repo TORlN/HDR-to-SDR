@@ -638,6 +638,106 @@ class TestBatchQueueWidgets(_GuiTestBase):
 
         self.assertEqual(self.gui.bitrate_var.get(), 3500)  # B's customization survives
 
+    def test_apply_to_all_propagates_bitrate_as_fraction_of_each_files_own_source(self):
+        """Apply to All must scale a customized Target Bitrate to each file's
+        own source, not copy the literal kbps chosen on the file it was set
+        on. Covers both directions: a file with a lower source than the one
+        Apply to All was clicked from, and one with a higher source."""
+        props_by_path = {
+            'C:/v/a.mp4': self._props_for(8_000_000),   # 8,000 kbps source
+            'C:/v/b.mp4': self._props_for(4_000_000),   # 4,000 kbps source (lower)
+            'C:/v/c.mp4': self._props_for(20_000_000),  # 20,000 kbps source (higher)
+        }
+
+        def fake_probe(path):
+            return props_by_path.get(path)
+
+        with patch('src.gui.get_video_properties', side_effect=fake_probe), \
+             patch('src.gui.get_maxcll', return_value=None), \
+             patch.object(self.gui, 'update_frame_preview'), \
+             patch.object(self.gui, 'highlight_frame_button'):
+            self.gui.add_batch_files(['C:/v/a.mp4', 'C:/v/b.mp4', 'C:/v/c.mp4'])  # auto-loads A
+
+            self.gui.quality_mode_var.set('Target Bitrate')
+            self.gui._on_quality_mode_selected()
+            self.gui._on_quality_change('8000')  # A's own ceiling: 100% of its source
+            self.assertEqual(self.gui.bitrate_var.get(), 8000)
+
+            self.gui.apply_settings_to_all_batch_items()
+
+            # B: lower source (4,000 kbps) -> its OWN 100%, not A's literal 8,000.
+            self.gui.batch_listbox.selection_clear(0, tk.END)
+            self.gui.batch_listbox.selection_set(1)
+            self.gui.on_batch_item_select()
+            self.assertEqual(self.gui.bitrate_var.get(), 4000)
+
+            # C: higher source (20,000 kbps) -> its OWN 100%, not A's literal 8,000.
+            self.gui.batch_listbox.selection_clear(0, tk.END)
+            self.gui.batch_listbox.selection_set(2)
+            self.gui.on_batch_item_select()
+            self.assertEqual(self.gui.bitrate_var.get(), 20000)
+
+    def test_apply_to_all_propagates_a_partial_customized_bitrate_fraction(self):
+        """A non-maximum customized bitrate (e.g. ~65% of source) must also
+        scale proportionally via Apply to All, not just the 100% case."""
+        props_by_path = {
+            'C:/v/a.mp4': self._props_for(10_000_000),  # 10,000 kbps source
+            'C:/v/b.mp4': self._props_for(20_000_000),  # 20,000 kbps source
+        }
+
+        def fake_probe(path):
+            return props_by_path.get(path)
+
+        with patch('src.gui.get_video_properties', side_effect=fake_probe), \
+             patch('src.gui.get_maxcll', return_value=None), \
+             patch.object(self.gui, 'update_frame_preview'), \
+             patch.object(self.gui, 'highlight_frame_button'):
+            self.gui.add_batch_files(['C:/v/a.mp4', 'C:/v/b.mp4'])  # auto-loads A
+
+            self.gui.quality_mode_var.set('Target Bitrate')
+            self.gui._on_quality_mode_selected()
+            self.gui._on_quality_change('6500')  # 65% of A's 10,000 kbps source
+            self.assertEqual(self.gui.bitrate_var.get(), 6500)
+
+            self.gui.apply_settings_to_all_batch_items()
+
+            self.gui.batch_listbox.selection_clear(0, tk.END)
+            self.gui.batch_listbox.selection_set(1)
+            self.gui.on_batch_item_select()
+
+            # 65% of B's own 20,000 kbps source, rounded to the nearest 500 kbps
+            # step -- not A's literal 6,500.
+            self.assertEqual(self.gui.bitrate_var.get(), 13000)
+
+    def test_apply_to_all_leaves_uncustomized_items_free_to_reseed_their_own_bitrate(self):
+        """If the currently displayed file's Target Bitrate is still on its
+        auto-reseeded value (never deliberately customized), Apply to All
+        must not stamp a stale bitrate/fraction onto other items -- each
+        item stays free to reseed to its own 50% when it's next loaded."""
+        props_by_path = {
+            'C:/v/a.mp4': self._props_for(4_000_000),   # 4,000 kbps -> 2,000 kbps seed
+            'C:/v/b.mp4': self._props_for(10_000_000),  # 10,000 kbps -> 5,000 kbps seed
+        }
+
+        def fake_probe(path):
+            return props_by_path.get(path)
+
+        with patch('src.gui.get_video_properties', side_effect=fake_probe), \
+             patch('src.gui.get_maxcll', return_value=None), \
+             patch.object(self.gui, 'update_frame_preview'), \
+             patch.object(self.gui, 'highlight_frame_button'):
+            self.gui.add_batch_files(['C:/v/a.mp4', 'C:/v/b.mp4'])  # auto-loads A
+            self.gui.quality_mode_var.set('Target Bitrate')
+            self.gui._on_quality_mode_selected()  # A reseeds to 2,000, never customized
+
+            self.gui.apply_settings_to_all_batch_items()
+
+            self.gui.batch_listbox.selection_clear(0, tk.END)
+            self.gui.batch_listbox.selection_set(1)
+            self.gui.on_batch_item_select()
+
+            self.assertEqual(self.gui.bitrate_var.get(), 5000)  # B's own 50%, not A's 2,000
+
     def test_batch_settings_info_button_exists_and_shows_tooltip(self):
         self.assertEqual(self.gui.batch_settings_info_button.cget('text'), 'ⓘ')
         event = types.SimpleNamespace(widget=MagicMock())

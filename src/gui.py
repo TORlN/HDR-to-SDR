@@ -789,7 +789,11 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.quality_var.set(settings.get('quality', self.quality_var.get()))
         self._bitrate_customized_for_current_item = settings.get('bitrate_customized', False)
         if self._bitrate_customized_for_current_item:
-            self.bitrate_var.set(settings.get('bitrate', self.bitrate_var.get()))
+            ceiling = self._bitrate_ceiling_kbps()
+            fraction = settings.get('bitrate_fraction', 0.5)
+            value = round(fraction * ceiling / 500) * 500
+            value = min(max(value, self._BITRATE_FLOOR_KBPS), ceiling)
+            self.bitrate_var.set(value)
             self._bitrate_needs_reseed = False
         if hasattr(self, 'quality_slider'):
             self._apply_quality_mode()

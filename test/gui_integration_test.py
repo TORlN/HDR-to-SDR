@@ -318,7 +318,14 @@ class TestBatchQueueWidgets(_GuiTestBase):
         self.gui.gpu_accel_var.set(False)
         self.gui.tonemap_var.set('Hable')
         self.gui.quality_mode_var.set('Constant Quality')
-        self.gui.quality_var.set(21)
+        # Drive the slider itself (not just the backing IntVar): quality_var
+        # is only ever kept in sync with what the widget actually displays
+        # via the slider's own -command callback, exactly like a real drag --
+        # setting quality_var directly here would leave the widget still
+        # showing its old position, which _apply_quality_range's knob-
+        # preserving remap (run when this file loads) would then use as the
+        # source of truth and silently revert.
+        self.gui.quality_slider.set(21)
         self.gui.bitrate_var.set(6000)
         self.gui.bit_depth_var.set('10-bit')
         with patch.object(self.gui, 'update_frame_preview'):
@@ -327,6 +334,7 @@ class TestBatchQueueWidgets(_GuiTestBase):
         self.assertEqual(settings, {
             'gamma': 1.7, 'quality_mode': 'cq', 'quality': 21, 'bitrate': 6000,
             'tonemapper': 'Hable', 'gpu_accel': False, 'bit_depth_choice': '10-bit',
+            'bitrate_customized': False,
         })
 
     def test_clear_batch_empties_listbox(self):
@@ -508,6 +516,95 @@ class TestBatchQueueWidgets(_GuiTestBase):
 
         self.gui.batch_items[0]['settings']['gamma'] = 99.0
         self.assertNotEqual(self.gui.batch_items[1]['settings']['gamma'], 99.0)
+
+    def test_selecting_queue_item_refreshes_markers_to_match_restored_settings(self):
+        """Bug #1: the listbox '*' markers must be recomputed against the
+        settings that were just restored into the panel by selecting a queue
+        item, not left over from whatever the panel showed before the
+        selection."""
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])  # auto-loads A
+            self.gui.gamma_var.set(2.4)
+            self.gui.on_gamma_change()  # A's stored gamma == live (2.4) -> unmarked
+
+            self.gui.add_batch_files(['C:/v/b.mp4'])  # queued only, not auto-loaded
+            self.gui.batch_items[1]['settings']['gamma'] = 0.5  # now differs from live
+            self.gui._refresh_batch_list()
+            # Sanity: before selecting B, B is marked (differs) and A is not.
+            self.assertIn('*', self.gui.batch_listbox.get(1))
+            self.assertNotIn('*', self.gui.batch_listbox.get(0))
+
+            self.gui.batch_listbox.selection_clear(0, tk.END)
+            self.gui.batch_listbox.selection_set(1)
+            self.gui.on_batch_item_select()  # restores B's gamma (0.5) into the panel
+
+        # The panel now shows B's own settings (gamma 0.5): B should be
+        # unmarked (matches live) and A -- whose stored gamma is still 2.4 --
+        # should now be marked, since it differs from what's on screen.
+        self.assertNotIn('*', self.gui.batch_listbox.get(1))
+        self.assertIn('*', self.gui.batch_listbox.get(0))
+
+    @staticmethod
+    def _props_for(bit_rate):
+        return {
+            'width': 1920, 'height': 1080, 'frame_rate': 24.0,
+            'codec_name': 'hevc', 'audio_codec': 'aac',
+            'color_primaries': 'bt2020', 'color_transfer': 'smpte2084',
+            'bit_depth': 10, 'bit_rate': bit_rate,
+        }
+
+    def test_target_bitrate_reseeds_per_file_until_bitrate_is_customized(self):
+        """Bug #2: Target Bitrate's 50%-of-source reseed must fire per file
+        (each file gets its own source's 50%, not a stale value carried over
+        from whichever file was probed last) -- UNTIL the user has
+        deliberately dragged that specific file's bitrate slider, at which
+        point their choice must be remembered for that file, surviving
+        reselection even after visiting other files in between."""
+        props_by_path = {
+            'C:/v/a.mp4': self._props_for(4_000_000),   # 4,000 kbps -> 2,000 kbps seed
+            'C:/v/b.mp4': self._props_for(10_000_000),  # 10,000 kbps -> 5,000 kbps seed
+        }
+
+        def fake_probe(path):
+            return props_by_path.get(path)
+
+        with patch('src.gui.get_video_properties', side_effect=fake_probe), \
+             patch('src.gui.get_maxcll', return_value=None), \
+             patch.object(self.gui, 'update_frame_preview'), \
+             patch.object(self.gui, 'highlight_frame_button'):
+            self.gui.add_batch_files(['C:/v/a.mp4', 'C:/v/b.mp4'])  # auto-loads A
+            self.gui.quality_mode_var.set('Target Bitrate')
+            self.gui._on_quality_mode_selected()  # writes mode+reseed back onto A
+
+            self.assertEqual(self.gui.bitrate_var.get(), 2000)  # A's own 50%
+
+            # B was seeded in Constant Quality mode at add time; force it into
+            # Target Bitrate too so selecting it below exercises the reseed
+            # path (mirrors how test_copied_gpu_only_tonemapper_... directly
+            # edits a stored settings dict rather than driving the UI for it).
+            self.gui.batch_items[1]['settings']['quality_mode'] = 'bitrate'
+
+            self.gui.batch_listbox.selection_clear(0, tk.END)
+            self.gui.batch_listbox.selection_set(1)
+            self.gui.on_batch_item_select()
+
+            self.assertEqual(self.gui.bitrate_var.get(), 5000)  # B's OWN 50%, not A's
+
+            # Deliberately customize B's bitrate.
+            self.gui._on_quality_change('3500')
+            self.assertEqual(self.gui.bitrate_var.get(), 3500)
+
+            # Visit A (a different file) and back to B.
+            self.gui.batch_listbox.selection_clear(0, tk.END)
+            self.gui.batch_listbox.selection_set(0)
+            self.gui.on_batch_item_select()
+            self.assertEqual(self.gui.bitrate_var.get(), 2000)  # A still reseeds fresh
+
+            self.gui.batch_listbox.selection_clear(0, tk.END)
+            self.gui.batch_listbox.selection_set(1)
+            self.gui.on_batch_item_select()
+
+        self.assertEqual(self.gui.bitrate_var.get(), 3500)  # B's customization survives
 
     def test_batch_settings_info_button_exists_and_shows_tooltip(self):
         self.assertEqual(self.gui.batch_settings_info_button.cget('text'), 'ⓘ')

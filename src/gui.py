@@ -123,6 +123,12 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         # settings['bit_depth_choice'] key, restored on (re)load (see
         # _on_bit_depth_toggle).
         self.bit_depth_var = tk.StringVar(value='10-bit')
+        # Mirrors settings['bitrate_customized'] for whichever item is
+        # currently loaded, exactly like bit_depth_var mirrors
+        # bit_depth_choice: True once the user has deliberately dragged this
+        # item's bitrate slider, so the Target Bitrate reseed (see
+        # _apply_bitrate_range) stops overriding their choice for this item.
+        self._bitrate_customized_for_current_item = False
         self.custom_time_var = tk.StringVar()
         self.custom_time_position: float | None = None
         self.batch_items: list[dict] = []  # type: ignore[type-arg]
@@ -584,7 +590,6 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.custom_time_entry, self.custom_seek_button,
             self.add_files_button, self.clear_batch_button, self.remove_batch_button,
             self.bit_depth_10_radio, self.bit_depth_12_radio, self.apply_settings_button,
-            self.batch_settings_info_button,
         ]
 
         self._apply_quality_mode()
@@ -656,6 +661,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 self._restore_settings_dict(item['settings'])
         finally:
             self._restoring_batch_item_settings = False
+        self._write_back_current_settings()
         self.button_frame.grid()
         self.image_frame.grid()
         self.action_frame.grid()
@@ -764,6 +770,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             'tonemapper': self.tonemap_var.get(),
             'gpu_accel': self.gpu_accel_var.get(),
             'bit_depth_choice': self.bit_depth_var.get(),
+            'bitrate_customized': getattr(self, '_bitrate_customized_for_current_item', False),
         }
 
     def _restore_settings_dict(self, settings: dict) -> None:  # type: ignore[type-arg]
@@ -779,7 +786,10 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.quality_mode_var.set(self._QUALITY_MODE_FROM_INTERNAL.get(
             settings.get('quality_mode', 'cq'), 'Constant Quality'))
         self.quality_var.set(settings.get('quality', self.quality_var.get()))
-        self.bitrate_var.set(settings.get('bitrate', self.bitrate_var.get()))
+        self._bitrate_customized_for_current_item = settings.get('bitrate_customized', False)
+        if self._bitrate_customized_for_current_item:
+            self.bitrate_var.set(settings.get('bitrate', self.bitrate_var.get()))
+            self._bitrate_needs_reseed = False
         if hasattr(self, 'quality_slider'):
             self._apply_quality_mode()
         if hasattr(self, 'tonemap_combobox'):
@@ -827,9 +837,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.quality_display_var.set(str(self.quality_var.get()))
 
     def _batch_settings_tooltip_text(self) -> str:
-        """Explains the per-file batch settings model -- see design doc
-        docs/superpowers/specs/2026-07-08-batch-per-file-settings-design.md
-        section 6 for why this exists."""
+        """Explains the per-file batch settings model: each queued file has
+        its own settings, so this tooltip exists to make that (and the "*"
+        marker's meaning) discoverable from the queue panel itself."""
         return (
             "Each queued file remembers its own settings (gamma, quality, "
             "tonemapper, GPU accel, bit depth).\n\n"
@@ -971,6 +981,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         floats either way)."""
         if self.quality_mode_var.get() == 'Target Bitrate':
             self.bitrate_var.set(round(float(value) / 500) * 500)
+            self._bitrate_customized_for_current_item = True
         else:
             self.quality_var.set(int(float(value)))
         self._write_back_current_settings()

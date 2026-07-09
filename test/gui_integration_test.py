@@ -224,6 +224,7 @@ class TestConstruction(_GuiTestBase):
             self.gui.add_files_button, self.gui.clear_batch_button,
             self.gui.remove_batch_button,
             self.gui.bit_depth_10_radio, self.gui.bit_depth_12_radio,
+            self.gui.apply_settings_button,
         }
         self.assertEqual(set(self.gui.interactable_elements), expected)
 
@@ -485,6 +486,28 @@ class TestBatchQueueWidgets(_GuiTestBase):
             self.gui._restore_settings_dict(self.gui.batch_items[0]['settings'])
 
         self.assertEqual(self.gui.tonemap_var.get(), 'Mobius')
+
+    def test_apply_to_all_button_exists(self):
+        self.assertIsInstance(self.gui.apply_settings_button, ttk.Button)
+
+    def test_apply_to_all_copies_current_settings_to_every_item(self):
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4', 'C:/v/b.mp4', 'C:/v/c.mp4'])
+            self.gui.gamma_var.set(1.8)
+            self.gui.on_gamma_change()  # writes back onto item 0 (the loaded one)
+
+        self.gui.apply_settings_to_all_batch_items()
+
+        for item in self.gui.batch_items:
+            self.assertAlmostEqual(item['settings']['gamma'], 1.8)
+
+    def test_apply_to_all_gives_each_item_an_independent_dict(self):
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4', 'C:/v/b.mp4'])
+        self.gui.apply_settings_to_all_batch_items()
+
+        self.gui.batch_items[0]['settings']['gamma'] = 99.0
+        self.assertNotEqual(self.gui.batch_items[1]['settings']['gamma'], 99.0)
 
 
 class TestStateAndLayout(_GuiTestBase):

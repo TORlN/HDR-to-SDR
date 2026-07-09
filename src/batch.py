@@ -107,6 +107,16 @@ class _BatchMixin:
         self._refresh_batch_list()
         self._resync_preview_after_queue_change(removed_inputs)
 
+    def apply_settings_to_all_batch_items(self) -> None:
+        """Copy the currently-displayed settings onto every queued item.
+        Safe across mixed sources: each item re-validates its own copy
+        against its own file's metadata the next time it's loaded or
+        converted (see _restore_settings_dict / _update_bit_depth_choice)."""
+        current = self._current_settings_dict()  # type: ignore[attr-defined]
+        for item in self.batch_items:
+            item['settings'] = dict(current)
+        self._refresh_batch_list()
+
     def _resync_preview_after_queue_change(self, removed_inputs: list[str]) -> None:
         """Keep the preview consistent after queue entries are removed/cleared."""
         if not hasattr(self, 'input_path_var'):

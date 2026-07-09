@@ -281,7 +281,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.quality_slider, self.quality_mode_combobox, self.format_combobox,
             self.custom_time_entry, self.custom_seek_button,
             self.add_files_button, self.clear_batch_button, self.remove_batch_button,
-            self.bit_depth_12_radio,
+            self.bit_depth_12_radio, self.apply_settings_button,
         ]
         self.interactable_elements = free + premium if self._licensed else free
 
@@ -552,6 +552,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.clear_batch_button = ttk.Button(
             batch_buttons, text="Clear", command=self.clear_batch_queue)
         self.clear_batch_button.grid(row=0, column=2, padx=(0, 5))
+        self.apply_settings_button = ttk.Button(
+            batch_buttons, text="Apply to All", command=self.apply_settings_to_all_batch_items)
+        self.apply_settings_button.grid(row=0, column=3, padx=(0, 5))
 
         ttk.Label(self.batch_frame, foreground='gray',
                   text="Add or drop multiple files to convert them in sequence.").grid(
@@ -574,7 +577,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.format_combobox,
             self.custom_time_entry, self.custom_seek_button,
             self.add_files_button, self.clear_batch_button, self.remove_batch_button,
-            self.bit_depth_10_radio, self.bit_depth_12_radio,
+            self.bit_depth_10_radio, self.bit_depth_12_radio, self.apply_settings_button,
         ]
 
         self._apply_quality_mode()

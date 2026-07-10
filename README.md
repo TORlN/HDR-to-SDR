@@ -34,7 +34,7 @@ All free features, plus:
 - **12-Bit Output**: Encode the SDR output at 12-bit color depth (CPU only) for the widest gradient headroom.
 - **Dolby Vision Support (Full Audio)**: The source audio track is preserved (stream-copied or transcoded to fit the container) instead of being downmixed to stereo.
 
-More Pro features are on the way — follow this repo or check [hdrtosdr.com](https://hdrtosdr.com) for updates.
+More Pro features are on the way. Follow this repo or check [hdrtosdr.com](https://hdrtosdr.com) for updates.
 
 ## Licensing
 

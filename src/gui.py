@@ -577,16 +577,21 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.apply_settings_button = ttk.Button(
             batch_buttons, text="Apply to All", command=self.apply_settings_to_all_batch_items)
         self.apply_settings_button.grid(row=0, column=3, padx=(0, 5))
+        self.batch_review_cancel_button = ttk.Button(
+            batch_buttons, text="Cancel Review", command=self._cancel_batch_conflict_review)
+        self.batch_review_cancel_button.grid(row=0, column=4, padx=(0, 5))
+        self.batch_review_cancel_button.grid_remove()
         self.batch_settings_info_button = ttk.Label(
             batch_buttons, text="ⓘ", cursor="hand2")
-        self.batch_settings_info_button.grid(row=0, column=4, padx=(5, 0))
+        self.batch_settings_info_button.grid(row=0, column=5, padx=(5, 0))
         self.batch_settings_info_button.bind(
             '<Enter>', lambda e: self.show_tooltip(e, self._batch_settings_tooltip_text()))
         self.batch_settings_info_button.bind('<Leave>', self.hide_tooltip)
 
-        ttk.Label(self.batch_frame, foreground='gray',
-                  text="Add or drop multiple files to convert them in sequence.").grid(
-            row=1, column=0, columnspan=2, sticky=tk.W, pady=(4, 4))
+        self.batch_hint_label = ttk.Label(
+            self.batch_frame, foreground='gray',
+            text="Add or drop multiple files to convert them in sequence.")
+        self.batch_hint_label.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(4, 4))
 
         self.batch_listbox = tk.Listbox(self.batch_frame, height=8, activestyle='none')
         self.batch_listbox.grid(row=2, column=0, sticky=tk.W + tk.E + tk.N + tk.S)

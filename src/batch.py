@@ -76,6 +76,7 @@ class _BatchMixin:
         convert time anyway (its output already exists), and single-file drops
         route through here too, so re-dropping a file to preview it must not
         stack up copies."""
+        self._cancel_batch_conflict_review()
         queued = {it['input'] for it in self.batch_items}
         for path in paths:  # type: ignore[union-attr]
             if not path or path in queued:
@@ -98,6 +99,7 @@ class _BatchMixin:
         if not hasattr(self, 'batch_listbox'):
             return
         selected = sorted(self.batch_listbox.curselection(), reverse=True)
+        self._cancel_batch_conflict_review()
         removed_inputs = [self.batch_items[i]['input'] for i in selected]
         for index in selected:
             del self.batch_items[index]
@@ -106,6 +108,7 @@ class _BatchMixin:
 
     def clear_batch_queue(self) -> None:
         """Empty the batch queue."""
+        self._cancel_batch_conflict_review()
         removed_inputs = [it['input'] for it in self.batch_items]
         self.batch_items = []
         self._refresh_batch_list()
@@ -274,6 +277,31 @@ class _BatchMixin:
             for other in group:
                 if other is not item:
                     self._batch_conflict_selection[id(other)] = False
+        self._refresh_batch_list()
+
+    def _enter_batch_conflict_review_ui(self) -> None:
+        """Swap the batch hint label to conflict-count guidance and reveal
+        the review-cancel button so the user can back out of review."""
+        count = sum(len(g) for g in self._batch_conflict_groups)
+        self.batch_hint_label.config(
+            text=f"{count} output conflicts found — click a row to choose which "
+                 "file keeps that path, then click Convert to start.")
+        self.batch_review_cancel_button.grid()
+
+    def _exit_batch_conflict_review_ui(self) -> None:
+        """Restore the batch hint label and hide the review-cancel button."""
+        self.batch_hint_label.config(
+            text="Add or drop multiple files to convert them in sequence.")
+        self.batch_review_cancel_button.grid_remove()
+
+    def _cancel_batch_conflict_review(self) -> None:
+        """Back out of conflict review without changing any item's status,
+        as if the user had never clicked Convert."""
+        if getattr(self, '_batch_conflict_groups', None) is None:
+            return
+        self._batch_conflict_groups = None
+        self._batch_conflict_selection = {}
+        self._exit_batch_conflict_review_ui()
         self._refresh_batch_list()
 
     # ── Batch execution ────────────────────────────────────────────────────────

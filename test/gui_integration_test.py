@@ -933,6 +933,71 @@ class TestBatchQueueWidgets(_GuiTestBase):
         self.assertIn('*', text)
         self.assertIn('apply to all', text.lower())
 
+    def test_batch_review_cancel_button_hidden_by_default(self):
+        self.assertEqual(self.gui.batch_review_cancel_button.grid_info(), {})
+
+    def test_enter_review_ui_shows_cancel_button_and_updates_hint(self):
+        item = {'input': 'a.mp4', 'output': 'a_sdr.mp4', 'status': 'Pending'}
+        self.gui._batch_conflict_groups = [[item]]
+        self.gui._enter_batch_conflict_review_ui()
+        self.assertNotEqual(self.gui.batch_review_cancel_button.grid_info(), {})
+        self.assertIn('output conflicts found', self.gui.batch_hint_label.cget('text'))
+
+    def test_exit_review_ui_restores_hint_and_hides_button(self):
+        self.gui.batch_review_cancel_button.grid()
+        self.gui._exit_batch_conflict_review_ui()
+        self.assertEqual(self.gui.batch_review_cancel_button.grid_info(), {})
+        self.assertEqual(
+            self.gui.batch_hint_label.cget('text'),
+            "Add or drop multiple files to convert them in sequence.")
+
+    def test_cancel_review_is_noop_when_not_reviewing(self):
+        self.gui._batch_conflict_groups = None
+        self.gui._cancel_batch_conflict_review()
+        self.assertEqual(self.gui.batch_review_cancel_button.grid_info(), {})
+
+    def test_cancel_review_clears_state_and_restores_ui(self):
+        item = {'input': 'a.mp4', 'output': 'a_sdr.mp4', 'status': 'Pending'}
+        self.gui._batch_conflict_groups = [[item]]
+        self.gui._batch_conflict_selection = {}
+        self.gui._enter_batch_conflict_review_ui()
+        self.gui._cancel_batch_conflict_review()
+        self.assertIsNone(self.gui._batch_conflict_groups)
+        self.assertEqual(self.gui.batch_review_cancel_button.grid_info(), {})
+
+    def test_add_batch_files_cancels_an_in_progress_review(self):
+        item = {'input': 'a.mp4', 'output': 'a_sdr.mp4', 'status': 'Pending'}
+        self.gui._batch_conflict_groups = [[item]]
+        self.gui._enter_batch_conflict_review_ui()
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/z.mp4'])
+        self.assertIsNone(self.gui._batch_conflict_groups)
+        self.assertEqual(self.gui.batch_review_cancel_button.grid_info(), {})
+
+    def test_clear_batch_queue_cancels_an_in_progress_review(self):
+        item = {'input': 'a.mp4', 'output': 'a_sdr.mp4', 'status': 'Pending'}
+        self.gui.batch_items = [item]
+        self.gui._batch_conflict_groups = [[item]]
+        self.gui._enter_batch_conflict_review_ui()
+        self.gui.clear_batch_queue()
+        self.assertIsNone(self.gui._batch_conflict_groups)
+
+    def test_remove_selected_batch_item_cancels_an_in_progress_review(self):
+        item = {'input': 'a.mp4', 'output': 'a_sdr.mp4', 'status': 'Pending'}
+        self.gui.batch_items = [item]
+        self.gui._refresh_batch_list()  # populate the row so it can actually be selected below
+        self.gui.batch_listbox.selection_clear(0, tk.END)
+        self.gui.batch_listbox.selection_set(0)
+        self.gui._batch_conflict_groups = [[item]]
+        self.gui._enter_batch_conflict_review_ui()
+        self.gui.remove_selected_batch_item()
+        self.assertIsNone(self.gui._batch_conflict_groups)
+        # The selected row must still have actually been removed -- cancelling
+        # the review rebuilds the listbox, which must not happen before the
+        # current selection is read, or nothing would ever get deleted while
+        # a review is in progress.
+        self.assertEqual(self.gui.batch_items, [])
+
 
 class TestStateAndLayout(_GuiTestBase):
 

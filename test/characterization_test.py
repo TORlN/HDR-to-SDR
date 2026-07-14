@@ -1730,6 +1730,20 @@ class TestBatchProcessing(unittest.TestCase):
         self.assertEqual(gui.batch_items[1]['status'], 'Converting')
         self.assertEqual(mock_cm.start_conversion.call_count, 2)
 
+    @patch('src.batch.messagebox')
+    @patch('src.batch.conversion_manager')
+    def test_finish_batch_summary_includes_skipped_count(self, mock_cm, mock_mb):
+        mock_cm.cancelled = False
+        gui = self._gui()
+        gui.batch_items = [
+            self._item('a', 'Converting'),
+            self._item('b', 'Skipped'),
+        ]
+        gui._current_batch_item = gui.batch_items[0]
+        gui._on_batch_item_complete(True)
+        mock_mb.showinfo.assert_called_once_with(
+            "Batch Complete", "Batch finished: 1 succeeded, 0 failed, 1 skipped.")
+
 
 class TestBatchConflictReviewFlow(unittest.TestCase):
     """start_batch enters a review pass when conflicts exist, and only

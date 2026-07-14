@@ -418,10 +418,12 @@ class _BatchMixin:
         """Re-enable the UI and report a one-line summary once the queue drains."""
         done = sum(1 for it in self.batch_items if it['status'] == 'Done')
         failed = sum(1 for it in self.batch_items if it['status'] == 'Failed')
+        skipped = sum(1 for it in self.batch_items if it['status'] == 'Skipped')
         for element in self.interactable_elements:
             element.config(state='normal')
         self.cancel_button.grid_remove()
         if hasattr(self, 'register_drop_target'):
             self.register_drop_target()  # type: ignore[attr-defined]
         messagebox.showinfo(
-            "Batch Complete", f"Batch finished: {done} succeeded, {failed} failed.")
+            "Batch Complete",
+            f"Batch finished: {done} succeeded, {failed} failed, {skipped} skipped.")

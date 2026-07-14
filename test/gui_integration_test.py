@@ -307,6 +307,10 @@ class TestBatchQueueWidgets(_GuiTestBase):
         self.assertIn('n', str(info.get('sticky', '')))
         self.assertIn('s', str(info.get('sticky', '')))
 
+    def test_batch_conflict_review_state_starts_empty(self):
+        self.assertIsNone(self.gui._batch_conflict_groups)
+        self.assertEqual(self.gui._batch_conflict_selection, {})
+
     def test_add_batch_files_populates_listbox(self):
         with patch.object(self.gui, 'update_frame_preview'):  # don't spawn ffmpeg
             self.gui.add_batch_files(['C:/v/a.mp4', 'C:/v/b.mkv'])

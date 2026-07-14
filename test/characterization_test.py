@@ -1078,6 +1078,9 @@ class TestBatchQueue(unittest.TestCase):
         gui.bit_depth_var = MagicMock(get=MagicMock(return_value='10-bit'))
         return gui
 
+    def test_status_icons_include_skipped_status(self):
+        self.assertEqual(HDRConverterGUI._STATUS_ICONS['Skipped'], '−')
+
     def test_add_batch_files_builds_items_with_output_paths(self):
         gui = self._gui()
         gui.add_batch_files(['C:/v/a.mp4', 'C:/v/b.mkv'])

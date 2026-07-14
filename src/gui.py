@@ -138,6 +138,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.custom_time_position: float | None = None
         self.batch_items: list[dict] = []  # type: ignore[type-arg]
         self._current_batch_item: dict | None = None  # type: ignore[type-arg]
+        self._batch_conflict_groups: list[list[dict]] | None = None  # type: ignore[type-arg]
+        self._batch_conflict_selection: dict[int, bool] = {}
         self.tooltip = None
         self.current_frame_index = 1
         self.total_frames = 5

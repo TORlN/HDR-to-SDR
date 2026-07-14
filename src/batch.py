@@ -25,7 +25,11 @@ class _BatchMixin:
     if TYPE_CHECKING:
         batch_items: list[dict]  # type: ignore[type-arg]
         _current_batch_item: dict | None  # type: ignore[type-arg]
+        _batch_conflict_groups: list[list[dict]] | None  # type: ignore[type-arg]
+        _batch_conflict_selection: dict[int, bool]
         batch_listbox: tk.Listbox
+        batch_hint_label: ttk.Label
+        batch_review_cancel_button: ttk.Button
         input_path_var: tk.StringVar
         output_path_var: tk.StringVar
         format_var: tk.StringVar
@@ -43,7 +47,7 @@ class _BatchMixin:
         _licensed: bool
 
     _STATUS_ICONS: dict[str, str] = {
-        'Pending': '•', 'Converting': '▶', 'Done': '✓', 'Failed': '✗',
+        'Pending': '•', 'Converting': '▶', 'Done': '✓', 'Failed': '✗', 'Skipped': '−',
     }
 
     @staticmethod

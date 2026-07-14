@@ -239,12 +239,19 @@ class _BatchMixin:
             self._refresh_batch_list()
             return self._start_next_batch_item()
 
+        # An existing output could be a stray file from outside this app, or
+        # this item's own result from a prior run being redone -- either way,
+        # ask before clobbering it rather than assuming either case silently.
         output_path = os.path.normpath(item['output'])
         if os.path.exists(output_path):
-            logging.warning(f"Batch output already exists, skipping: {output_path}")
-            item['status'] = 'Failed'
-            self._refresh_batch_list()
-            return self._start_next_batch_item()
+            overwrite = messagebox.askyesno(
+                "File Exists",
+                f"The file '{output_path}' already exists. Do you want to overwrite it?")
+            if not overwrite:
+                logging.warning(f"Batch output already exists, user declined overwrite: {output_path}")
+                item['status'] = 'Failed'
+                self._refresh_batch_list()
+                return self._start_next_batch_item()
 
         item['status'] = 'Converting'
         self._current_batch_item = item

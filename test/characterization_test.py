@@ -1328,6 +1328,57 @@ class TestBatchQueue(unittest.TestCase):
         gui._load_input_file.assert_not_called()
 
 
+class TestBatchConflictDetection(unittest.TestCase):
+    """_detect_batch_conflicts groups Pending items by resolved output path,
+    returning only the groups that need user resolution: a path that
+    already exists on disk, and/or a path targeted by 2+ queued items."""
+
+    @staticmethod
+    def _item(output, status='Pending', input_name=None):
+        name = input_name or output
+        return {'input': f'{name}.mkv', 'output': output, 'status': status}
+
+    def _gui(self, items):
+        gui = _bare_gui()
+        gui.batch_items = items
+        return gui
+
+    def test_no_conflicts_when_outputs_are_distinct_and_absent(self):
+        gui = self._gui([self._item('a_sdr.mkv'), self._item('b_sdr.mkv')])
+        with patch('src.batch.os.path.exists', return_value=False):
+            self.assertEqual(gui._detect_batch_conflicts(), [])
+
+    def test_single_item_flagged_when_output_already_exists(self):
+        item = self._item('a_sdr.mkv')
+        gui = self._gui([item])
+        with patch('src.batch.os.path.exists', return_value=True):
+            self.assertEqual(gui._detect_batch_conflicts(), [[item]])
+
+    def test_two_items_sharing_an_output_path_are_grouped(self):
+        a = self._item('same_sdr.mkv', input_name='a')
+        b = self._item('same_sdr.mkv', input_name='b')
+        gui = self._gui([a, b])
+        with patch('src.batch.os.path.exists', return_value=False):
+            self.assertEqual(gui._detect_batch_conflicts(), [[a, b]])
+
+    def test_non_pending_items_are_ignored(self):
+        done = self._item('a_sdr.mkv', status='Done')
+        gui = self._gui([done])
+        with patch('src.batch.os.path.exists', return_value=True):
+            self.assertEqual(gui._detect_batch_conflicts(), [])
+
+    def test_mixed_queue_returns_one_group_per_conflict(self):
+        exists_item = self._item('a_sdr.mkv')
+        shared_1 = self._item('same_sdr.mkv', input_name='b')
+        shared_2 = self._item('same_sdr.mkv', input_name='c')
+        clean_item = self._item('d_sdr.mkv', input_name='d')
+        gui = self._gui([exists_item, shared_1, shared_2, clean_item])
+        exists_path = os.path.normpath('a_sdr.mkv')
+        with patch('src.batch.os.path.exists', side_effect=lambda p: p == exists_path):
+            groups = gui._detect_batch_conflicts()
+        self.assertEqual(groups, [[exists_item], [shared_1, shared_2]])
+
+
 class TestBatchProcessing(unittest.TestCase):
     """The queue converts files sequentially, advancing on each completion."""
 

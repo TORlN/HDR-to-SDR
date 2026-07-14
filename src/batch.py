@@ -214,6 +214,20 @@ class _BatchMixin:
                 self.batch_listbox.selection_set(index)
                 self.batch_listbox.activate(index)
 
+    def _detect_batch_conflicts(self) -> list[list[dict]]:  # type: ignore[type-arg]
+        """Group Pending items by resolved output path; return only the groups
+        that need user resolution (path exists on disk, and/or 2+ items target
+        it). Only Pending items are considered, since those are what's about
+        to run."""
+        groups: dict[str, list[dict]] = {}
+        for item in self.batch_items:
+            if item['status'] != 'Pending':
+                continue
+            key = os.path.normpath(item['output'])
+            groups.setdefault(key, []).append(item)
+        return [group for path, group in groups.items()
+                if len(group) > 1 or os.path.exists(path)]
+
     # ── Batch execution ────────────────────────────────────────────────────────
 
     def start_batch(self) -> bool:

@@ -601,6 +601,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.batch_frame.rowconfigure(2, weight=1)
         self.batch_listbox.config(yscrollcommand=batch_scroll.set)
         self.batch_listbox.bind('<<ListboxSelect>>', self.on_batch_item_select)
+        self.batch_listbox.bind('<Button-1>', self._on_batch_listbox_click)
 
         self.interactable_elements = [
             self.browse_button, self.convert_button, self.gamma_slider,

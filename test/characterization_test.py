@@ -1840,6 +1840,32 @@ class TestBatchConflictReviewFlow(unittest.TestCase):
         mock_cm.start_conversion.assert_called_once()
 
 
+class TestBatchListboxClickToggle(unittest.TestCase):
+    """<Button-1> on batch_listbox toggles a conflict row's checkbox when a
+    review is in progress; otherwise it's a no-op (falls through to the
+    normal <<ListboxSelect>> preview binding on the same widget)."""
+
+    def test_click_on_conflict_row_toggles_that_item(self):
+        item = {'input': 'a.mkv', 'output': 'a_sdr.mkv', 'status': 'Pending'}
+        gui = _bare_gui()
+        gui.batch_items = [item]
+        gui.batch_listbox = MagicMock()
+        gui.batch_listbox.nearest.return_value = 0
+        gui._batch_conflict_groups = [[item]]
+        gui._batch_conflict_selection = {}
+        gui._refresh_batch_list = MagicMock()
+        gui._on_batch_listbox_click(MagicMock(y=5))
+        self.assertTrue(gui._batch_conflict_selection[id(item)])
+
+    def test_click_is_noop_outside_review(self):
+        gui = _bare_gui()
+        gui.batch_items = [{'input': 'a.mkv', 'output': 'a_sdr.mkv', 'status': 'Pending'}]
+        gui.batch_listbox = MagicMock()
+        gui._batch_conflict_groups = None
+        gui._on_batch_listbox_click(MagicMock(y=5))  # must not raise
+        gui.batch_listbox.nearest.assert_not_called()
+
+
 class TestPreviewExtractionCache(unittest.TestCase):
     """Extracted frames are cached by (path, time, tonemapper) so
     revisiting a frame/tonemapper combo never re-runs ffmpeg."""

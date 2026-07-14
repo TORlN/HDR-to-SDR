@@ -402,6 +402,18 @@ class _BatchMixin:
         if not conversion_manager.cancelled:
             self._start_next_batch_item()
 
+    def _on_batch_listbox_click(self, event) -> None:
+        """During conflict review, toggle the checkbox row the click landed
+        on. Outside review (or when the click misses every conflict row)
+        this is a no-op, so the click falls through to the normal
+        <<ListboxSelect>> preview binding on the same widget."""
+        groups = getattr(self, '_batch_conflict_groups', None)
+        if not groups:
+            return
+        index = self.batch_listbox.nearest(event.y)
+        if 0 <= index < len(self.batch_items):
+            self._toggle_batch_conflict_item(self.batch_items[index])
+
     def _finish_batch(self) -> None:
         """Re-enable the UI and report a one-line summary once the queue drains."""
         done = sum(1 for it in self.batch_items if it['status'] == 'Done')

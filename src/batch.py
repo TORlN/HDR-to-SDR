@@ -182,11 +182,13 @@ class _BatchMixin:
         return relevant
 
     def _refresh_batch_list(self) -> None:
-        """Redraw the queue listbox from batch_items with per-file status
-        icons and a "*" marker on any item whose stored settings differ from
-        what the control panel currently shows -- i.e. "if the batch started
-        right now, this file would convert differently than what's on
-        screen." Never marks the currently-loaded item, since its settings
+        """Redraw the queue listbox from batch_items. Normally this shows a
+        per-file status icon and a "*" marker on any item whose stored
+        settings differ from what the control panel currently shows. While a
+        conflict review is in progress (self._batch_conflict_groups is not
+        None), rows belonging to a conflict group instead render a
+        checkbox and an explanatory note; every other row is unaffected.
+        Never marks the currently-loaded item with "*", since its settings
         equal the live panel by construction (see _restore_settings_dict /
         _write_back_current_settings). May run from a debounced timer (see
         _schedule_batch_list_refresh), which can still be pending after the
@@ -200,19 +202,47 @@ class _BatchMixin:
         current_live_relevant = (
             self._settings_relevant_for_comparison(current_live)
             if current_live is not None else None)
+        conflict_groups = getattr(self, '_batch_conflict_groups', None)
+        conflict_notes = self._batch_conflict_row_notes(conflict_groups) if conflict_groups else {}
         for index, item in enumerate(self.batch_items):
-            icon = self._STATUS_ICONS.get(item['status'], '•')
-            marker = ''
-            stored = item.get('settings')
-            if current_live_relevant is not None and (
-                    stored is None
-                    or self._settings_relevant_for_comparison(stored) != current_live_relevant):
-                marker = '  *'
-            self.batch_listbox.insert(
-                tk.END, f"{icon}  {os.path.basename(item['input'])}{marker}")
+            note = conflict_notes.get(id(item))
+            if note is not None:
+                checked = self._batch_conflict_selection.get(id(item), False)
+                box = '☑' if checked else '☐'
+                self.batch_listbox.insert(
+                    tk.END, f"{box}  {os.path.basename(item['input'])}  {note}")
+            else:
+                icon = self._STATUS_ICONS.get(item['status'], '•')
+                marker = ''
+                stored = item.get('settings')
+                if current_live_relevant is not None and (
+                        stored is None
+                        or self._settings_relevant_for_comparison(stored) != current_live_relevant):
+                    marker = '  *'
+                self.batch_listbox.insert(
+                    tk.END, f"{icon}  {os.path.basename(item['input'])}{marker}")
             if item is selected_input:
                 self.batch_listbox.selection_set(index)
                 self.batch_listbox.activate(index)
+
+    def _batch_conflict_row_notes(self, groups: list[list[dict]]) -> dict[int, str]:  # type: ignore[type-arg]
+        """Build the '(already exists...)' / '(same output as ...)' note for
+        each item currently in conflict review, keyed by id(item)."""
+        notes: dict[int, str] = {}
+        for group in groups:
+            path = os.path.normpath(group[0]['output'])
+            exists = os.path.exists(path)
+            for item in group:
+                parts = []
+                if exists:
+                    parts.append('already exists')
+                if len(group) > 1:
+                    others = ', '.join(
+                        os.path.basename(other['input'])
+                        for other in group if other is not item)
+                    parts.append(f'same output as {others}')
+                notes[id(item)] = f"({'; '.join(parts)})"
+        return notes
 
     def _detect_batch_conflicts(self) -> list[list[dict]]:  # type: ignore[type-arg]
         """Group Pending items by resolved output path; return only the groups

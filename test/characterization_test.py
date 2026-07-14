@@ -1431,6 +1431,86 @@ class TestBatchConflictToggle(unittest.TestCase):
         gui._refresh_batch_list.assert_not_called()
 
 
+class TestBatchConflictRendering(unittest.TestCase):
+    """During conflict review, rows in a conflict group render as a
+    checkbox with an explanatory note instead of the normal status icon."""
+
+    def _gui(self):
+        gui = _bare_gui()
+        gui.batch_listbox = MagicMock()
+        return gui
+
+    def test_conflict_row_renders_unchecked_box_with_exists_note(self):
+        item = {'input': 'C:/v/a.mp4', 'output': 'C:/v/a_sdr.mp4', 'status': 'Pending'}
+        gui = self._gui()
+        gui.batch_items = [item]
+        gui._batch_conflict_groups = [[item]]
+        gui._batch_conflict_selection = {}
+        with patch('src.batch.os.path.exists', return_value=True):
+            gui._refresh_batch_list()
+        row = gui.batch_listbox.insert.call_args_list[0][0][1]
+        self.assertIn('☐', row)
+        self.assertIn('a.mp4', row)
+        self.assertIn('already exists', row)
+
+    def test_checked_conflict_row_shows_filled_box(self):
+        item = {'input': 'C:/v/a.mp4', 'output': 'C:/v/a_sdr.mp4', 'status': 'Pending'}
+        gui = self._gui()
+        gui.batch_items = [item]
+        gui._batch_conflict_groups = [[item]]
+        gui._batch_conflict_selection = {id(item): True}
+        with patch('src.batch.os.path.exists', return_value=True):
+            gui._refresh_batch_list()
+        row = gui.batch_listbox.insert.call_args_list[0][0][1]
+        self.assertIn('☑', row)
+
+    def test_shared_output_conflict_note_names_the_other_file(self):
+        a = {'input': 'C:/v/a.mp4', 'output': 'C:/v/same.mp4', 'status': 'Pending'}
+        b = {'input': 'C:/v/b.mp4', 'output': 'C:/v/same.mp4', 'status': 'Pending'}
+        gui = self._gui()
+        gui.batch_items = [a, b]
+        gui._batch_conflict_groups = [[a, b]]
+        gui._batch_conflict_selection = {}
+        with patch('src.batch.os.path.exists', return_value=False):
+            gui._refresh_batch_list()
+        row_a = gui.batch_listbox.insert.call_args_list[0][0][1]
+        self.assertIn('same output as b.mp4', row_a)
+
+    def test_exists_and_shared_notes_combine(self):
+        a = {'input': 'C:/v/a.mp4', 'output': 'C:/v/same.mp4', 'status': 'Pending'}
+        b = {'input': 'C:/v/b.mp4', 'output': 'C:/v/same.mp4', 'status': 'Pending'}
+        gui = self._gui()
+        gui.batch_items = [a, b]
+        gui._batch_conflict_groups = [[a, b]]
+        gui._batch_conflict_selection = {}
+        with patch('src.batch.os.path.exists', return_value=True):
+            gui._refresh_batch_list()
+        row_a = gui.batch_listbox.insert.call_args_list[0][0][1]
+        self.assertIn('already exists; same output as b.mp4', row_a)
+
+    def test_non_conflict_rows_render_normally_during_review(self):
+        conflict_item = {'input': 'C:/v/a.mp4', 'output': 'C:/v/a_sdr.mp4', 'status': 'Pending'}
+        clean_item = {'input': 'C:/v/c.mp4', 'output': 'C:/v/c_sdr.mp4', 'status': 'Pending'}
+        gui = self._gui()
+        gui.batch_items = [conflict_item, clean_item]
+        gui._batch_conflict_groups = [[conflict_item]]
+        gui._batch_conflict_selection = {}
+        with patch('src.batch.os.path.exists', return_value=True):
+            gui._refresh_batch_list()
+        row_clean = gui.batch_listbox.insert.call_args_list[1][0][1]
+        self.assertIn(HDRConverterGUI._STATUS_ICONS['Pending'], row_clean)
+        self.assertIn('c.mp4', row_clean)
+
+    def test_rendering_unaffected_when_not_reviewing(self):
+        item = {'input': 'C:/v/a.mp4', 'output': 'C:/v/a_sdr.mp4', 'status': 'Done'}
+        gui = self._gui()
+        gui.batch_items = [item]
+        gui._batch_conflict_groups = None
+        gui._refresh_batch_list()
+        row = gui.batch_listbox.insert.call_args_list[0][0][1]
+        self.assertIn(HDRConverterGUI._STATUS_ICONS['Done'], row)
+
+
 class TestBatchProcessing(unittest.TestCase):
     """The queue converts files sequentially, advancing on each completion."""
 

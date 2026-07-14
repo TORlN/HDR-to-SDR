@@ -228,6 +228,24 @@ class _BatchMixin:
         return [group for path, group in groups.items()
                 if len(group) > 1 or os.path.exists(path)]
 
+    def _toggle_batch_conflict_item(self, item: dict) -> None:  # type: ignore[type-arg]
+        """Flip item's checked state; if it shares a conflict group with other
+        items, checking it unchecks every other item in that group so at most
+        one item can ever win a shared output path."""
+        groups = getattr(self, '_batch_conflict_groups', None)
+        if not groups:
+            return
+        group = next((g for g in groups if item in g), None)
+        if group is None:
+            return
+        now_checked = not self._batch_conflict_selection.get(id(item), False)
+        self._batch_conflict_selection[id(item)] = now_checked
+        if now_checked:
+            for other in group:
+                if other is not item:
+                    self._batch_conflict_selection[id(other)] = False
+        self._refresh_batch_list()
+
     # ── Batch execution ────────────────────────────────────────────────────────
 
     def start_batch(self) -> bool:

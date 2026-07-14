@@ -1379,6 +1379,58 @@ class TestBatchConflictDetection(unittest.TestCase):
         self.assertEqual(groups, [[exists_item], [shared_1, shared_2]])
 
 
+class TestBatchConflictToggle(unittest.TestCase):
+    """_toggle_batch_conflict_item flips one item's checked state, enforcing
+    mutual exclusivity within a shared-output-path conflict group."""
+
+    def _gui(self, groups):
+        gui = _bare_gui()
+        gui._batch_conflict_groups = groups
+        gui._batch_conflict_selection = {}
+        gui._refresh_batch_list = MagicMock()
+        return gui
+
+    def test_checking_an_item_marks_it_selected(self):
+        item = {'input': 'a.mkv', 'output': 'a_sdr.mkv', 'status': 'Pending'}
+        gui = self._gui([[item]])
+        gui._toggle_batch_conflict_item(item)
+        self.assertTrue(gui._batch_conflict_selection[id(item)])
+        gui._refresh_batch_list.assert_called_once()
+
+    def test_toggling_twice_unchecks_it(self):
+        item = {'input': 'a.mkv', 'output': 'a_sdr.mkv', 'status': 'Pending'}
+        gui = self._gui([[item]])
+        gui._toggle_batch_conflict_item(item)
+        gui._toggle_batch_conflict_item(item)
+        self.assertFalse(gui._batch_conflict_selection[id(item)])
+
+    def test_checking_one_item_unchecks_the_rest_of_its_group(self):
+        a = {'input': 'a.mkv', 'output': 'same.mkv', 'status': 'Pending'}
+        b = {'input': 'b.mkv', 'output': 'same.mkv', 'status': 'Pending'}
+        gui = self._gui([[a, b]])
+        gui._toggle_batch_conflict_item(a)
+        gui._toggle_batch_conflict_item(b)
+        self.assertFalse(gui._batch_conflict_selection[id(a)])
+        self.assertTrue(gui._batch_conflict_selection[id(b)])
+
+    def test_item_outside_any_group_is_a_noop(self):
+        other = {'input': 'x.mkv', 'output': 'x_sdr.mkv', 'status': 'Pending'}
+        solo = {'input': 'a.mkv', 'output': 'a_sdr.mkv', 'status': 'Pending'}
+        gui = self._gui([[solo]])
+        gui._toggle_batch_conflict_item(other)
+        self.assertEqual(gui._batch_conflict_selection, {})
+        gui._refresh_batch_list.assert_not_called()
+
+    def test_noop_when_not_reviewing(self):
+        item = {'input': 'a.mkv', 'output': 'a_sdr.mkv', 'status': 'Pending'}
+        gui = _bare_gui()
+        gui._batch_conflict_groups = None
+        gui._batch_conflict_selection = {}
+        gui._refresh_batch_list = MagicMock()
+        gui._toggle_batch_conflict_item(item)
+        gui._refresh_batch_list.assert_not_called()
+
+
 class TestBatchProcessing(unittest.TestCase):
     """The queue converts files sequentially, advancing on each completion."""
 

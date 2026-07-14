@@ -307,13 +307,38 @@ class _BatchMixin:
     # ── Batch execution ────────────────────────────────────────────────────────
 
     def start_batch(self) -> bool:
-        """Begin converting the queued files one after another."""
+        """Begin converting the queued files one after another. When any
+        output path already exists on disk or is targeted by more than one
+        queued item, the first call enters conflict-review mode (checkbox
+        rows appear in batch_listbox; nothing starts) instead of running; a
+        second call, after the user has resolved every conflict via the
+        listbox, finalizes those choices -- marking every unchecked
+        conflicting item 'Skipped' -- and starts the batch."""
         if not self.batch_items:
             return False
         if not any(it['status'] == 'Pending' for it in self.batch_items):
             for it in self.batch_items:
                 it['status'] = 'Pending'
             self._refresh_batch_list()
+
+        if getattr(self, '_batch_conflict_groups', None) is None:
+            conflicts = self._detect_batch_conflicts()
+            if conflicts:
+                self._batch_conflict_groups = conflicts
+                self._batch_conflict_selection = {}
+                self._refresh_batch_list()
+                self._enter_batch_conflict_review_ui()
+                return False
+        else:
+            for group in self._batch_conflict_groups:
+                for item in group:
+                    if not self._batch_conflict_selection.get(id(item), False):
+                        item['status'] = 'Skipped'
+            self._batch_conflict_groups = None
+            self._batch_conflict_selection = {}
+            self._exit_batch_conflict_review_ui()
+            self._refresh_batch_list()
+
         if self.drop_target_registered:
             self.unregister_drop_target()  # type: ignore[attr-defined]
         self.cancel_button.grid()
@@ -333,20 +358,7 @@ class _BatchMixin:
             self._refresh_batch_list()
             return self._start_next_batch_item()
 
-        # An existing output could be a stray file from outside this app, or
-        # this item's own result from a prior run being redone -- either way,
-        # ask before clobbering it rather than assuming either case silently.
         output_path = os.path.normpath(item['output'])
-        if os.path.exists(output_path):
-            overwrite = messagebox.askyesno(
-                "File Exists",
-                f"The file '{output_path}' already exists. Do you want to overwrite it?")
-            if not overwrite:
-                logging.warning(f"Batch output already exists, user declined overwrite: {output_path}")
-                item['status'] = 'Failed'
-                self._refresh_batch_list()
-                return self._start_next_batch_item()
-
         item['status'] = 'Converting'
         self._current_batch_item = item
         self._refresh_batch_list()

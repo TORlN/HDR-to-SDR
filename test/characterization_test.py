@@ -1518,6 +1518,10 @@ class TestBatchProcessing(unittest.TestCase):
         gui = _bare_gui()
         gui.batch_items = []
         gui._refresh_batch_list = MagicMock()
+        gui._batch_conflict_groups = None
+        gui._batch_conflict_selection = {}
+        gui.batch_hint_label = MagicMock()
+        gui.batch_review_cancel_button = MagicMock()
         gui.gamma_var = MagicMock(); gui.gamma_var.get.return_value = 1.0
         gui.gpu_accel_var = MagicMock(); gui.gpu_accel_var.get.return_value = False
         gui.tonemap_var = MagicMock(); gui.tonemap_var.get.return_value = 'Mobius'
@@ -1725,6 +1729,115 @@ class TestBatchProcessing(unittest.TestCase):
         self.assertEqual(gui.batch_items[0]['status'], 'Failed')
         self.assertEqual(gui.batch_items[1]['status'], 'Converting')
         self.assertEqual(mock_cm.start_conversion.call_count, 2)
+
+
+class TestBatchConflictReviewFlow(unittest.TestCase):
+    """start_batch enters a review pass when conflicts exist, and only
+    starts converting once a second call finalizes the user's choices."""
+
+    def _gui(self):
+        gui = _bare_gui()
+        gui.batch_items = []
+        gui._refresh_batch_list = MagicMock()
+        gui._batch_conflict_groups = None
+        gui._batch_conflict_selection = {}
+        gui.batch_hint_label = MagicMock()
+        gui.batch_review_cancel_button = MagicMock()
+        gui.gamma_var = MagicMock(get=MagicMock(return_value=1.0))
+        gui.gpu_accel_var = MagicMock(get=MagicMock(return_value=False))
+        gui.tonemap_var = MagicMock(get=MagicMock(return_value='Mobius'))
+        gui.quality_var = MagicMock(get=MagicMock(return_value=20))
+        gui.quality_mode_var = MagicMock(get=MagicMock(return_value='Constant Quality'))
+        gui.bitrate_var = MagicMock(get=MagicMock(return_value=8000))
+        gui._source_bit_depth = 8
+        gui._licensed = True
+        gui.open_after_conversion_var = MagicMock(get=MagicMock(return_value=False))
+        gui.progress_var = MagicMock()
+        gui.interactable_elements = []
+        gui.cancel_button = MagicMock()
+        gui.drop_target_registered = True
+        gui.unregister_drop_target = MagicMock()
+        gui.register_drop_target = MagicMock()
+        gui._load_input_file = MagicMock()
+        return gui
+
+    @staticmethod
+    def _item(name, output=None):
+        return {'input': f'{name}.mkv', 'output': output or f'{name}_sdr.mkv',
+                'format': 'MKV', 'status': 'Pending'}
+
+    @patch('src.gui.os.path.isfile', return_value=True)
+    @patch('src.batch.os.path.exists', return_value=True)
+    def test_start_batch_enters_review_instead_of_starting_when_output_exists(
+            self, _exists, _isfile):
+        gui = self._gui()
+        item = self._item('a')
+        gui.batch_items = [item]
+        with patch('src.batch.conversion_manager') as mock_cm:
+            result = gui.start_batch()
+        self.assertFalse(result)
+        self.assertEqual(item['status'], 'Pending')
+        mock_cm.start_conversion.assert_not_called()
+        self.assertEqual(gui._batch_conflict_groups, [[item]])
+        gui.batch_review_cancel_button.grid.assert_called_once()
+
+    @patch('src.gui.os.path.isfile', return_value=True)
+    @patch('src.batch.os.path.exists', return_value=False)
+    def test_start_batch_runs_normally_with_no_conflicts(self, _exists, _isfile):
+        gui = self._gui()
+        gui.batch_items = [self._item('a')]
+        with patch('src.batch.conversion_manager') as mock_cm:
+            result = gui.start_batch()
+        self.assertTrue(result)
+        mock_cm.start_conversion.assert_called_once()
+        self.assertIsNone(gui._batch_conflict_groups)
+
+    @patch('src.batch.messagebox')
+    @patch('src.gui.os.path.isfile', return_value=True)
+    @patch('src.batch.os.path.exists', return_value=True)
+    def test_second_convert_click_skips_unchecked_conflict_items(self, _exists, _isfile, _mb):
+        gui = self._gui()
+        item = self._item('a')
+        gui.batch_items = [item]
+        with patch('src.batch.conversion_manager'):
+            gui.start_batch()  # first click: enters review
+        with patch('src.batch.conversion_manager') as mock_cm:
+            result = gui.start_batch()  # second click: nothing checked
+        self.assertIsNone(gui._batch_conflict_groups)
+        self.assertEqual(item['status'], 'Skipped')
+        mock_cm.start_conversion.assert_not_called()
+
+    @patch('src.gui.os.path.isfile', return_value=True)
+    @patch('src.batch.os.path.exists', return_value=True)
+    def test_second_convert_click_proceeds_with_checked_item(self, _exists, _isfile):
+        gui = self._gui()
+        item = self._item('a')
+        gui.batch_items = [item]
+        with patch('src.batch.conversion_manager'):
+            gui.start_batch()  # first click: enters review
+        gui._toggle_batch_conflict_item(item)  # user checks it
+        with patch('src.batch.conversion_manager') as mock_cm:
+            result = gui.start_batch()  # second click: confirmed
+        self.assertTrue(result)
+        self.assertEqual(item['status'], 'Converting')
+        mock_cm.start_conversion.assert_called_once()
+
+    @patch('src.gui.os.path.isfile', return_value=True)
+    @patch('src.batch.os.path.exists', return_value=True)
+    def test_mutual_exclusivity_lets_only_the_checked_item_in_a_shared_group_proceed(
+            self, _exists, _isfile):
+        gui = self._gui()
+        a = self._item('a', output='same_sdr.mkv')
+        b = self._item('b', output='same_sdr.mkv')
+        gui.batch_items = [a, b]
+        with patch('src.batch.conversion_manager'):
+            gui.start_batch()  # first click: enters review
+        gui._toggle_batch_conflict_item(b)  # user picks b to win
+        with patch('src.batch.conversion_manager') as mock_cm:
+            gui.start_batch()  # second click: confirmed
+        self.assertEqual(a['status'], 'Skipped')
+        self.assertEqual(b['status'], 'Converting')
+        mock_cm.start_conversion.assert_called_once()
 
 
 class TestPreviewExtractionCache(unittest.TestCase):

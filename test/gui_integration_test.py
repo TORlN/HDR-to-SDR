@@ -381,42 +381,21 @@ class TestBatchQueueWidgets(_GuiTestBase):
         self.assertEqual(self.gui.output_path_var.get(), 'C:/v/a_sdr.mp4')
         mock_update.assert_called_once()
 
-    def test_batch_asks_before_overwriting_existing_output(self):
-        """_start_next_batch_item must not silently overwrite an existing
-        output file. When the output path already exists, the user is asked
-        to confirm; declining marks the item Failed and start_conversion is
-        never called."""
+    def test_start_next_batch_item_no_longer_prompts_for_existing_output(self):
+        """_start_next_batch_item must not check for or prompt about an
+        existing output file -- output-path conflicts are now resolved
+        earlier, by start_batch's two-click checkbox review flow, before
+        this method ever runs."""
         with patch.object(self.gui, 'update_frame_preview'):
             self.gui.add_batch_files(['C:/v/a.mp4'])
         item = self.gui.batch_items[0]
 
         with patch('src.gui.os.path.isfile', return_value=True), \
              patch('src.gui.os.path.exists', return_value=True), \
-             patch('src.batch.messagebox.askyesno', return_value=False) as mock_ask, \
-             patch('src.gui.conversion_manager.start_conversion') as mock_conv, \
-             patch.object(self.gui, '_load_input_file'), \
-             patch.object(self.gui, '_finish_batch'):
-            self.gui._start_next_batch_item()
-
-        mock_ask.assert_called_once()
-        mock_conv.assert_not_called()
-        self.assertEqual(item['status'], 'Failed')
-
-    def test_batch_proceeds_when_user_confirms_overwrite(self):
-        """Confirming the overwrite prompt lets the conversion proceed
-        normally, even though the output path already exists."""
-        with patch.object(self.gui, 'update_frame_preview'):
-            self.gui.add_batch_files(['C:/v/a.mp4'])
-        item = self.gui.batch_items[0]
-
-        with patch('src.gui.os.path.isfile', return_value=True), \
-             patch('src.gui.os.path.exists', return_value=True), \
-             patch('src.batch.messagebox.askyesno', return_value=True) as mock_ask, \
              patch('src.gui.conversion_manager.start_conversion') as mock_conv, \
              patch.object(self.gui, '_load_input_file'):
             self.gui._start_next_batch_item()
 
-        mock_ask.assert_called_once()
         mock_conv.assert_called_once()
         self.assertEqual(item['status'], 'Converting')
 
@@ -434,12 +413,12 @@ class TestBatchQueueWidgets(_GuiTestBase):
 
         mock_conv.assert_called_once()
 
-    def test_restarting_batch_asks_before_reconverting_item_whose_output_exists(self):
-        """Re-running Start Batch after a prior run finished must ask before
-        redoing the conversion, since the item's own output file from that
-        prior successful run is still sitting on disk at the same path.
-        Confirming proceeds with the redo; declining marks it Failed instead
-        of silently skipping OR silently clobbering the existing file."""
+    def test_restarting_batch_enters_review_before_reconverting_item_whose_output_exists(self):
+        """Re-running Start Batch after a prior run finished must enter
+        conflict review before redoing the conversion, since the item's own
+        output file from that prior successful run is still sitting on disk
+        at the same path. The first click only re-queues and reviews;
+        checking the item and clicking again finalizes and redoes it."""
         with patch.object(self.gui, 'update_frame_preview'):
             self.gui.add_batch_files(['C:/v/a.mp4'])
         item = self.gui.batch_items[0]
@@ -454,12 +433,23 @@ class TestBatchQueueWidgets(_GuiTestBase):
         with patch('src.batch.conversion_manager') as mock_cm, \
              patch('src.batch.os.path.isfile', return_value=True), \
              patch('src.batch.os.path.exists', return_value=True), \
-             patch('src.batch.messagebox.askyesno', return_value=True) as mock_ask, \
-             patch.object(self.gui, '_load_input_file'), \
-             patch.object(self.gui, '_finish_batch'):
-            self.gui.start_batch()
+             patch.object(self.gui, '_load_input_file'):
+            result = self.gui.start_batch()  # first click: enters review
 
-        mock_ask.assert_called_once()
+        self.assertFalse(result)
+        mock_cm.start_conversion.assert_not_called()
+        self.assertEqual(item['status'], 'Pending')
+        self.assertEqual(self.gui._batch_conflict_groups, [[item]])
+
+        self.gui._toggle_batch_conflict_item(item)  # user picks it to redo
+
+        with patch('src.batch.conversion_manager') as mock_cm, \
+             patch('src.batch.os.path.isfile', return_value=True), \
+             patch('src.batch.os.path.exists', return_value=True), \
+             patch.object(self.gui, '_load_input_file'):
+            result = self.gui.start_batch()  # second click: confirmed
+
+        self.assertTrue(result)
         mock_cm.start_conversion.assert_called_once()
         self.assertEqual(item['status'], 'Converting')
 

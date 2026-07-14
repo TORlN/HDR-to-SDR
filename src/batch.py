@@ -282,7 +282,7 @@ class _BatchMixin:
     def _enter_batch_conflict_review_ui(self) -> None:
         """Swap the batch hint label to conflict-count guidance and reveal
         the review-cancel button so the user can back out of review."""
-        count = sum(len(g) for g in self._batch_conflict_groups)
+        count = len(self._batch_conflict_groups)
         self.batch_hint_label.config(
             text=f"{count} output conflicts found — click a row to choose which "
                  "file keeps that path, then click Convert to start.")
@@ -404,15 +404,24 @@ class _BatchMixin:
 
     def _on_batch_listbox_click(self, event) -> None:
         """During conflict review, toggle the checkbox row the click landed
-        on. Outside review (or when the click misses every conflict row)
-        this is a no-op, so the click falls through to the normal
-        <<ListboxSelect>> preview binding on the same widget."""
+        on. Outside review, when the click misses every conflict row, or
+        when it lands in empty space below the last row (nearest() still
+        snaps that to the nearest visible index), this is a no-op, so the
+        click falls through to the normal <<ListboxSelect>> preview binding
+        on the same widget."""
         groups = getattr(self, '_batch_conflict_groups', None)
         if not groups:
             return
         index = self.batch_listbox.nearest(event.y)
-        if 0 <= index < len(self.batch_items):
-            self._toggle_batch_conflict_item(self.batch_items[index])
+        if not (0 <= index < len(self.batch_items)):
+            return
+        bbox = self.batch_listbox.bbox(index)
+        if bbox is None:
+            return
+        _, row_y, _, row_height = bbox
+        if not (row_y <= event.y <= row_y + row_height):
+            return
+        self._toggle_batch_conflict_item(self.batch_items[index])
 
     def _finish_batch(self) -> None:
         """Re-enable the UI and report a one-line summary once the queue drains."""

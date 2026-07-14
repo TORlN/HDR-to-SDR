@@ -1476,6 +1476,19 @@ class TestBatchConflictRendering(unittest.TestCase):
         row_a = gui.batch_listbox.insert.call_args_list[0][0][1]
         self.assertIn('same output as b.mp4', row_a)
 
+    def test_three_way_conflict_note_lists_both_other_files(self):
+        a = {'input': 'C:/v/a.mp4', 'output': 'C:/v/same.mp4', 'status': 'Pending'}
+        b = {'input': 'C:/v/b.mp4', 'output': 'C:/v/same.mp4', 'status': 'Pending'}
+        c = {'input': 'C:/v/c.mp4', 'output': 'C:/v/same.mp4', 'status': 'Pending'}
+        gui = self._gui()
+        gui.batch_items = [a, b, c]
+        gui._batch_conflict_groups = [[a, b, c]]
+        gui._batch_conflict_selection = {}
+        with patch('src.batch.os.path.exists', return_value=False):
+            gui._refresh_batch_list()
+        row_a = gui.batch_listbox.insert.call_args_list[0][0][1]
+        self.assertIn('same output as b.mp4, c.mp4', row_a)
+
     def test_exists_and_shared_notes_combine(self):
         a = {'input': 'C:/v/a.mp4', 'output': 'C:/v/same.mp4', 'status': 'Pending'}
         b = {'input': 'C:/v/b.mp4', 'output': 'C:/v/same.mp4', 'status': 'Pending'}
@@ -1853,6 +1866,45 @@ class TestBatchConflictReviewFlow(unittest.TestCase):
         self.assertEqual(b['status'], 'Converting')
         mock_cm.start_conversion.assert_called_once()
 
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_mixed_batch_of_existing_output_and_shared_output_conflicts(
+            self, _isfile):
+        # a's own output already exists on disk; b and c separately collide
+        # with each other on a second path. Both kinds of conflict must be
+        # resolved together in a single review pass.
+        gui = self._gui()
+        a = self._item('a')
+        b = self._item('b', output='same_sdr.mkv')
+        c = self._item('c', output='same_sdr.mkv')
+        gui.batch_items = [a, b, c]
+        exists_path = os.path.normpath('a_sdr.mkv')
+
+        def fake_exists(path):
+            return os.path.normpath(path) == exists_path
+
+        with patch('src.batch.os.path.exists', side_effect=fake_exists), \
+             patch('src.batch.conversion_manager'):
+            result = gui.start_batch()  # first click: enters review
+        self.assertFalse(result)
+        self.assertEqual(len(gui._batch_conflict_groups), 2)
+
+        gui._toggle_batch_conflict_item(a)  # keep a, overwriting its own output
+        gui._toggle_batch_conflict_item(c)  # c wins the shared path over b
+
+        with patch('src.batch.os.path.exists', side_effect=fake_exists), \
+             patch('src.batch.conversion_manager') as mock_cm:
+            mock_cm.cancelled = False
+            result = gui.start_batch()  # second click: finalize + start
+            self.assertTrue(result)
+            self.assertEqual(a['status'], 'Converting')
+            self.assertEqual(b['status'], 'Skipped')
+            self.assertEqual(c['status'], 'Pending')  # queued behind a
+            mock_cm.start_conversion.assert_called_once()
+
+            gui._on_batch_item_complete(True)  # a finishes; queue advances to c
+            self.assertEqual(c['status'], 'Converting')
+            self.assertEqual(mock_cm.start_conversion.call_count, 2)
+
 
 class TestBatchListboxClickToggle(unittest.TestCase):
     """<Button-1> on batch_listbox toggles a conflict row's checkbox when a
@@ -1865,6 +1917,7 @@ class TestBatchListboxClickToggle(unittest.TestCase):
         gui.batch_items = [item]
         gui.batch_listbox = MagicMock()
         gui.batch_listbox.nearest.return_value = 0
+        gui.batch_listbox.bbox.return_value = (0, 0, 100, 20)
         gui._batch_conflict_groups = [[item]]
         gui._batch_conflict_selection = {}
         gui._refresh_batch_list = MagicMock()
@@ -1878,6 +1931,23 @@ class TestBatchListboxClickToggle(unittest.TestCase):
         gui._batch_conflict_groups = None
         gui._on_batch_listbox_click(MagicMock(y=5))  # must not raise
         gui.batch_listbox.nearest.assert_not_called()
+
+    def test_click_below_last_row_is_noop(self):
+        # nearest() snaps a click in the empty space below the last row to
+        # that row's index; the bbox check must catch this so the click
+        # doesn't toggle a row it never actually landed on.
+        item = {'input': 'a.mkv', 'output': 'a_sdr.mkv', 'status': 'Pending'}
+        gui = _bare_gui()
+        gui.batch_items = [item]
+        gui.batch_listbox = MagicMock()
+        gui.batch_listbox.nearest.return_value = 0
+        gui.batch_listbox.bbox.return_value = (0, 0, 100, 20)
+        gui._batch_conflict_groups = [[item]]
+        gui._batch_conflict_selection = {}
+        gui._refresh_batch_list = MagicMock()
+        gui._on_batch_listbox_click(MagicMock(y=500))  # well below the row's box
+        self.assertNotIn(id(item), gui._batch_conflict_selection)
+        gui._refresh_batch_list.assert_not_called()
 
 
 class TestPreviewExtractionCache(unittest.TestCase):

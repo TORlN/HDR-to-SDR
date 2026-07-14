@@ -413,6 +413,57 @@ class TestBatchQueueWidgets(_GuiTestBase):
 
         mock_conv.assert_called_once()
 
+    def test_batch_proceeds_when_user_checks_the_conflicting_item(self):
+        """Checking the conflicting row and clicking Convert again lets the
+        conversion proceed, even though the output path already exists."""
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])
+        item = self.gui.batch_items[0]
+
+        with patch('src.gui.os.path.isfile', return_value=True), \
+             patch('src.batch.os.path.exists', return_value=True), \
+             patch('src.gui.conversion_manager.start_conversion') as mock_conv, \
+             patch.object(self.gui, '_load_input_file'):
+            self.gui.start_batch()  # first click: enters review
+            self.gui._toggle_batch_conflict_item(item)
+            self.gui.start_batch()  # second click: confirmed
+
+        mock_conv.assert_called_once()
+        self.assertEqual(item['status'], 'Converting')
+
+    def test_declining_a_conflict_marks_the_item_skipped_not_failed(self):
+        """Leaving a conflicting row unchecked and confirming skips that
+        item for this run -- it is not treated as an error."""
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])
+        item = self.gui.batch_items[0]
+
+        with patch('src.gui.os.path.isfile', return_value=True), \
+             patch('src.batch.os.path.exists', return_value=True), \
+             patch('src.gui.conversion_manager.start_conversion') as mock_conv, \
+             patch.object(self.gui, '_finish_batch'):
+            self.gui.start_batch()  # enters review, item left unchecked
+            self.gui.start_batch()  # confirm with nothing checked
+
+        mock_conv.assert_not_called()
+        self.assertEqual(item['status'], 'Skipped')
+
+    def test_clicking_a_conflict_row_toggles_its_checkbox(self):
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])
+        item = self.gui.batch_items[0]
+
+        with patch('src.gui.os.path.isfile', return_value=True), \
+             patch('src.batch.os.path.exists', return_value=True):
+            self.gui.start_batch()  # enters review
+
+        self.gui.batch_listbox.update_idletasks()
+        bbox = self.gui.batch_listbox.bbox(0)
+        y = bbox[1] + bbox[3] // 2
+        self.gui._on_batch_listbox_click(types.SimpleNamespace(y=y))
+
+        self.assertTrue(self.gui._batch_conflict_selection[id(item)])
+
     def test_restarting_batch_enters_review_before_reconverting_item_whose_output_exists(self):
         """Re-running Start Batch after a prior run finished must enter
         conflict review before redoing the conversion, since the item's own

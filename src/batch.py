@@ -284,7 +284,7 @@ class _BatchMixin:
     def _enter_batch_conflict_review_ui(self) -> None:
         """Swap the batch hint label to conflict-count guidance and reveal
         the review-cancel button so the user can back out of review."""
-        count = len(self._batch_conflict_groups)
+        count = len(self._batch_conflict_groups or [])
         self.batch_hint_label.config(
             text=f"{count} output conflicts found — click a row to choose which "
                  "file keeps that path, then click Convert to start.")
@@ -332,7 +332,7 @@ class _BatchMixin:
                 self._enter_batch_conflict_review_ui()
                 return False
         else:
-            for group in self._batch_conflict_groups:
+            for group in self._batch_conflict_groups or []:
                 for item in group:
                     if not self._batch_conflict_selection.get(id(item), False):
                         item['status'] = 'Skipped'

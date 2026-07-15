@@ -151,6 +151,8 @@ class _BatchMixin:
         """Preview the queue entry the user clicks."""
         if not hasattr(self, 'batch_listbox') or not hasattr(self, 'input_path_var'):
             return
+        if getattr(self, '_batch_conflict_groups', None) is not None:
+            return  # reviewing conflicts: clicks toggle checkboxes, not preview
         selection = self.batch_listbox.curselection()
         if not selection:
             return

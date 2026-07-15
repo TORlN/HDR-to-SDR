@@ -1327,6 +1327,19 @@ class TestBatchQueue(unittest.TestCase):
         gui.on_batch_item_select()
         gui._load_input_file.assert_not_called()
 
+    def test_click_during_conflict_review_does_not_reload_preview(self):
+        # Toggling a checkbox re-selects its row (Tk's default click
+        # behavior), which would otherwise fire the preview reload below
+        # and make rapid checkbox clicking feel sluggish.
+        gui = self._gui()
+        gui.input_path_var = MagicMock(); gui.input_path_var.get.return_value = 'a.mkv'
+        gui._load_input_file = MagicMock()
+        gui.batch_items = [{'input': 'a.mkv'}, {'input': 'b.mkv'}]
+        gui.batch_listbox.curselection.return_value = (1,)  # click the second file
+        gui._batch_conflict_groups = [[gui.batch_items[1]]]  # review in progress
+        gui.on_batch_item_select()
+        gui._load_input_file.assert_not_called()
+
 
 class TestBatchConflictDetection(unittest.TestCase):
     """_detect_batch_conflicts groups Pending items by resolved output path,

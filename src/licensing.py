@@ -1,4 +1,10 @@
-"""Node-locked software licensing with 30-day offline grace period.
+"""Node-locked software licensing.
+
+A valid local token is trusted indefinitely while offline -- a paid user is
+never locked out just because this machine can't reach Lemon Squeezy. Every
+30 days (_REFRESH_COOLDOWN) the app makes a best-effort attempt to
+re-validate online when it can, so an explicitly revoked/refunded key is
+still caught (and unlocked) the next time this machine has connectivity.
 
 Token format (license.dat):
   { "payload": "<JSON string>", "sig": "<HMAC-SHA256 hex>" }
@@ -260,7 +266,19 @@ def activate_license(key: str) -> None:
         existing = load_license_token()
     if existing and existing.get('key') == key:
         instance_id: str = existing['instance_id']
-        _ls_validate(key, instance_id)
+        try:
+            _ls_validate(key, instance_id)
+        except LicenseError:
+            # The server just told us this key is no longer valid -- clear
+            # the stale local token instead of leaving it in place, or
+            # check_license() would keep trusting it until the next
+            # cooldown-triggered refresh (up to 30 days later).
+            with _lock:
+                try:
+                    os.remove(LICENSE_FILE)
+                except OSError:
+                    pass
+            raise
         save_license_token(key, instance_id)
         return
 

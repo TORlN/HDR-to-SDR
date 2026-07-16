@@ -1263,22 +1263,26 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 if not answer:
                     return
 
-            if self.drop_target_registered:
-                self.unregister_drop_target()
-
-            self.cancel_button.grid()
-
             logging.info(
                 f"Starting conversion - Input: {input_path}, "
                 f"Output: {output_path}, Gamma: {gamma}")
 
-            conversion_manager.start_conversion(
+            # Only touch drag-and-drop/Cancel once the conversion has actually
+            # started -- start_conversion returns False (without raising) when
+            # a guard rejects the file (e.g. undetermined duration), and doing
+            # this beforehand would leave DnD permanently unregistered with the
+            # Cancel button stuck visible with no process behind it.
+            started = conversion_manager.start_conversion(
                 input_path, output_path, gamma, use_gpu,
                 self.progress_var, self.interactable_elements, self,
                 self.open_after_conversion_var.get(), self.cancel_button,
                 tonemapper=tonemapper, quality=quality, quality_mode=quality_mode,
                 bit_depth=bit_depth, licensed=self._licensed,
             )
+            if started:
+                if self.drop_target_registered:
+                    self.unregister_drop_target()
+                self.cancel_button.grid()
         except Exception as e:
             logging.error(f"Conversion error: {str(e)}", exc_info=True)
             messagebox.showerror("Conversion Error",

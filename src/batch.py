@@ -7,6 +7,7 @@ import re
 from tkinter import filedialog, messagebox
 from typing import TYPE_CHECKING
 import tkinter as tk
+from tkinter import ttk
 
 from conversion import conversion_manager
 
@@ -380,7 +381,7 @@ class _BatchMixin:
         bit_depth = self._selected_bit_depth()  # type: ignore[attr-defined]
 
         try:
-            conversion_manager.start_conversion(
+            started = conversion_manager.start_conversion(
                 input_path, output_path, gamma, use_gpu,
                 self.progress_var, self.interactable_elements, self,
                 self.open_after_conversion_var.get(), self.cancel_button,
@@ -393,7 +394,10 @@ class _BatchMixin:
             item['status'] = 'Failed'
             self._refresh_batch_list()
             return self._start_next_batch_item()
-        return True
+        # A guard rejecting the item (e.g. bad duration) already advanced the
+        # queue synchronously via on_complete above; `started` just reports
+        # what actually happened instead of always claiming success.
+        return started
 
     def _on_batch_item_complete(self, success: bool) -> None:
         """Mark the finished item and advance the queue (runs on the main thread)."""
@@ -431,7 +435,11 @@ class _BatchMixin:
         failed = sum(1 for it in self.batch_items if it['status'] == 'Failed')
         skipped = sum(1 for it in self.batch_items if it['status'] == 'Skipped')
         for element in self.interactable_elements:
-            element.config(state='normal')
+            # ttk.Combobox is only ever built 'readonly' -- restoring 'normal'
+            # would make it freely typeable (format_var.get() flows straight
+            # into the output filename).
+            state = 'readonly' if isinstance(element, ttk.Combobox) else 'normal'
+            element.config(state=state)
         self.cancel_button.grid_remove()
         if hasattr(self, 'register_drop_target'):
             self.register_drop_target()  # type: ignore[attr-defined]

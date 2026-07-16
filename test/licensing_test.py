@@ -179,6 +179,25 @@ class TestLicenseActivation(unittest.TestCase):
         mock_activate.assert_called_once()
         mock_validate.assert_not_called()
 
+    def test_reactivating_a_revoked_key_clears_the_stale_local_token(self):
+        """Re-entering a key that already has a local token, but has since
+        been revoked/refunded on the server, must clear that stale token --
+        otherwise check_license() keeps trusting it (within the cooldown
+        window) even though the dialog just showed 'Invalid license key.'"""
+        existing = _fresh_payload(key='AAAA-BBBB-CCCC-DDDD', instance_id='existing-inst-id')
+        with tempfile.TemporaryDirectory() as tmp:
+            lic_file = os.path.join(tmp, 'license.dat')
+            with patch('src.licensing.LICENSE_FILE', lic_file), \
+                 patch('src.licensing.SETTINGS_DIR', tmp):
+                save_license_token('AAAA-BBBB-CCCC-DDDD', 'existing-inst-id')
+            with patch('src.licensing.load_license_token', return_value=existing), \
+                 patch('src.licensing._ls_validate', side_effect=InvalidKeyError('revoked')), \
+                 patch('src.licensing.LICENSE_FILE', lic_file), \
+                 patch('src.licensing.SETTINGS_DIR', tmp):
+                with self.assertRaises(InvalidKeyError):
+                    activate_license('AAAA-BBBB-CCCC-DDDD')
+            self.assertFalse(os.path.exists(lic_file))
+
     def test_activation_device_limit_exceeded(self):
         """LS 'exceeded activations' response must raise DeviceLimitError."""
         with patch('urllib.request.urlopen', return_value=_urlopen_mock(_LS_ACTIVATE_LIMIT)):

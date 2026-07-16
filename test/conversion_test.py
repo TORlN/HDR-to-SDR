@@ -328,6 +328,19 @@ class TestConversionManager(unittest.TestCase):
             "Warning", "Input and output file cannot be the same."
         )
 
+    @unittest.skipUnless(sys.platform == 'win32', "NTFS case-insensitivity is Windows-only")
+    @patch('src.conversion.messagebox.showwarning')
+    def test_verify_paths_rejects_case_variant_of_same_file(self, mock_showwarning):
+        """NTFS is case-insensitive, so 'movie.mp4' and 'Movie.mp4' are the
+        same file on disk. os.path.abspath alone doesn't normalize case, so
+        without normcase this guard would pass and ffmpeg (-y) would read and
+        write the same file at once, corrupting the source."""
+        manager = ConversionManager()
+        self.assertFalse(manager.verify_paths('C:/videos/movie.mp4', 'C:/videos/Movie.mp4'))
+        mock_showwarning.assert_called_once_with(
+            "Warning", "Input and output file cannot be the same."
+        )
+
     def test_parse_time(self):
         """Test parse_time method."""
         manager = ConversionManager()
@@ -348,6 +361,21 @@ class TestConversionManager(unittest.TestCase):
         manager.enable_ui(elements)
         for element in elements:
             element.config.assert_called_with(state="normal")
+
+    def test_enable_ui_restores_comboboxes_to_readonly_not_normal(self):
+        """format_combobox/quality_mode_combobox are built with
+        state='readonly' specifically so users can't type into them --
+        format_var.get() flows straight into the output filename. Restoring
+        them to 'normal' on conversion completion would make that string
+        user-editable and let a typo become the literal output extension."""
+        combobox = MagicMock(spec=ttk.Combobox)
+        button = MagicMock(spec=ttk.Button)
+        manager = ConversionManager()
+
+        manager.enable_ui([combobox, button])
+
+        combobox.config.assert_called_once_with(state="readonly")
+        button.config.assert_called_once_with(state="normal")
 
     @patch('src.conversion.subprocess.Popen')
     def test_start_ffmpeg_process_non_windows(self, mock_popen):
@@ -693,6 +721,89 @@ class TestBatchCompletionHook(unittest.TestCase):
         manager.start_conversion('in.mp4', 'out.mkv', 1.0, False, MagicMock(),
                                  [], self._gui(), False, MagicMock(), on_complete=done)
         self.assertIs(manager._on_complete, done)
+
+
+class TestStartConversionSignalsFailureOnEarlyReturn(unittest.TestCase):
+    """Every guard in start_conversion that bails out before launching ffmpeg
+    must still report failure to the caller: return False, and -- when an
+    on_complete callback was supplied (the batch/queue path) -- call it with
+    False. Without this, a batch item that hits one of these guards is left
+    stuck at 'Converting' forever (nothing ever advances the queue), and a
+    single-file caller has no way to tell the attempt never started."""
+
+    _PROPS = {
+        "width": 1920, "height": 1080, "bit_rate": 4000000, "codec_name": 'h264',
+        "frame_rate": 30.0, "audio_codec": 'aac', "audio_bit_rate": 128000,
+        "duration": 120.0, "subtitle_streams": [],
+    }
+
+    @patch('src.conversion.messagebox.showwarning')
+    def test_invalid_paths_signals_failure(self, mock_warn):
+        manager = ConversionManager()
+        done = MagicMock()
+        result = manager.start_conversion(
+            '', 'output.mkv', 2.2, False, MagicMock(), [], MagicMock(),
+            False, MagicMock(), on_complete=done)
+        self.assertFalse(result)
+        done.assert_called_once_with(False)
+
+    @patch('src.conversion.messagebox.showwarning')
+    def test_bit_depth_incompatibility_signals_failure(self, mock_warn):
+        manager = ConversionManager()
+        done = MagicMock()
+        result = manager.start_conversion(
+            'in.mp4', 'out.m4v', 2.2, False, MagicMock(), [], MagicMock(),
+            False, MagicMock(), bit_depth=10, on_complete=done)
+        self.assertFalse(result)
+        done.assert_called_once_with(False)
+
+    @patch('src.conversion.messagebox.showwarning')
+    @patch('src.conversion.get_video_properties', return_value=None)
+    def test_missing_properties_signals_failure(self, mock_props, mock_warn):
+        manager = ConversionManager()
+        done = MagicMock()
+        result = manager.start_conversion(
+            'in.mp4', 'out.mkv', 2.2, False, MagicMock(), [], MagicMock(),
+            False, MagicMock(), on_complete=done)
+        self.assertFalse(result)
+        done.assert_called_once_with(False)
+
+    @patch('src.conversion.messagebox.showwarning')
+    @patch('src.conversion.get_video_properties')
+    def test_zero_duration_signals_failure(self, mock_props, mock_warn):
+        mock_props.return_value = dict(self._PROPS, duration=0)
+        manager = ConversionManager()
+        done = MagicMock()
+        result = manager.start_conversion(
+            'in.mp4', 'out.mkv', 2.2, False, MagicMock(), [], MagicMock(),
+            False, MagicMock(), on_complete=done)
+        self.assertFalse(result)
+        done.assert_called_once_with(False)
+
+    @patch('src.conversion.messagebox.showwarning')
+    def test_early_return_without_on_complete_does_not_crash(self, mock_warn):
+        """The single-file path passes no on_complete -- the None default
+        must not be called."""
+        manager = ConversionManager()
+        result = manager.start_conversion(
+            '', 'output.mkv', 2.2, False, MagicMock(), [], MagicMock(),
+            False, MagicMock())
+        self.assertFalse(result)
+
+    @patch('src.conversion.subprocess.Popen')
+    @patch('src.conversion.get_video_properties')
+    def test_successful_launch_returns_true(self, mock_props, mock_popen):
+        mock_props.return_value = dict(self._PROPS)
+        proc = MagicMock()
+        proc.stderr = iter([])
+        mock_popen.return_value = proc
+        mock_gui = MagicMock()
+        mock_gui.root.after = MagicMock()
+        manager = ConversionManager()
+        result = manager.start_conversion(
+            'in.mp4', 'out.mkv', 2.2, False, MagicMock(), [], mock_gui,
+            False, MagicMock())
+        self.assertTrue(result)
 
 
 class TestDetectGpuEncoder(unittest.TestCase):
@@ -1487,6 +1598,59 @@ class TestMonitorProgressCancellationRace(unittest.TestCase):
             )
 
 
+class TestGpuErrorDetectionFalsePositive(unittest.TestCase):
+    """gpu_error_detected must not fire just because the input/output filename
+    happens to contain a GPU-vendor substring -- ffmpeg echoes both paths
+    verbatim in its banner lines ("Input #0, ..., from '<path>':"), so a file
+    named e.g. 'cuda_test.mp4' or 'amf_demo.mkv' must not make an unrelated
+    failure (bad codec, full disk) get misdiagnosed as a GPU error and
+    silently retried on CPU, doubling the work and hiding the real cause."""
+
+    def _gui(self):
+        gui = MagicMock()
+        gui.root.after = MagicMock(side_effect=lambda delay, func: func())
+        return gui
+
+    def _run(self, stderr_lines, returncode=1):
+        manager = ConversionManager()
+        manager.cancelled = False
+        manager.use_gpu = True
+        mock_proc = MagicMock()
+        mock_proc.stderr = iter(stderr_lines)
+        mock_proc.returncode = returncode
+        manager.process = mock_proc
+        gui = self._gui()
+        # The false-positive cases fall through to the real handle_completion
+        # (correctly showing the genuine error instead of retrying) -- mock
+        # messagebox so that doesn't pop a real, click-blocking dialog here.
+        with patch.object(manager, '_retry_with_cpu') as mock_retry, \
+             patch('src.conversion.messagebox'):
+            manager.monitor_progress(
+                MagicMock(), 10.0, gui, [], MagicMock(), 'out.mkv', False, 2.2)
+        return mock_retry
+
+    def test_gpu_keyword_in_input_banner_line_does_not_trigger_retry(self):
+        mock_retry = self._run([
+            "Input #0, mov,mp4,m4a, from 'cuda_test.mp4':\n",
+            "Error: codec not found\n",
+        ])
+        mock_retry.assert_not_called()
+
+    def test_gpu_keyword_in_output_banner_line_does_not_trigger_retry(self):
+        mock_retry = self._run([
+            "Output #0, mp4, to 'amf_demo_out.mp4':\n",
+            "Error: disk full\n",
+        ])
+        mock_retry.assert_not_called()
+
+    def test_genuine_gpu_failure_line_still_triggers_retry(self):
+        mock_retry = self._run([
+            "Input #0, mov,mp4,m4a, from 'movie.mp4':\n",
+            "Cannot load nvcuda.dll\n",
+        ])
+        mock_retry.assert_called_once()
+
+
 class TestConstructCommandNoFilterIndex(unittest.TestCase):
     """After removing Static, construct_ffmpeg_command takes no selected_filter_index."""
 
@@ -1626,7 +1790,8 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         self.assertIn('-init_hw_device', cmd)   # Vulkan device for the filter
         self.assertIn('libx265', cmd)           # encode itself stays on CPU
 
-    def test_dovi_profile5_without_libplacebo_falls_back_to_cpu_chain(self):
+    @patch('src.conversion.messagebox.showwarning')
+    def test_dovi_profile5_without_libplacebo_falls_back_to_cpu_chain(self, mock_warn):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
             'in.mkv', 'out.mkv', 1.0, self._dovi_props(profile=5), False,
@@ -1634,6 +1799,30 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         fc = cmd[cmd.index('-filter_complex') + 1]
         self.assertIn('zscale', fc)
         self.assertNotIn('libplacebo', fc)
+
+    @patch('src.conversion.messagebox.showwarning')
+    def test_dovi_profile5_without_libplacebo_warns_about_wrong_colors(self, mock_warn):
+        """The zscale fallback for profile 5 has no RPU applied and renders
+        wrong colors (green/purple cast per the code's own comment) -- the
+        conversion must not exit silently with no indication anything is off."""
+        manager = ConversionManager()
+        manager.construct_ffmpeg_command(
+            'in.mkv', 'out.mkv', 1.0, self._dovi_props(profile=5), False,
+            tonemapper='reinhard', licensed=True)
+        mock_warn.assert_called_once()
+        warning_text = mock_warn.call_args[0][1].lower()
+        self.assertIn('dolby vision', warning_text)
+
+    @patch('src.conversion.messagebox.showwarning')
+    def test_dovi_profile5_with_libplacebo_does_not_warn(self, mock_warn):
+        """When libplacebo IS available, the RPU is correctly applied --
+        no warning should fire."""
+        manager = ConversionManager()
+        with patch('src.conversion.vulkan_libplacebo_available', return_value=True):
+            manager.construct_ffmpeg_command(
+                'in.mkv', 'out.mkv', 1.0, self._dovi_props(profile=5), False,
+                tonemapper='reinhard', licensed=True)
+        mock_warn.assert_not_called()
 
     def test_dovi_profile8_keeps_standard_hdr10_cpu_chain(self):
         """Profiles 7/8 carry an HDR10-compatible base layer, so the existing

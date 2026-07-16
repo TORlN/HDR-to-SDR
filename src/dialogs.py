@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 import threading
 import tkinter as tk
@@ -56,20 +57,22 @@ class _LicenseDialog(tk.Toplevel):
         link.pack(pady=(0, 10))
         link.bind('<Button-1>', lambda _: webbrowser.open('https://hdrtosdr.com/#pricing'))
         self._key_var = tk.StringVar()
-        entry = tk.Entry(self, textvariable=self._key_var, width=44,
+        self._entry = tk.Entry(self, textvariable=self._key_var, width=44,
                          bg=_ENTRY_BG, fg=_FG, insertbackground=_FG,
                          relief='flat', font=_FONT)
-        entry.pack(padx=32, ipady=7)
-        entry.focus_set()
-        entry.bind('<Return>', lambda _: self._submit())
+        self._entry.pack(padx=32, ipady=7)
+        self._entry.focus_set()
+        self._entry.bind('<Return>', lambda _: self._submit())
         self._status_var = tk.StringVar()
         tk.Label(self, textvariable=self._status_var,
                  bg=_BG, fg=_ERROR_FG, font=_FONT_SM).pack(pady=(6, 0))
-        tk.Button(self, text='Activate', command=self._submit,
-                  bg=_ACCENT, fg=_FG,
-                  activebackground='#005fa3', activeforeground=_FG,
-                  relief='flat', padx=20, pady=7,
-                  font=_FONT, cursor='hand2').pack(pady=14)
+        self._activate_btn = tk.Button(
+            self, text='Activate', command=self._submit,
+            bg=_ACCENT, fg=_FG,
+            activebackground='#005fa3', activeforeground=_FG,
+            relief='flat', padx=20, pady=7,
+            font=_FONT, cursor='hand2')
+        self._activate_btn.pack(pady=14)
         link = tk.Label(self, text='Need to free up a machine slot? Manage activations →',
                         bg=_BG, fg='#888888', font=_FONT_SM, cursor='hand2')
         link.pack()
@@ -86,18 +89,38 @@ class _LicenseDialog(tk.Toplevel):
             self._status_var.set('Please enter your license key.')
             return
         self._status_var.set('Validating…')
-        self.update()
-        try:
-            activate_license(key)
-            self._activated = True
-            self.destroy()
-        except InvalidKeyError:
+        self._entry.config(state='disabled')
+        self._activate_btn.config(state='disabled')
+
+        # activate_license is a blocking HTTP round-trip -- running it
+        # directly on the Tk main thread would freeze the whole UI for the
+        # duration of the request/timeout. Run it on a worker thread and
+        # marshal the result back via self.after, matching _UpdateDialog's
+        # existing download pattern.
+        def _worker() -> None:
+            try:
+                activate_license(key)
+            except LicenseError as exc:
+                self.after(0, lambda e=exc: self._on_activation_error(e))
+            else:
+                self.after(0, self._on_activation_success)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_activation_success(self) -> None:
+        self._activated = True
+        self.destroy()
+
+    def _on_activation_error(self, exc: LicenseError) -> None:
+        self._entry.config(state='normal')
+        self._activate_btn.config(state='normal')
+        if isinstance(exc, InvalidKeyError):
             self._status_var.set('Invalid license key — please check and try again.')
-        except DeviceLimitError:
+        elif isinstance(exc, DeviceLimitError):
             self._status_var.set('Device limit reached. Deactivate another machine first.')
-        except NetworkError:
+        elif isinstance(exc, NetworkError):
             self._status_var.set('Cannot reach license server. Check your connection.')
-        except LicenseError as exc:
+        else:
             self._status_var.set(str(exc))
 
     def _on_close(self) -> None:
@@ -156,6 +179,8 @@ class _UpdateDialog(tk.Toplevel):
         self._progress = ttk.Progressbar(self, variable=self._progress_var,
                                           maximum=100, length=360)
 
+        self._tmp_dir: str | None = None
+
         self._btn_frame = tk.Frame(self, bg=_BG)
         self._btn_frame.pack(pady=(10, 0))
 
@@ -184,8 +209,14 @@ class _UpdateDialog(tk.Toplevel):
         self._progress.pack(pady=(6, 0))
         self.protocol('WM_DELETE_WINDOW', lambda: None)
 
-        tmp_dir = tempfile.mkdtemp(prefix='hdr_to_sdr_update_')
-        dest = os.path.join(tmp_dir, 'HDR_to_SDR_Setup.exe')
+        # A prior failed attempt's temp dir is only cleaned up here, right
+        # before minting a new one -- not in _on_download_error -- so a
+        # successful download's directory (still needed while the detached
+        # installer runs from it) is never touched.
+        if self._tmp_dir is not None:
+            shutil.rmtree(self._tmp_dir, ignore_errors=True)
+        self._tmp_dir = tempfile.mkdtemp(prefix='hdr_to_sdr_update_')
+        dest = os.path.join(self._tmp_dir, 'HDR_to_SDR_Setup.exe')
 
         def _on_progress(downloaded: int, total: int) -> None:
             if total > 0:

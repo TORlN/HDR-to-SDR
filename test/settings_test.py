@@ -117,6 +117,34 @@ class TestSaveSettings(unittest.TestCase):
                 result = load_settings()
         self.assertEqual(result, DEFAULTS)
 
+    def test_failed_write_does_not_corrupt_existing_file(self):
+        """A crash/error mid-write must not leave a truncated settings.json --
+        load_settings would then silently fall back to defaults, wiping every
+        saved preference. Writing to a temp file and atomically replacing the
+        original avoids this."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_file = os.path.join(tmpdir, 'settings.json')
+            with patch('src.settings.SETTINGS_FILE', test_file):
+                save_settings(dict(DEFAULTS, gamma=1.7))  # known-good baseline
+                with open(test_file, encoding='utf-8') as f:
+                    original_bytes = f.read()
+
+                class _Unserializable:
+                    pass
+
+                # 'filetype' is the last DEFAULTS key -- json.dump would
+                # already have written every earlier key before hitting this
+                # one and raising.
+                bad_payload = dict(DEFAULTS, gamma=1.7, filetype=_Unserializable())
+                save_settings(bad_payload)  # must not raise, must not corrupt
+
+                with open(test_file, encoding='utf-8') as f:
+                    after_bytes = f.read()
+
+            self.assertEqual(after_bytes, original_bytes)
+            # No stray temp file left behind in the settings directory.
+            self.assertEqual(os.listdir(tmpdir), ['settings.json'])
+
     def test_only_known_keys_are_written(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             test_file = os.path.join(tmpdir, 'settings.json')

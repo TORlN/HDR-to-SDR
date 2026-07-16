@@ -12,6 +12,7 @@ how CI runs the existing GUI tests under xvfb.
 """
 import os
 import sys
+import threading
 import types
 import unittest
 from unittest.mock import patch, MagicMock
@@ -48,6 +49,18 @@ def _tk_available() -> bool:
 
 _TK_OK = _tk_available()
 _SKIP = "no Tk display available (need a desktop session or xvfb)"
+
+
+class _SyncThread:
+    """Stand-in for threading.Thread that runs its target immediately, inline,
+    instead of on a real worker thread -- lets tests assert on the result of
+    a backgrounded call without sleeping/polling for a real thread to finish."""
+
+    def __init__(self, target=None, daemon=None, **_kw):
+        self._target = target
+
+    def start(self) -> None:
+        self._target()
 
 
 @unittest.skipUnless(_TK_OK, _SKIP)
@@ -412,6 +425,45 @@ class TestBatchQueueWidgets(_GuiTestBase):
             self.gui._start_next_batch_item()
 
         mock_conv.assert_called_once()
+
+    def test_finish_batch_restores_comboboxes_to_readonly_not_normal(self):
+        """format_combobox/quality_mode_combobox are built 'readonly' so users
+        can't type into them -- format_var.get() flows straight into the
+        output filename. _finish_batch's blanket state='normal' must not
+        make them freely editable again."""
+        self.gui.format_combobox.config(state='disabled')
+        self.gui.quality_mode_combobox.config(state='disabled')
+
+        with patch('src.batch.messagebox'):
+            self.gui._finish_batch()
+
+        self.assertEqual(str(self.gui.format_combobox.cget('state')), 'readonly')
+        self.assertEqual(str(self.gui.quality_mode_combobox.cget('state')), 'readonly')
+
+    def test_batch_item_that_fails_to_start_does_not_stall_the_queue(self):
+        """When start_conversion bails out synchronously (e.g. a guard like
+        missing duration) it now calls on_complete(False) instead of just
+        returning -- this must mark the item Failed (not leave it stuck at
+        'Converting') and advance to the next item rather than stalling."""
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4', 'C:/v/b.mp4'])
+
+        def fake_start_conversion(*args, **kwargs):
+            kwargs['on_complete'](False)  # simulates a guard firing synchronously
+            return False
+
+        with patch('src.batch.conversion_manager') as mock_cm, \
+             patch('src.batch.os.path.isfile', return_value=True), \
+             patch('src.batch.os.path.exists', return_value=False), \
+             patch.object(self.gui, '_load_input_file'), \
+             patch.object(self.gui, '_finish_batch') as mock_finish:
+            mock_cm.start_conversion.side_effect = fake_start_conversion
+            mock_cm.cancelled = False
+            self.gui.start_batch()
+
+        self.assertEqual(self.gui.batch_items[0]['status'], 'Failed')
+        self.assertEqual(self.gui.batch_items[1]['status'], 'Failed')
+        mock_finish.assert_called_once()  # queue drained instead of stalling
 
     def test_batch_proceeds_when_user_checks_the_conflicting_item(self):
         """Checking the conflicting row and clicking Convert again lets the
@@ -1199,6 +1251,23 @@ class TestUserActions(_GuiTestBase):
         self.assertNotEqual(self.gui.cancel_button.grid_info(), {})  # shown
 
     @patch('src.gui.messagebox')
+    @patch('src.gui.os.path.exists', return_value=False)
+    @patch('src.gui.os.path.isfile', return_value=True)
+    @patch('src.gui.conversion_manager')
+    def test_convert_video_leaves_ui_usable_when_start_conversion_declines(self, mock_cm, *_):
+        """start_conversion returning False means a guard rejected the file
+        before ever launching ffmpeg (e.g. undetermined duration). Drag-and-
+        drop must stay registered and Cancel must stay hidden -- otherwise
+        the only way to recover is restarting the app."""
+        mock_cm.start_conversion.return_value = False
+        self.gui.input_path_var.set('in.mkv')
+        self.gui.output_path_var.set('out.mkv')
+        self.gui.convert_video()
+        mock_cm.start_conversion.assert_called_once()
+        self.assertTrue(self.gui.drop_target_registered)  # still registered
+        self.assertEqual(self.gui.cancel_button.grid_info(), {})  # still hidden
+
+    @patch('src.gui.messagebox')
     @patch('src.gui.conversion_manager')
     def test_cancel_button_invokes_cancel(self, mock_cm, _mb):
         self.gui.cancel_conversion()
@@ -1909,6 +1978,14 @@ class TestLicenseDialog(unittest.TestCase):
         dlg.withdraw()
         return dlg
 
+    def _submit_sync(self, dlg) -> None:
+        """Drive _submit() with the worker thread replaced by a synchronous
+        stand-in, then pump the Tk event queue so the self.after(0, ...)
+        completion callback (still real Tk) actually runs."""
+        with patch('src.dialogs.threading.Thread', _SyncThread):
+            dlg._submit()
+        dlg.update()
+
     def test_initial_activated_is_false(self):
         dlg = self._make_dialog()
         self.assertFalse(dlg.activated)
@@ -1931,7 +2008,7 @@ class TestLicenseDialog(unittest.TestCase):
         dlg = self._make_dialog()
         dlg._key_var.set('VALID-KEY-1234')
         with patch('src.dialogs.activate_license'):
-            dlg._submit()
+            self._submit_sync(dlg)
         self.assertTrue(dlg._activated)
 
     def test_submit_invalid_key_shows_error(self):
@@ -1939,7 +2016,7 @@ class TestLicenseDialog(unittest.TestCase):
         dlg = self._make_dialog()
         dlg._key_var.set('BAD-KEY')
         with patch('src.dialogs.activate_license', side_effect=_gm.InvalidKeyError('bad')):
-            dlg._submit()
+            self._submit_sync(dlg)
         self.assertIn('invalid', dlg._status_var.get().lower())
         self.assertFalse(dlg._activated)
         dlg.destroy()
@@ -1949,7 +2026,7 @@ class TestLicenseDialog(unittest.TestCase):
         dlg = self._make_dialog()
         dlg._key_var.set('LIMIT-KEY')
         with patch('src.dialogs.activate_license', side_effect=_gm.DeviceLimitError('limit')):
-            dlg._submit()
+            self._submit_sync(dlg)
         self.assertIn('limit', dlg._status_var.get().lower())
         dlg.destroy()
 
@@ -1958,7 +2035,7 @@ class TestLicenseDialog(unittest.TestCase):
         dlg = self._make_dialog()
         dlg._key_var.set('NET-KEY')
         with patch('src.dialogs.activate_license', side_effect=_gm.NetworkError('offline')):
-            dlg._submit()
+            self._submit_sync(dlg)
         self.assertIn('connection', dlg._status_var.get().lower())
         dlg.destroy()
 
@@ -1967,8 +2044,63 @@ class TestLicenseDialog(unittest.TestCase):
         dlg = self._make_dialog()
         dlg._key_var.set('ERR-KEY')
         with patch('src.dialogs.activate_license', side_effect=_gm.LicenseError('custom message')):
-            dlg._submit()
+            self._submit_sync(dlg)
         self.assertIn('custom message', dlg._status_var.get())
+        dlg.destroy()
+
+    def test_submit_runs_activate_license_off_the_main_thread(self):
+        """activate_license is a blocking HTTP round-trip -- running it
+        directly on the Tk main thread would freeze the whole UI for the
+        duration of the request/timeout. It must run on a worker thread."""
+        dlg = self._make_dialog()
+        dlg._key_var.set('VALID-KEY-1234')
+        seen_thread: list = []
+        created_threads: list = []
+        real_thread_cls = threading.Thread
+
+        def capturing_thread(*args, **kwargs):
+            t = real_thread_cls(*args, **kwargs)
+            created_threads.append(t)
+            return t
+
+        def fake_activate(key):
+            seen_thread.append(threading.current_thread())
+
+        # Calling real Tk .after() from a background thread needs an active
+        # mainloop() to be thread-safe (it isn't running one here) -- swap it
+        # for a plain mock so this test proves the threading behavior without
+        # depending on that.
+        dlg.after = MagicMock()
+        with patch('src.dialogs.activate_license', side_effect=fake_activate), \
+             patch('src.dialogs.threading.Thread', side_effect=capturing_thread):
+            dlg._submit()
+            self.assertEqual(len(created_threads), 1)
+            created_threads[0].join(timeout=2.0)
+
+        self.assertEqual(len(seen_thread), 1)
+        self.assertIsNot(seen_thread[0], threading.main_thread())
+        dlg.after.assert_called_once()
+        dlg.destroy()
+
+    def test_submit_disables_entry_and_button_while_validating(self):
+        """Once the request is backgrounded, a double-click/double-Enter must
+        not fire a second concurrent activate_license call."""
+        dlg = self._make_dialog()
+        dlg._key_var.set('VALID-KEY-1234')
+        with patch('src.dialogs.threading.Thread'):  # never actually runs the worker
+            dlg._submit()
+        self.assertEqual(str(dlg._entry.cget('state')), 'disabled')
+        self.assertEqual(str(dlg._activate_btn.cget('state')), 'disabled')
+        dlg.destroy()
+
+    def test_submit_reenables_entry_and_button_on_error(self):
+        import src.gui as _gm
+        dlg = self._make_dialog()
+        dlg._key_var.set('BAD-KEY')
+        with patch('src.dialogs.activate_license', side_effect=_gm.InvalidKeyError('bad')):
+            self._submit_sync(dlg)
+        self.assertEqual(str(dlg._entry.cget('state')), 'normal')
+        self.assertEqual(str(dlg._activate_btn.cget('state')), 'normal')
         dlg.destroy()
 
     def test_manage_activations_link_opens_lemon_squeezy(self):
@@ -2014,6 +2146,51 @@ class TestUpdateDialog(unittest.TestCase):
                              'https://example.com/setup.exe', self._RELEASE_URL)
         dlg.withdraw()
         return dlg
+
+    def _start_download_sync(self, dlg) -> None:
+        """Drive _start_download() with the worker thread replaced by a
+        synchronous stand-in, then pump the Tk event queue so the
+        self.after(0, ...) completion/error callback (real Tk) actually runs."""
+        with patch('src.dialogs.threading.Thread', _SyncThread):
+            dlg._start_download()
+        dlg.update()
+
+    def test_retry_after_failure_cleans_up_previous_temp_dir(self):
+        """Each Retry click used to mint a fresh temp dir via mkdtemp without
+        ever removing the previous failed attempt's -- an unbounded leak of
+        empty (or partial-download) directories under the temp root."""
+        dlg = self._make_dialog()
+        with patch('updater.download_installer', side_effect=OSError('disk full')):
+            self._start_download_sync(dlg)
+        first_tmp_dir = dlg._tmp_dir
+        self.assertIsNotNone(first_tmp_dir)
+        self.assertTrue(os.path.isdir(first_tmp_dir))
+
+        with patch('updater.download_installer', side_effect=OSError('disk full')):
+            self._start_download_sync(dlg)
+        second_tmp_dir = dlg._tmp_dir
+
+        self.assertNotEqual(first_tmp_dir, second_tmp_dir)
+        self.assertFalse(os.path.isdir(first_tmp_dir),
+                         "previous attempt's temp dir must be cleaned up on retry")
+        dlg.destroy()
+        import shutil as _shutil
+        _shutil.rmtree(second_tmp_dir, ignore_errors=True)
+
+    def test_successful_download_temp_dir_is_not_touched_by_a_later_retry_path(self):
+        """A successful download's temp dir holds the .exe the detached
+        installer is about to run from -- _start_download must never delete
+        it (only a subsequent _start_download call may clean up its own
+        prior *failed* attempt)."""
+        dlg = self._make_dialog()
+        with patch('updater.download_installer'):  # succeeds, does nothing
+            self._start_download_sync(dlg)
+        tmp_dir = dlg._tmp_dir
+        self.assertIsNotNone(tmp_dir)
+        self.assertTrue(os.path.isdir(tmp_dir))
+        dlg.destroy()
+        import shutil as _shutil
+        _shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def test_changelog_link_widget_exists(self):
         dlg = self._make_dialog()

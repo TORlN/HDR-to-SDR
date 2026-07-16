@@ -239,18 +239,25 @@ def _probe_hdr_metadata(video_path):
         for sd in frame.get('side_data_list', []):
             sdt = sd.get('side_data_type')
             if sdt == 'Content light level metadata':
+                # A legitimately-reported 0 must not be treated the same as
+                # an absent key -- 'if mc:' would silently drop it.
                 mc = sd.get('max_content')
-                if mc:
+                if mc is not None:
                     result['maxcll'] = float(mc)
                 mf = sd.get('max_average')
-                if mf:
+                if mf is not None:
                     result['maxfall'] = float(mf)
             elif sdt == 'Mastering display metadata':
                 lum = sd.get('max_luminance')
-                if lum and '/' in str(lum):
-                    num, den = str(lum).split('/')
-                    if float(den) != 0:
-                        result['mastering_peak'] = float(num) / float(den)
+                if lum is not None:
+                    if '/' in str(lum):
+                        num, den = str(lum).split('/')
+                        if float(den) != 0:
+                            result['mastering_peak'] = float(num) / float(den)
+                    else:
+                        # Some containers report a plain number instead of
+                        # the fraction form -- just as valid, don't drop it.
+                        result['mastering_peak'] = float(lum)
     return result
 
 
@@ -663,6 +670,21 @@ def _int_or_zero(v) -> int:
         return 0
 
 
+def _parse_frame_rate_fraction(value) -> float:
+    """Parse an ffprobe fractional frame-rate string ('30000/1001', '0/0', or
+    the literal 'N/A') into a float. Returns 0.0 when it can't be determined
+    -- callers should treat that as 'try the next field' or 'unreadable',
+    never pass it straight through to ffmpeg's -r."""
+    if not value or '/' not in value:
+        return 0.0
+    num_str, _, den_str = value.partition('/')
+    try:
+        num, den = int(num_str), int(den_str)
+    except ValueError:
+        return 0.0
+    return num / den if den else 0.0
+
+
 def _parse_dovi(video_stream: dict) -> 'tuple[bool, int | None]':
     """Detect Dolby Vision from the video stream's side data.
 
@@ -745,11 +767,17 @@ def get_video_properties(input_file):
         if not video_stream:
             return None
             
-        frame_rate = video_stream.get('avg_frame_rate', '0/1')
-        if '/' in frame_rate:
-            num, den = map(int, frame_rate.split('/'))
-            frame_rate = num / den if den != 0 else 0
-        
+        # avg_frame_rate can be '0/0' (denominator-zero, seen on some VFR
+        # sources) or the literal string 'N/A' (no '/' at all) -- either
+        # would otherwise become frame_rate=0.0 and reach ffmpeg as '-r 0'
+        # (rejected outright), or raise ValueError from float('N/A').
+        # r_frame_rate is the nominal rate and is almost always usable, so
+        # fall back to it before giving up.
+        frame_rate = (_parse_frame_rate_fraction(video_stream.get('avg_frame_rate'))
+                      or _parse_frame_rate_fraction(video_stream.get('r_frame_rate')))
+        if not frame_rate:
+            return None
+
         if 'format' not in data:
             return None
         duration = float(data['format'].get('duration', 0))
@@ -792,7 +820,7 @@ def get_video_properties(input_file):
         return props
         
     except (subprocess.SubprocessError, json.JSONDecodeError, ValueError) as e:
-        print(f"Error getting video properties: {str(e)}")
+        logging.error(f"Error getting video properties: {str(e)}")
         return None
 
 

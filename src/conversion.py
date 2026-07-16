@@ -4,7 +4,7 @@ import threading
 import webbrowser
 import re
 import logging
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 from utils import (get_video_properties, FFMPEG_CONVERT_FILTER,
                    FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE,
                    VULKAN_DEVICE_ARGS, VULKAN_CUDA_DEVICE_ARGS,
@@ -26,13 +26,23 @@ class ConversionManager:
                          open_after_conversion, cancel_button, tonemapper='reinhard',
                          quality=23, quality_mode='cq', on_complete=None, bit_depth=8,
                          licensed=False):
+        # Every early-out below must go through here rather than a bare
+        # `return`: on_complete drives the batch queue, and a guard that
+        # fires without calling it leaves the item stuck at 'Converting'
+        # forever. Returning False also lets single-file callers know the
+        # conversion never actually started.
+        def _abort_before_start():
+            if on_complete is not None:
+                on_complete(False)
+            return False
+
         if not self.verify_paths(input_path, output_path):
-            return
+            return _abort_before_start()
 
         incompatibility = self.validate_bit_depth_output(output_path, bit_depth)
         if incompatibility:
             messagebox.showwarning("Warning", incompatibility)
-            return
+            return _abort_before_start()
 
         input_path = os.path.abspath(input_path)
         output_path = os.path.abspath(output_path)
@@ -52,14 +62,14 @@ class ConversionManager:
         properties = get_video_properties(input_path)
         if properties is None:
             messagebox.showwarning("Warning", "Failed to retrieve video properties.")
-            return
+            return _abort_before_start()
 
         # A missing/zero duration would make progress tracking divide by zero in
         # the monitor thread (which would then die silently, leaving the UI stuck).
         if not properties.get('duration'):
             messagebox.showwarning(
                 "Warning", "Could not determine the video's duration, so it can't be converted.")
-            return
+            return _abort_before_start()
 
         self.disable_ui(interactable_elements)
         cancel_button.config(command=lambda: self.cancel_conversion(
@@ -89,13 +99,18 @@ class ConversionManager:
             cancel_button, output_path, open_after_conversion, gamma, tonemapper))
         thread.daemon = True
         thread.start()
+        return True
 
     def verify_paths(self, input_path, output_path):
         if not input_path or not output_path:
             messagebox.showwarning(
                 "Warning", "Please select both an input file and specify an output file.")
             return False
-        if os.path.abspath(input_path) == os.path.abspath(output_path):
+        # normcase folds case on Windows (NTFS is case-insensitive) and is a
+        # no-op elsewhere -- without it, 'movie.mp4' vs 'Movie.mp4' would
+        # pass this guard and ffmpeg (-y) would read and write the same file.
+        if os.path.normcase(os.path.abspath(input_path)) == \
+                os.path.normcase(os.path.abspath(output_path)):
             messagebox.showwarning(
                 "Warning", "Input and output file cannot be the same.")
             return False
@@ -107,7 +122,11 @@ class ConversionManager:
 
     def enable_ui(self, elements):
         for element in elements:
-            element.config(state="normal")
+            # A ttk.Combobox re-enabled to 'normal' becomes freely typeable,
+            # not just clickable -- these are only ever built 'readonly', so
+            # restore that instead of clobbering it with 'normal'.
+            state = 'readonly' if isinstance(element, ttk.Combobox) else 'normal'
+            element.config(state=state)
 
     # Hardware H.264 encoders can't do 10-bit at all; their HEVC counterparts
     # can. Also used to preserve an already-HEVC source's codec on GPU (see
@@ -149,6 +168,13 @@ class ConversionManager:
         dovi_needs_rpu = (properties.get('is_dolby_vision')
                           and properties.get('dovi_profile') == 5)
         use_libplacebo = (use_gpu or dovi_needs_rpu) and vulkan_libplacebo_available()
+        if dovi_needs_rpu and not use_libplacebo:
+            messagebox.showwarning(
+                "Warning",
+                "This Dolby Vision (profile 5) source has no HDR10-compatible "
+                "base layer and requires GPU tonemapping to render correctly, "
+                "which isn't available on this system. The output colors may "
+                "look wrong (green/purple cast).")
 
         # GPU acceleration setup — dispatch on whichever encoder was detected
         active_encoder = None
@@ -500,7 +526,14 @@ class ConversionManager:
                 gui_instance.root.after(0, lambda p=progress: progress_var.set(p))
                 gui_instance.root.after(0, gui_instance.root.update_idletasks)
 
-            if any(k in decoded_line.lower() for k in ('cuda', 'nvcuda.dll', 'amf', 'mfx')):
+            # ffmpeg's own banner lines echo the input/output path verbatim
+            # ("Input #0, ..., from '<path>':" / "Output #0, ..., to
+            # '<path>':"), so a file merely named e.g. 'cuda_test.mp4' would
+            # otherwise match these keywords and misdiagnose an unrelated
+            # failure (bad codec, full disk) as a GPU error.
+            is_path_banner_line = "from '" in decoded_line or " to '" in decoded_line
+            if not is_path_banner_line and any(
+                    k in decoded_line.lower() for k in ('cuda', 'nvcuda.dll', 'amf', 'mfx')):
                 gpu_error_detected = True
 
         if proc is not None:

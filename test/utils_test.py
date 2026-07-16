@@ -1,5 +1,3 @@
-import contextlib
-import io
 import sys
 import threading
 import unittest
@@ -411,10 +409,19 @@ class TestGetVideoPropertiesErrors(unittest.TestCase):
         proc = mock_popen.return_value
         proc.communicate.return_value = (b'this is not json', b'')
         proc.returncode = 0
-        # get_video_properties logs the JSONDecodeError via print() on this path;
-        # silence it here so a passing suite run stays quiet.
-        with contextlib.redirect_stdout(io.StringIO()):
-            self.assertIsNone(get_video_properties('x.mp4'))
+        self.assertIsNone(get_video_properties('x.mp4'))
+
+    @patch('src.utils.logging.error')
+    @patch('src.utils.subprocess.Popen')
+    def test_invalid_json_logs_via_logging_not_print(self, mock_popen, mock_log_error):
+        """Every other error path in this module uses logging.error, not a
+        bare print() -- print() bypasses log configuration and (per this
+        project's convention) prints during a passing test run."""
+        proc = mock_popen.return_value
+        proc.communicate.return_value = (b'this is not json', b'')
+        proc.returncode = 0
+        get_video_properties('x.mp4')
+        mock_log_error.assert_called_once()
 
 
 class TestRunFfmpegColorspace(unittest.TestCase):
@@ -822,6 +829,56 @@ class TestGetVideoPropertiesRobustness(unittest.TestCase):
         self.assertFalse(props['bit_rate_estimated'])
 
     @patch('src.utils.subprocess.Popen')
+    def test_zero_over_zero_avg_frame_rate_falls_back_to_r_frame_rate(self, mock_popen):
+        """ffprobe reports avg_frame_rate='0/0' for some sources (e.g. certain
+        VFR streams). Without a fallback this becomes frame_rate=0.0, which
+        construct_ffmpeg_command turns into '-r 0' -- ffmpeg rejects that
+        outright. r_frame_rate is almost always a usable nominal rate."""
+        proc = mock_popen.return_value
+        proc.returncode = 0
+        proc.communicate.return_value = (json.dumps({
+            "streams": [{"codec_type": "video", "width": 1920, "height": 1080,
+                         "codec_name": "hevc", "avg_frame_rate": "0/0",
+                         "r_frame_rate": "30/1", "bit_rate": "5000000"}],
+            "format": {"duration": "120.0"},
+        }).encode(), b'')
+        props = get_video_properties('vfr_video.mkv')
+        self.assertIsNotNone(props)
+        self.assertEqual(props['frame_rate'], 30.0)
+
+    @patch('src.utils.subprocess.Popen')
+    def test_na_avg_frame_rate_falls_back_to_r_frame_rate(self, mock_popen):
+        """avg_frame_rate can be the literal string 'N/A' (no '/'), which
+        used to reach float('N/A') and raise -- making an otherwise perfectly
+        readable file get reported as 'Failed to retrieve video properties.'"""
+        proc = mock_popen.return_value
+        proc.returncode = 0
+        proc.communicate.return_value = (json.dumps({
+            "streams": [{"codec_type": "video", "width": 1920, "height": 1080,
+                         "codec_name": "hevc", "avg_frame_rate": "N/A",
+                         "r_frame_rate": "24/1", "bit_rate": "5000000"}],
+            "format": {"duration": "120.0"},
+        }).encode(), b'')
+        props = get_video_properties('na_frame_rate.mkv')
+        self.assertIsNotNone(props)
+        self.assertEqual(props['frame_rate'], 24.0)
+
+    @patch('src.utils.subprocess.Popen')
+    def test_unparseable_frame_rate_with_no_fallback_returns_none(self, mock_popen):
+        """When neither avg_frame_rate nor r_frame_rate yield a usable value,
+        the file must be treated as unreadable (like the other probe-failure
+        cases) rather than silently producing frame_rate=0.0."""
+        proc = mock_popen.return_value
+        proc.returncode = 0
+        proc.communicate.return_value = (json.dumps({
+            "streams": [{"codec_type": "video", "width": 1920, "height": 1080,
+                         "codec_name": "hevc", "avg_frame_rate": "0/0",
+                         "r_frame_rate": "0/0", "bit_rate": "5000000"}],
+            "format": {"duration": "120.0"},
+        }).encode(), b'')
+        self.assertIsNone(get_video_properties('unreadable_frame_rate.mkv'))
+
+    @patch('src.utils.subprocess.Popen')
     def test_estimates_bitrate_from_container_when_stream_bit_rate_missing(self, mock_popen):
         """Matroska rarely reports a per-stream bit_rate (confirmed via ffprobe
         on real MKV fixtures: the video stream has no bit_rate key at all).
@@ -1077,6 +1134,30 @@ class TestProbeHdrMetadata(unittest.TestCase):
         self.assertIsNone(result['maxcll'])
         self.assertIsNone(result['maxfall'])
         self.assertIsNone(result['mastering_peak'])
+
+    @patch('src.utils.subprocess.check_output')
+    def test_zero_maxcll_is_kept_not_treated_as_absent(self, mock_out):
+        """A legitimately-reported max_content=0 must be stored as 0.0, not
+        dropped -- 'if mc:' treats 0 the same as a missing key, silently
+        under-reporting real (if degenerate) metadata."""
+        mock_out.return_value = self._frame_data(maxcll=0)
+        result = self._u._probe_hdr_metadata('/fake/hdr.mkv')
+        self.assertEqual(result['maxcll'], 0.0)
+
+    @patch('src.utils.subprocess.check_output')
+    def test_zero_maxfall_is_kept_not_treated_as_absent(self, mock_out):
+        mock_out.return_value = self._frame_data(maxfall=0)
+        result = self._u._probe_hdr_metadata('/fake/hdr.mkv')
+        self.assertEqual(result['maxfall'], 0.0)
+
+    @patch('src.utils.subprocess.check_output')
+    def test_reads_mastering_peak_as_plain_integer(self, mock_out):
+        """Some containers report max_luminance as a plain integer (no '/'),
+        not the fraction form -- that's a valid value and must not be
+        silently dropped just because it lacks a slash."""
+        mock_out.return_value = self._frame_data(mastering_peak=4000)
+        result = self._u._probe_hdr_metadata('/fake/hdr.mkv')
+        self.assertAlmostEqual(result['mastering_peak'], 4000.0)
 
 
 class TestDynamicOnlyFilter(unittest.TestCase):

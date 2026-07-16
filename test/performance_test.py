@@ -223,14 +223,11 @@ class TestExtractionPerfAudit(unittest.TestCase):
                 _SAMPLE, gamma=1.0, tonemapper='mobius', time_position=t,
                 width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1])
 
-        start = time.perf_counter()
         extract(3.0)
-        cold = (time.perf_counter() - start) * 1000.0
-        warm = _best_ms(lambda: extract(4.0), runs=2)
         # No hard ceiling (decode time is disk/CI-load dependent) -- this test only
-        # documents that a second extraction doesn't crash or hang.
-        self.assertGreaterEqual(cold, 0)
-        self.assertGreaterEqual(warm, 0)
+        # documents that a second extraction doesn't crash or hang (an exception
+        # here fails the test; there's nothing else worth asserting on timing).
+        _best_ms(lambda: extract(4.0), runs=2)
 
 
 if __name__ == '__main__':

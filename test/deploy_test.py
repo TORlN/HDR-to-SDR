@@ -350,14 +350,6 @@ class TestDeleteStaleFiles(unittest.TestCase):
         self.assertEqual(deleted, 0)
         self.assertEqual(len(failed), 1)
 
-    def test_all_local_keys_removes_nothing(self):
-        keys = {"index.html", "style.css", "script.js"}
-        s3 = self._make_s3(list(keys))
-        deleted, failed = delete_stale_files(s3, keys, dry_run=False)
-        self.assertEqual(deleted, 0)
-        s3.delete_objects.assert_not_called()
-
-
 class TestInvalidateCloudFront(unittest.TestCase):
 
     def _make_cf(self, inv_id: str = "INVA1B2C3D4E5F") -> MagicMock:

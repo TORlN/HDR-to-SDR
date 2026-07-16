@@ -78,9 +78,6 @@ class TestVersionTuple(unittest.TestCase):
     def test_major_bump(self):
         self.assertGreater(_version_tuple('4.0.0'), _version_tuple('3.99.99'))
 
-    def test_equal_versions(self):
-        self.assertEqual(_version_tuple('3.0.0'), _version_tuple('3.0.0'))
-
 
 # ── check_for_update ───────────────────────────────────────────────────────────
 

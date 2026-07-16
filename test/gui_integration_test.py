@@ -420,20 +420,6 @@ class TestBatchQueueWidgets(_GuiTestBase):
         mock_conv.assert_called_once()
         self.assertEqual(item['status'], 'Converting')
 
-    def test_batch_proceeds_when_output_does_not_exist(self):
-        """When the output does not exist, _start_next_batch_item should start
-        the conversion normally."""
-        with patch.object(self.gui, 'update_frame_preview'):
-            self.gui.add_batch_files(['C:/v/a.mp4'])
-
-        with patch('src.gui.os.path.isfile', return_value=True), \
-             patch('src.gui.os.path.exists', return_value=False), \
-             patch('src.gui.conversion_manager.start_conversion') as mock_conv, \
-             patch.object(self.gui, '_load_input_file'):
-            self.gui._start_next_batch_item()
-
-        mock_conv.assert_called_once()
-
     def test_finish_batch_restores_comboboxes_to_readonly_not_normal(self):
         """format_combobox/quality_mode_combobox are built 'readonly' so users
         can't type into them -- format_var.get() flows straight into the

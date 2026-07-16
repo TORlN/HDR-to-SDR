@@ -503,7 +503,7 @@ class TestBatchCancel(TestCase):
         mock_next.assert_not_called()
         self.assertEqual(self.gui.batch_items[0]['status'], 'Failed')
 
-    @patch('src.gui.conversion_manager')
+    @patch('src.batch.conversion_manager')
     def test_not_cancelled_still_advances_queue(self, mock_cm):
         """Normal completion (not cancelled) must still call _start_next_batch_item."""
         mock_cm.cancelled = False

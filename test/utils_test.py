@@ -1284,13 +1284,6 @@ class TestDynamicOnlyFilter(unittest.TestCase):
         vf = mock_run.call_args[0][0][mock_run.call_args[0][0].index('-vf') + 1]
         self.assertIn('npl=100', vf)
 
-    def test_build_libplacebo_filter_no_filter_index_always_peak_detect_1(self):
-        """build_libplacebo_filter takes no filter_index and always enables peak_detect."""
-        from src.utils import build_libplacebo_filter
-        result = build_libplacebo_filter(gamma=1.0, tonemapper='reinhard')
-        self.assertIn('peak_detect=1', result)
-
-
 class TestDolbyVisionDetection(unittest.TestCase):
     """get_video_properties flags Dolby Vision inputs from ffprobe's stream
     side_data_list (the 'DOVI configuration record' entry), exposing

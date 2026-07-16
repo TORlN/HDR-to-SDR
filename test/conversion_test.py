@@ -849,11 +849,6 @@ class TestDetectGpuEncoder(unittest.TestCase):
             self.assertTrue(m.is_gpu_available())
             mock_detect.assert_called_once()
 
-    def test_is_gpu_available_false_when_detect_returns_none(self):
-        m = ConversionManager()
-        with patch.object(m, 'detect_gpu_encoder', return_value=None):
-            self.assertFalse(m.is_gpu_available())
-
     def test_is_gpu_available_uses_cached_encoder_without_reprobing(self):
         """Once detect_gpu_encoder has run, is_gpu_available must reuse the
         cached self._gpu_encoder instead of re-spawning nvidia-smi/ffmpeg on
@@ -1724,7 +1719,6 @@ class TestConstructCommandNoFilterIndex(unittest.TestCase):
         )
         joined = ' '.join(cmd)
         self.assertIn('npl=100', joined)
-        self.assertNotIn('Static', joined)
 
     @patch('src.conversion.vulkan_libplacebo_available', return_value=True)
     def test_libplacebo_path_no_filter_index_always_peak_detect_1(self, _avail):

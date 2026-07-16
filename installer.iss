@@ -2,7 +2,7 @@
 ; Build: installer_output\HDR_to_SDR_Setup.exe
 
 #define AppName      "HDR to SDR Converter"
-#define AppVersion   "3.1.2"
+#define AppVersion   "3.1.3"
 #define AppPublisher "Torin Nelson"
 #define AppURL       "https://hdrtosdr.com"
 #define AppExeName   "HDR_to_SDR_Converter.exe"

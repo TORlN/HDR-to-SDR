@@ -2,6 +2,7 @@ import os
 import sys
 import tkinter as tk
 import webbrowser
+from typing import TypeVar
 from tkinter import filedialog, messagebox
 from tkinter import ttk
 from dark_theme import apply_dark_theme
@@ -55,7 +56,10 @@ del _sys
 webbrowser = webbrowser  # noqa: F811
 
 
-def _clamp(value: float, lo: float, hi: float) -> float:
+_Number = TypeVar('_Number', int, float)
+
+
+def _clamp(value: _Number, lo: _Number, hi: _Number) -> _Number:
     """Clamp value into [lo, hi]. lo/hi may be given in either order."""
     lo, hi = min(lo, hi), max(lo, hi)
     return min(max(value, lo), hi)

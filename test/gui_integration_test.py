@@ -2002,10 +2002,13 @@ class TestDropToQueue(unittest.TestCase):
         # NTFS is case-insensitive: 'C:/A.mkv' and 'C:/a.mkv' are the same
         # file on Windows, so queuing both must not create two queue entries
         # whose outputs could silently overwrite each other.
+        # os.path.normcase only folds case on Windows, so this must be
+        # simulated explicitly to pass on non-Windows CI runners.
         gui = self._make_gui(licensed=True)
         gui.batch_items = [self._queued('C:/a.mkv')]
         gui.input_path_var.set('C:/a.mkv')
-        gui.add_batch_files(['C:/A.mkv', 'C:/b.mkv'])
+        with patch('src.batch.os.path.normcase', side_effect=str.lower):
+            gui.add_batch_files(['C:/A.mkv', 'C:/b.mkv'])
         self.assertEqual([it['input'] for it in gui.batch_items],
                          ['C:/a.mkv', 'C:/b.mkv'])
 

@@ -1432,10 +1432,13 @@ class TestBatchConflictDetection(unittest.TestCase):
         # NTFS is case-insensitive: 'Same_sdr.mkv' and 'same_sdr.mkv' resolve
         # to the same file on disk, so they must be treated as one conflict
         # group, not two independent (and therefore invisible) outputs.
+        # os.path.normcase only folds case on Windows, so this must be
+        # simulated explicitly to pass on non-Windows CI runners.
         a = self._item('Same_sdr.mkv', input_name='a')
         b = self._item('same_sdr.mkv', input_name='b')
         gui = self._gui([a, b])
-        with patch('src.batch.os.path.exists', return_value=False):
+        with patch('src.batch.os.path.exists', return_value=False), \
+                patch('src.batch.os.path.normcase', side_effect=str.lower):
             self.assertEqual(gui._detect_batch_conflicts(), [[a, b]])
 
     def test_non_pending_items_are_ignored(self):

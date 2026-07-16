@@ -10,6 +10,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from conversion import conversion_manager
+from utils import VIDEO_FILE_FILTER
 
 if TYPE_CHECKING:
     from tkinter import ttk
@@ -63,7 +64,7 @@ class _BatchMixin:
         """Open a multi-select dialog and add the chosen files to the queue."""
         paths = filedialog.askopenfilenames(
             filetypes=[
-                ("All Video Files", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v"),
+                VIDEO_FILE_FILTER,
                 ("All files", "*.*"),
             ]
         )
@@ -451,12 +452,7 @@ class _BatchMixin:
         done = sum(1 for it in self.batch_items if it['status'] == 'Done')
         failed = sum(1 for it in self.batch_items if it['status'] == 'Failed')
         skipped = sum(1 for it in self.batch_items if it['status'] == 'Skipped')
-        for element in self.interactable_elements:
-            # ttk.Combobox is only ever built 'readonly' -- restoring 'normal'
-            # would make it freely typeable (format_var.get() flows straight
-            # into the output filename).
-            state = 'readonly' if isinstance(element, ttk.Combobox) else 'normal'
-            element.config(state=state)
+        conversion_manager.enable_ui(self.interactable_elements)
         self.cancel_button.grid_remove()
         if hasattr(self, 'register_drop_target'):
             self.register_drop_target()  # type: ignore[attr-defined]

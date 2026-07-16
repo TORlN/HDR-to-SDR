@@ -656,6 +656,80 @@ class TestMaxfallConcurrency(unittest.TestCase):
         )
 
 
+class TestVideoPropertiesConcurrency(unittest.TestCase):
+    """get_video_properties must call ffprobe exactly once under concurrent cache
+    misses, matching the check-lock-check pattern _get_hdr_metadata already uses.
+
+    The pre-fix code only locked around the cache *write*, not the read -- two
+    threads that both see the cache miss before either writes back can both
+    spawn an ffprobe process for the same file.
+    """
+
+    _VALID_PROPS_JSON = json.dumps({
+        "streams": [{"codec_type": "video", "width": 1920, "height": 1080,
+                     "codec_name": "hevc", "avg_frame_rate": "24/1", "bit_rate": "5000000"}],
+        "format": {"duration": "60.0"},
+    }).encode()
+
+    def setUp(self):
+        import src.utils as _u
+        _u._VIDEO_PROPS_CACHE.clear()
+        self.addCleanup(_u._VIDEO_PROPS_CACHE.clear)
+
+    def test_concurrent_calls_probe_once(self):
+        """Four threads racing on an uncached path must spawn only one ffprobe process."""
+        call_count: list[int] = []
+        start = threading.Barrier(4)
+        valid_json = self._VALID_PROPS_JSON
+
+        class _SlowProc:
+            returncode = 0
+
+            def communicate(self):
+                import time
+                time.sleep(0.05)
+                call_count.append(1)
+                return (valid_json, b'')
+
+        results: list = []
+
+        def worker() -> None:
+            start.wait()
+            results.append(get_video_properties('/fake/concurrent/video.mkv'))
+
+        with patch('src.utils.subprocess.Popen', side_effect=lambda *a, **kw: _SlowProc()):
+            threads = [threading.Thread(target=worker) for _ in range(4)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=5)
+
+        self.assertEqual(len(results), 4, "all callers must receive a return value")
+        self.assertTrue(all(r is not None for r in results))
+        self.assertEqual(
+            len(call_count), 1,
+            f"ffprobe was spawned {len(call_count)} time(s); expected exactly 1 "
+            "(a threading.Lock must prevent duplicate ffprobe launches)",
+        )
+
+
+class TestIsGpuOnlyTonemapper(unittest.TestCase):
+    """Single shared predicate for identifying GPU-only tonemappers (bt.2390,
+    spline), replacing four ad-hoc `.lower() in GPU_ONLY_TONEMAPPERS` call
+    sites duplicated across conversion.py/preview.py/gui.py."""
+
+    def test_true_for_gpu_only_tonemappers_case_insensitive(self):
+        from src.utils import is_gpu_only_tonemapper
+        self.assertTrue(is_gpu_only_tonemapper('bt.2390'))
+        self.assertTrue(is_gpu_only_tonemapper('BT.2390'))
+        self.assertTrue(is_gpu_only_tonemapper('Spline'))
+
+    def test_false_for_cpu_capable_tonemappers(self):
+        from src.utils import is_gpu_only_tonemapper
+        self.assertFalse(is_gpu_only_tonemapper('reinhard'))
+        self.assertFalse(is_gpu_only_tonemapper('hable'))
+
+
 # ---------------------------------------------------------------------------
 # Issue #3 — Portability: verify_ffmpeg_files must use platform-agnostic keys
 # ---------------------------------------------------------------------------

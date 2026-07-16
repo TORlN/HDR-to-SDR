@@ -7,7 +7,8 @@ from tkinter import ttk
 from dark_theme import apply_dark_theme
 from conversion import conversion_manager
 from utils import (get_video_properties, get_maxcll, TONEMAP, clear_maxfall_cache,
-                   GPU_ONLY_TONEMAPPERS, vulkan_libplacebo_available)
+                   is_gpu_only_tonemapper, vulkan_libplacebo_available,
+                   VIDEO_FILE_FILTER)
 from settings import load_settings, save_settings
 from licensing import InvalidKeyError, DeviceLimitError, NetworkError, LicenseError
 from PIL import Image, ImageTk
@@ -52,6 +53,12 @@ del _sys
 # Re-export webbrowser so existing patches (patch('src.gui.webbrowser')) still resolve.
 # (The name was importable from this module before the dialogs split.)
 webbrowser = webbrowser  # noqa: F811
+
+
+def _clamp(value: float, lo: float, hi: float) -> float:
+    """Clamp value into [lo, hi]. lo/hi may be given in either order."""
+    lo, hi = min(lo, hi), max(lo, hi)
+    return min(max(value, lo), hi)
 
 
 class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
@@ -645,7 +652,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         """Open a file dialog for the user to select a video file."""
         file_path = filedialog.askopenfilename(
             filetypes=[
-                ("All Video Files", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v"),
+                VIDEO_FILE_FILTER,
                 ("MP4 files", "*.mp4"),
                 ("MKV files", "*.mkv"),
                 ("MOV files", "*.mov"),
@@ -847,7 +854,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 ceiling = self._bitrate_ceiling_kbps()
                 fraction = settings.get('bitrate_fraction', 0.5)
                 value = round(fraction * ceiling / 500) * 500
-                value = min(max(value, self._BITRATE_FLOOR_KBPS), ceiling)
+                value = _clamp(value, self._BITRATE_FLOOR_KBPS, ceiling)
                 self.bitrate_var.set(value)
                 self._bitrate_needs_reseed = False
             if hasattr(self, 'quality_slider'):
@@ -990,7 +997,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             # A new file was just loaded (see _update_info_label): reseed to
             # 50% of its bitrate rather than keeping a value left over from
             # a previous file or session.
-            seed = max(self._BITRATE_FLOOR_KBPS, min(ceiling, round(ceiling * 0.5 / 500) * 500))
+            seed = _clamp(round(ceiling * 0.5 / 500) * 500, self._BITRATE_FLOOR_KBPS, ceiling)
             self.bitrate_var.set(seed)
             self._bitrate_needs_reseed = False
         elif not has_file:
@@ -999,7 +1006,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             # only the unknown-source fallback here, not a real file's
             # bitrate, so it must not clamp down a real saved choice.
             ceiling = max(ceiling, self.bitrate_var.get())
-        value = min(max(self.bitrate_var.get(), self._BITRATE_FLOOR_KBPS), ceiling)
+        value = _clamp(self.bitrate_var.get(), self._BITRATE_FLOOR_KBPS, ceiling)
         self.quality_slider.configure(from_=self._BITRATE_FLOOR_KBPS, to=ceiling)
         # ttk.Scale.set() fires its own -command (_on_quality_change) even for
         # this purely programmatic call, which would otherwise misread the
@@ -1030,7 +1037,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             # meaningless -- restore quality_var's own value directly instead.
             worst, best = self._CQ_RANGE if self.gpu_accel_var.get() else self._CRF_RANGE
             lo, hi = min(worst, best), max(worst, best)
-            value = min(max(self.quality_var.get(), lo), hi)
+            value = _clamp(self.quality_var.get(), lo, hi)
             self.quality_slider.configure(from_=worst, to=best)
             self.quality_slider.set(value)
             self.quality_var.set(value)
@@ -1070,12 +1077,12 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         selection to Mobius if it becomes unavailable while selected."""
         gpu_active = self.gpu_accel_var.get() and vulkan_libplacebo_available()
         display_values = [
-            t if gpu_active or t.lower() not in GPU_ONLY_TONEMAPPERS
+            t if gpu_active or not is_gpu_only_tonemapper(t)
             else f"{t}{self._GPU_ONLY_SUFFIX}"
             for t in TONEMAP
         ]
         self.tonemap_combobox.configure(values=display_values)
-        if not gpu_active and self.tonemap_var.get().lower() in GPU_ONLY_TONEMAPPERS:
+        if not gpu_active and is_gpu_only_tonemapper(self.tonemap_var.get()):
             self.tonemap_var.set('Mobius')
         self._last_valid_tonemapper = self.tonemap_var.get()
 

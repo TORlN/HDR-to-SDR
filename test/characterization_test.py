@@ -1239,6 +1239,30 @@ class TestBatchQueue(unittest.TestCase):
         gui.add_batch_files.assert_not_called()
         gui._load_input_file.assert_not_called()
 
+    def test_select_file_dialog_uses_shared_video_filter(self):
+        """select_file (single-file Browse) and browse_batch_files
+        (multi-select) must share one 'All Video Files' filter definition
+        instead of each hard-coding their own copy of the extension list,
+        which could silently drift apart (e.g. a new supported extension
+        added to one dialog but not the other)."""
+        from src.utils import VIDEO_FILE_FILTER
+        gui = _bare_gui()
+        gui._licensed = False
+        gui.add_batch_files = MagicMock()
+        gui._load_input_file = MagicMock()
+        with patch('src.gui.filedialog.askopenfilename', return_value='') as mock_dialog:
+            gui.select_file()
+        filetypes = mock_dialog.call_args.kwargs['filetypes']
+        self.assertIn(VIDEO_FILE_FILTER, filetypes)
+
+    def test_browse_batch_files_dialog_uses_shared_video_filter(self):
+        from src.utils import VIDEO_FILE_FILTER
+        gui = _bare_gui()
+        with patch('src.gui.filedialog.askopenfilenames', return_value=()) as mock_dialog:
+            gui.browse_batch_files()
+        filetypes = mock_dialog.call_args.kwargs['filetypes']
+        self.assertIn(VIDEO_FILE_FILTER, filetypes)
+
     def test_add_files_skips_paths_already_queued(self):
         gui = self._gui()
         gui.batch_items = [{'input': 'a.mkv', 'status': 'Pending'}]
@@ -3470,6 +3494,30 @@ class TestUpdateFramePreviewElseBranch(unittest.TestCase):
         gui.handle_preview_error.assert_called_once()
 
 
+class TestClampHelper(unittest.TestCase):
+    """_clamp is the shared bound-checking routine behind the bitrate/quality
+    slider range clamps in _restore_settings_dict, _apply_bitrate_range, and
+    _apply_quality_mode, which used to each inline their own
+    min(max(value, lo), hi)."""
+
+    def test_clamps_below_range(self):
+        from src.gui import _clamp
+        self.assertEqual(_clamp(-5, 0, 100), 0)
+
+    def test_clamps_above_range(self):
+        from src.gui import _clamp
+        self.assertEqual(_clamp(500, 0, 100), 100)
+
+    def test_passes_through_value_within_range(self):
+        from src.gui import _clamp
+        self.assertEqual(_clamp(42, 0, 100), 42)
+
+    def test_accepts_bounds_in_either_order(self):
+        from src.gui import _clamp
+        self.assertEqual(_clamp(-5, 100, 0), 0)
+        self.assertEqual(_clamp(500, 100, 0), 100)
+
+
 class TestResizeImages(unittest.TestCase):
     """resize_images scales both preview panes from cached full-res images."""
 
@@ -3485,6 +3533,32 @@ class TestResizeImages(unittest.TestCase):
             gui.resize_images(400, 300)
         gui.original_image_label.config.assert_called_once()
         gui.converted_image_label.config.assert_called_once()
+
+    def test_resize_images_keeps_preview_state_in_sync_for_later_gamma_ticks(self):
+        """resize_images is only ever called from adjust_window_size's
+        oversized-window fit-to-screen path, right after
+        _render_preview_at_size already ran at the (larger) initial size.
+        If resize_images doesn't update _converted_preview_base/
+        _preview_render_size the same way _render_preview_at_size does, the
+        next gamma-slider tick (_apply_gamma_to_preview) reapplies gamma to
+        the stale pre-shrink base -- the converted pane would snap back to
+        the original oversized dimensions while the original pane stays
+        correctly fit to the screen."""
+        gui = _bare_gui()
+        gui.original_image = Image.new('RGB', (3840, 2160), (100, 120, 140))
+        gui.converted_image_base = Image.new('RGB', (3840, 2160), (80, 100, 120))
+        gui.gamma_var = MagicMock(); gui.gamma_var.get.return_value = 1.0
+        gui.adjust_gamma = lambda img, g: img
+        gui.original_image_label = MagicMock()
+        gui.converted_image_label = MagicMock()
+        with patch('src.gui.ImageTk.PhotoImage'):
+            gui.resize_images(400, 300)
+        self.assertEqual(
+            gui._converted_preview_base.size, (200, 150),
+            "_converted_preview_base must be refreshed to the fitted size")
+        self.assertEqual(
+            gui._preview_render_size, (200, 150),
+            "_preview_render_size must track the size resize_images actually rendered")
 
 
 class TestMiscCoverageGaps(unittest.TestCase):

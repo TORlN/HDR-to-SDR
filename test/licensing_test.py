@@ -19,8 +19,10 @@ from src.licensing import (
     InvalidKeyError,
     LicenseError,
     NetworkError,
+    _clear_local_token,
     activate_license,
     check_license,
+    check_license_nonblocking,
     get_hardware_fingerprint,
     load_license_token,
     save_license_token,
@@ -316,6 +318,99 @@ class TestLicenseCheck(unittest.TestCase):
              patch('urllib.request.urlopen', return_value=_urlopen_mock(_LS_VALIDATE_REVOKED)), \
              patch('os.remove', side_effect=OSError('permission denied')):
             self.assertFalse(check_license())
+
+
+class TestClearLocalToken(unittest.TestCase):
+    """_clear_local_token is the single shared implementation behind the three
+    call sites (activate_license's revoked-key path, deactivate_license,
+    check_license's revoked-key path) that used to each inline their own
+    `with _lock: try: os.remove(LICENSE_FILE) except OSError: pass` block."""
+
+    def test_removes_existing_token_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lic_file = os.path.join(tmp, 'license.dat')
+            with patch('src.licensing.LICENSE_FILE', lic_file), \
+                 patch('src.licensing.SETTINGS_DIR', tmp):
+                save_license_token('SOME-KEY', 'inst-uuid-123')
+                self.assertTrue(os.path.exists(lic_file))
+                _clear_local_token()
+                self.assertFalse(os.path.exists(lic_file))
+
+    def test_swallows_oserror_on_missing_or_locked_file(self):
+        with patch('os.remove', side_effect=OSError('permission denied')):
+            _clear_local_token()  # must not raise
+
+
+class TestCheckLicenseNonblocking(unittest.TestCase):
+    """check_license_nonblocking must never block app startup on the network --
+    it answers from the cached local token immediately and only defers to a
+    background thread (never the caller's thread) when a revalidation is due."""
+
+    def test_fresh_token_returns_true_without_starting_background_thread(self):
+        with patch('src.licensing.load_license_token', return_value=_fresh_payload()), \
+             patch('src.licensing.threading.Thread') as mock_thread:
+            result = check_license_nonblocking()
+        self.assertTrue(result)
+        mock_thread.assert_not_called()
+
+    def test_stale_token_returns_true_immediately_without_blocking_on_network(self):
+        """The immediate return must happen before any network call -- the
+        refresh is only ever performed on a background thread."""
+        with patch('src.licensing.load_license_token', return_value=_stale_payload()), \
+             patch('src.licensing.threading.Thread') as mock_thread, \
+             patch('urllib.request.urlopen') as mock_net:
+            result = check_license_nonblocking()
+        self.assertTrue(result)
+        mock_net.assert_not_called()
+        mock_thread.assert_called_once()
+        self.assertTrue(mock_thread.call_args.kwargs.get('daemon'))
+        mock_thread.return_value.start.assert_called_once()
+
+    def test_stale_token_background_refresh_invokes_on_change_when_revoked(self):
+        """When the deferred revalidation later finds the key revoked, the
+        caller-supplied on_change callback must fire with the new (False)
+        result so the GUI can be updated after the fact."""
+        with tempfile.TemporaryDirectory() as tmp:
+            lic_file = os.path.join(tmp, 'license.dat')
+            with patch('src.licensing.load_license_token', return_value=_stale_payload()), \
+                 patch('urllib.request.urlopen', return_value=_urlopen_mock(_LS_VALIDATE_REVOKED)), \
+                 patch('src.licensing.LICENSE_FILE', lic_file), \
+                 patch('src.licensing.threading.Thread') as mock_thread:
+                on_change = MagicMock()
+                check_license_nonblocking(on_change=on_change)
+                target = mock_thread.call_args.kwargs['target']
+                target()
+        on_change.assert_called_once_with(False)
+
+    def test_stale_token_background_refresh_skips_on_change_when_still_valid(self):
+        """No spurious GUI update when the deferred revalidation agrees with
+        the immediate (trusted-offline) answer."""
+        with tempfile.TemporaryDirectory() as tmp:
+            lic_file = os.path.join(tmp, 'license.dat')
+            with patch('src.licensing.load_license_token', return_value=_stale_payload()), \
+                 patch('urllib.request.urlopen', return_value=_urlopen_mock(_LS_VALIDATE_OK)), \
+                 patch('src.licensing.LICENSE_FILE', lic_file), \
+                 patch('src.licensing.SETTINGS_DIR', tmp), \
+                 patch('src.licensing.threading.Thread') as mock_thread:
+                on_change = MagicMock()
+                check_license_nonblocking(on_change=on_change)
+                target = mock_thread.call_args.kwargs['target']
+                target()
+        on_change.assert_not_called()
+
+    def test_missing_token_returns_false_without_starting_background_thread(self):
+        with patch('src.licensing.load_license_token', return_value=None), \
+             patch('src.licensing.threading.Thread') as mock_thread:
+            result = check_license_nonblocking()
+        self.assertFalse(result)
+        mock_thread.assert_not_called()
+
+    def test_dev_unlock_env_var_returns_true_without_starting_background_thread(self):
+        with patch.dict(os.environ, {'HDRSDR_DEV_UNLOCK': '1'}), \
+             patch('src.licensing.threading.Thread') as mock_thread:
+            result = check_license_nonblocking()
+        self.assertTrue(result)
+        mock_thread.assert_not_called()
 
 
 # ── Token storage ──────────────────────────────────────────────────────────────

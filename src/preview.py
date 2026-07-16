@@ -19,7 +19,7 @@ from utils import (
     extract_frames_batch,
     extract_frames_with_conversion_batch,
     extract_frames_with_gpu_conversion_batch,
-    GPU_ONLY_TONEMAPPERS,
+    is_gpu_only_tonemapper,
 )
 
 # ── Module-level constants ─────────────────────────────────────────────────────
@@ -308,22 +308,13 @@ class _HDRPreviewMixin:
         self._render_preview_at_size(self._preview_target_size())
 
     def resize_images(self, max_width: int, max_height: int) -> None:
-        """Resize images to fit within the specified maximum width and height."""
-        if self.original_image:
-            original_image_resized = self.original_image.resize(
-                (max_width // 2, max_height // 2), Image.Resampling.LANCZOS)
-            original_photo = ImageTk.PhotoImage(original_image_resized)
-            self.original_image_label.config(image=original_photo)
-            self._keep_image_ref(self.original_image_label, original_photo)
-
-        if self.converted_image_base:
-            gamma = self.gamma_var.get()
-            adjusted_converted_image = self.adjust_gamma(self.converted_image_base, gamma)
-            converted_image_resized = adjusted_converted_image.resize(
-                (max_width // 2, max_height // 2), Image.Resampling.LANCZOS)
-            converted_photo = ImageTk.PhotoImage(converted_image_resized)
-            self.converted_image_label.config(image=converted_photo)
-            self._keep_image_ref(self.converted_image_label, converted_photo)
+        """Resize both preview panes to fit within max_width x max_height
+        (halved for side-by-side layout). Delegates to
+        _render_preview_at_size so _converted_preview_base/
+        _preview_render_size stay in sync -- otherwise a later gamma-slider
+        tick (_apply_gamma_to_preview) would reapply gamma to a stale,
+        pre-resize base."""
+        self._render_preview_at_size((max_width // 2, max_height // 2))
 
     def clear_preview(self) -> None:
         """Clear the frame preview images and reset cached images."""
@@ -565,7 +556,7 @@ class _HDRPreviewMixin:
         converted = self._preview_cache_converted.get(converted_key)
         if converted is None:
             extract_fn = (extract_frame_with_gpu_conversion
-                          if tonemapper.lower() in GPU_ONLY_TONEMAPPERS
+                          if is_gpu_only_tonemapper(tonemapper)
                           else extract_frame_with_conversion)
             converted = extract_fn(
                 video_path, gamma=1.0,
@@ -600,7 +591,7 @@ class _HDRPreviewMixin:
             return
         try:
             batch_fn = (extract_frames_with_gpu_conversion_batch
-                        if tonemapper.lower() in GPU_ONLY_TONEMAPPERS
+                        if is_gpu_only_tonemapper(tonemapper)
                         else extract_frames_with_conversion_batch)
             converted = batch_fn(
                 video_path, positions, 1.0, tonemapper,

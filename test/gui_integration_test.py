@@ -2010,6 +2010,45 @@ class TestDropToQueue(unittest.TestCase):
                          ['C:/a.mkv', 'C:/b.mkv'])
 
 
+class TestCenterOverMaster(unittest.TestCase):
+    """_center_over_master is the shared sizing/centering routine behind both
+    _LicenseDialog and _UpdateDialog's __init__ -- they used to each inline
+    their own copy differing only in the floor width/height."""
+
+    def test_computes_size_and_centers_geometry(self):
+        from src.dialogs import _center_over_master
+        win = MagicMock()
+        win.winfo_reqwidth.return_value = 300
+        win.winfo_reqheight.return_value = 100
+        master = MagicMock()
+        master.winfo_rootx.return_value = 50
+        master.winfo_rooty.return_value = 60
+        master.winfo_width.return_value = 800
+        master.winfo_height.return_value = 600
+
+        _center_over_master(win, master, min_w=200, min_h=150)
+
+        win.update_idletasks.assert_called_once()
+        win.geometry.assert_called_once_with('340x150+280+285')
+        win.grab_set.assert_called_once()
+        win.focus_set.assert_called_once()
+
+    def test_floors_at_min_dimensions_when_content_is_small(self):
+        from src.dialogs import _center_over_master
+        win = MagicMock()
+        win.winfo_reqwidth.return_value = 10
+        win.winfo_reqheight.return_value = 10
+        master = MagicMock()
+        master.winfo_rootx.return_value = 0
+        master.winfo_rooty.return_value = 0
+        master.winfo_width.return_value = 100
+        master.winfo_height.return_value = 100
+
+        _center_over_master(win, master, min_w=460, min_h=220)
+
+        win.geometry.assert_called_once_with('460x220+-180+-60')
+
+
 @unittest.skipUnless(_TK_OK, _SKIP)
 class TestLicenseDialog(unittest.TestCase):
     """Tests for the _LicenseDialog Toplevel."""
@@ -2244,6 +2283,32 @@ class TestUpdateDialog(unittest.TestCase):
         dlg.destroy()
         import shutil as _shutil
         _shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def test_later_button_cleans_up_temp_dir_after_failed_download(self):
+        """A failed download leaves _tmp_dir pointing at a (possibly partial)
+        download directory; clicking Later must not leak it."""
+        dlg = self._make_dialog()
+        with patch('updater.download_installer', side_effect=OSError('disk full')):
+            self._start_download_sync(dlg)
+        tmp_dir = dlg._tmp_dir
+        self.assertIsNotNone(tmp_dir)
+        self.assertTrue(os.path.isdir(tmp_dir))
+        dlg._later_btn.invoke()
+        self.assertFalse(os.path.isdir(tmp_dir),
+                         "failed download's temp dir must be cleaned up when Later is clicked")
+
+    def test_window_close_cleans_up_temp_dir_after_failed_download(self):
+        """Closing the dialog (the WM_DELETE_WINDOW path, re-armed after a
+        failed download) must not leak the failed attempt's temp dir either."""
+        dlg = self._make_dialog()
+        with patch('updater.download_installer', side_effect=OSError('disk full')):
+            self._start_download_sync(dlg)
+        tmp_dir = dlg._tmp_dir
+        self.assertIsNotNone(tmp_dir)
+        self.assertTrue(os.path.isdir(tmp_dir))
+        dlg.destroy()
+        self.assertFalse(os.path.isdir(tmp_dir),
+                         "failed download's temp dir must be cleaned up when the window is closed")
 
     def test_changelog_link_widget_exists(self):
         dlg = self._make_dialog()

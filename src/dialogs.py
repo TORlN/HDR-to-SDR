@@ -27,6 +27,19 @@ _FONT_BOLD = ('Segoe UI', 13, 'bold')
 _FONT_SM   = ('Segoe UI', 9)
 
 
+def _center_over_master(win: tk.Toplevel, master: tk.Misc, min_w: int, min_h: int) -> None:
+    """Size *win* to fit its already-built content (plus fixed padding),
+    floored at (min_w, min_h), and center it over *master*."""
+    win.update_idletasks()
+    w = max(win.winfo_reqwidth() + 40, min_w)
+    h = max(win.winfo_reqheight() + 20, min_h)
+    px = master.winfo_rootx() + (master.winfo_width() - w) // 2
+    py = master.winfo_rooty() + (master.winfo_height() - h) // 2
+    win.geometry(f'{w}x{h}+{px}+{py}')
+    win.grab_set()
+    win.focus_set()
+
+
 class _LicenseDialog(tk.Toplevel):
     """Dark-themed modal for entering a Pro license key."""
 
@@ -38,14 +51,7 @@ class _LicenseDialog(tk.Toplevel):
         self.protocol('WM_DELETE_WINDOW', self._on_close)
         self._activated = False
         self._build_ui()
-        self.update_idletasks()
-        w = max(self.winfo_reqwidth() + 40, 460)
-        h = max(self.winfo_reqheight() + 20, 220)
-        px = master.winfo_rootx() + (master.winfo_width() - w) // 2
-        py = master.winfo_rooty() + (master.winfo_height() - h) // 2
-        self.geometry(f'{w}x{h}+{px}+{py}')
-        self.grab_set()
-        self.focus_set()
+        _center_over_master(self, master, min_w=460, min_h=220)
 
     def _build_ui(self) -> None:
         tk.Label(self, text='Activate HDR to SDR Converter',
@@ -147,14 +153,7 @@ class _UpdateDialog(tk.Toplevel):
         self._url = download_url
         self._release_url = release_url
         self._build_ui()
-        self.update_idletasks()
-        w = max(self.winfo_reqwidth() + 40, 430)
-        h = max(self.winfo_reqheight() + 20, 200)
-        px = master.winfo_rootx() + (master.winfo_width() - w) // 2
-        py = master.winfo_rooty() + (master.winfo_height() - h) // 2
-        self.geometry(f'{w}x{h}+{px}+{py}')
-        self.grab_set()
-        self.focus_set()
+        _center_over_master(self, master, min_w=430, min_h=200)
 
     def _build_ui(self) -> None:
         tk.Label(self, text='Update Available',
@@ -255,3 +254,14 @@ class _UpdateDialog(tk.Toplevel):
         self._update_btn.config(state='normal', text='Retry')
         self._later_btn.config(state='normal')
         self.protocol('WM_DELETE_WINDOW', self.destroy)
+
+    def destroy(self) -> None:
+        # Reached via Later or window-close, both after a failed download
+        # (during an active download the close protocol is disarmed, and a
+        # successful download closes via self.master.destroy(), never this).
+        # The failed attempt's directory has no installer left to run from,
+        # so it must not be left behind.
+        if self._tmp_dir is not None:
+            shutil.rmtree(self._tmp_dir, ignore_errors=True)
+            self._tmp_dir = None
+        super().destroy()

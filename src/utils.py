@@ -31,6 +31,19 @@ FFMPEG_CONVERT_FILTER = (
 # and for final conversion. Lowercase, matching libplacebo's own spelling.
 GPU_ONLY_TONEMAPPERS = {'bt.2390', 'spline'}
 
+
+def is_gpu_only_tonemapper(tonemapper: str) -> bool:
+    """True for tonemapping algorithms only implemented on the GPU (libplacebo)
+    path -- FFMPEG_CONVERT_FILTER (CPU) has no equivalent. Case-insensitive."""
+    return tonemapper.lower() in GPU_ONLY_TONEMAPPERS
+
+
+# Shared "All Video Files" file-dialog filter entry, used by both the
+# single-file Browse dialog (gui.py) and the multi-select batch-add dialog
+# (batch.py) so the supported-extension list can't silently drift apart
+# between the two.
+VIDEO_FILE_FILTER = ("All Video Files", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v")
+
 # Flags that create the Vulkan device libplacebo runs on. Prepended to the ffmpeg
 # command (before -i) when the GPU tonemap path is active (CPU decode fallback).
 VULKAN_DEVICE_ARGS = ['-init_hw_device', 'vulkan=vk:0', '-filter_hw_device', 'vk']
@@ -731,6 +744,17 @@ def get_video_properties(input_file):
     if input_file in _VIDEO_PROPS_CACHE:
         return _VIDEO_PROPS_CACHE[input_file]
 
+    with _VIDEO_PROPS_CACHE_LOCK:
+        return _probe_video_properties(input_file)
+
+
+def _probe_video_properties(input_file):
+    """Runs under _VIDEO_PROPS_CACHE_LOCK; re-checks the cache (another thread
+    may have populated it while this one was waiting on the lock) before
+    spawning ffprobe, matching _get_hdr_metadata's check-lock-check pattern."""
+    if input_file in _VIDEO_PROPS_CACHE:
+        return _VIDEO_PROPS_CACHE[input_file]
+
     startupinfo, creationflags = _startupinfo()
 
     command = [
@@ -823,8 +847,7 @@ def get_video_properties(input_file):
             "is_dolby_vision": is_dolby_vision,
             "dovi_profile": dovi_profile,
         }
-        with _VIDEO_PROPS_CACHE_LOCK:
-            _VIDEO_PROPS_CACHE[input_file] = props
+        _VIDEO_PROPS_CACHE[input_file] = props
         return props
         
     except (subprocess.SubprocessError, json.JSONDecodeError, ValueError) as e:

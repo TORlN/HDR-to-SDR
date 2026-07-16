@@ -33,7 +33,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from typing import Optional
+from typing import Callable, Optional
 
 from settings import SETTINGS_DIR
 
@@ -103,6 +103,20 @@ def _sign(payload_json: str, fingerprint: str) -> str:
         payload_json.encode('utf-8'),
         hashlib.sha256,
     ).hexdigest()
+
+
+def _clear_local_token() -> None:
+    """Remove the local license token file, if present.
+
+    Swallows OSError so a permission/AV-lock hiccup never prevents the caller
+    (revoked-key handling in activate_license/check_license, or an explicit
+    deactivate_license) from completing its own return path.
+    """
+    with _lock:
+        try:
+            os.remove(LICENSE_FILE)
+        except OSError:
+            pass
 
 
 def save_license_token(key: str, instance_id: str) -> None:
@@ -286,11 +300,7 @@ def activate_license(key: str) -> None:
             # the stale local token instead of leaving it in place, or
             # check_license() would keep trusting it until the next
             # cooldown-triggered refresh (up to 30 days later).
-            with _lock:
-                try:
-                    os.remove(LICENSE_FILE)
-                except OSError:
-                    pass
+            _clear_local_token()
             raise
         save_license_token(key, instance_id)
         return
@@ -317,12 +327,43 @@ def deactivate_license() -> bool:
     except (NetworkError, LicenseError) as exc:
         logger.warning("Could not deactivate with LS (will clear token anyway): %s", exc)
 
-    with _lock:
-        try:
-            os.remove(LICENSE_FILE)
-        except OSError:
-            pass
+    _clear_local_token()
     return True
+
+
+def check_license_nonblocking(on_change: Optional[Callable[[bool], None]] = None) -> bool:
+    """Like check_license(), but never blocks the caller on a network call.
+
+    Answers immediately from the cached local token (offline-trust rules
+    identical to check_license()). If that token is stale enough to be due
+    for revalidation, the actual Lemon Squeezy /validate call is deferred to
+    a background daemon thread instead of running on the caller's thread --
+    app startup must not stall for up to _API_TIMEOUT seconds once a month
+    waiting on that request. If the deferred result disagrees with the
+    immediate answer (e.g. the key turns out to have been revoked),
+    on_change(new_result) is invoked from that background thread so the
+    caller can react (e.g. re-apply license-gated UI state).
+    """
+    if os.environ.get('HDRSDR_DEV_UNLOCK') == '1':
+        return True
+
+    with _lock:
+        payload = load_license_token()
+
+    if payload is None:
+        return False
+
+    immediate_result = True
+    age = int(time.time()) - payload.get('validated_at', 0)
+    if age >= _REFRESH_COOLDOWN:
+        def _refresh() -> None:
+            new_result = check_license()
+            if on_change is not None and new_result != immediate_result:
+                on_change(new_result)
+
+        threading.Thread(target=_refresh, daemon=True).start()
+
+    return immediate_result
 
 
 def check_license() -> bool:
@@ -357,11 +398,7 @@ def check_license() -> bool:
     except NetworkError:
         pass  # offline — trust the local token
     except LicenseError:
-        with _lock:
-            try:
-                os.remove(LICENSE_FILE)
-            except OSError:
-                pass
+        _clear_local_token()
         return False
 
     return True

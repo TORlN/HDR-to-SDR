@@ -8,7 +8,7 @@ from tkinter import messagebox, ttk
 from utils import (get_video_properties, FFMPEG_CONVERT_FILTER,
                    FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE,
                    VULKAN_DEVICE_ARGS, VULKAN_CUDA_DEVICE_ARGS,
-                   build_libplacebo_filter, GPU_ONLY_TONEMAPPERS,
+                   build_libplacebo_filter, is_gpu_only_tonemapper,
                    vulkan_libplacebo_available, vulkan_cuda_interop_available,
                    _startupinfo as _utils_startupinfo)
 from tkinterdnd2 import DND_FILES
@@ -246,7 +246,7 @@ class ConversionManager:
             filter_str = build_libplacebo_filter(
                 gamma, tonemapper, cuda_input=use_cuda_interop)
         else:
-            if tonemapper in GPU_ONLY_TONEMAPPERS:
+            if is_gpu_only_tonemapper(tonemapper):
                 raise ValueError(
                     f"{tonemapper} requires GPU tonemapping; this item's "
                     "settings force CPU processing — change the tonemapper "
@@ -722,7 +722,9 @@ class ConversionManager:
 
     def is_gpu_available(self):
         try:
-            return self.detect_gpu_encoder() is not None
+            if self._gpu_encoder is None:
+                self._gpu_encoder = self.detect_gpu_encoder()
+            return self._gpu_encoder is not None
         except Exception as e:
             logging.error(f"Error checking GPU availability: {e}")
             return False

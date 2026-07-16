@@ -854,6 +854,16 @@ class TestDetectGpuEncoder(unittest.TestCase):
         with patch.object(m, 'detect_gpu_encoder', return_value=None):
             self.assertFalse(m.is_gpu_available())
 
+    def test_is_gpu_available_uses_cached_encoder_without_reprobing(self):
+        """Once detect_gpu_encoder has run, is_gpu_available must reuse the
+        cached self._gpu_encoder instead of re-spawning nvidia-smi/ffmpeg on
+        every call (e.g. every GPU-accel checkbox toggle)."""
+        m = ConversionManager()
+        m._gpu_encoder = 'h264_nvenc'
+        with patch.object(m, 'detect_gpu_encoder') as mock_detect:
+            self.assertTrue(m.is_gpu_available())
+            mock_detect.assert_not_called()
+
 
 class TestGpuEncoderCommandConstruction(unittest.TestCase):
     """construct_ffmpeg_command uses the detected GPU encoder type correctly."""

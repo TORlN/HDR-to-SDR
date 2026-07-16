@@ -691,6 +691,14 @@ def _int_or_zero(v) -> int:
         return 0
 
 
+def _float_or_zero(v) -> float:
+    """Convert a value to float; return 0.0 for None, empty, or non-numeric strings (e.g. 'N/A')."""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _parse_frame_rate_fraction(value) -> float:
     """Parse an ffprobe fractional frame-rate string ('30000/1001', '0/0', or
     the literal 'N/A') into a float. Returns 0.0 when it can't be determined
@@ -830,16 +838,41 @@ def _probe_video_properties(input_file):
                 bit_rate = container_bit_rate
                 bit_rate_estimated = True
 
+        audio_bit_rate = _int_or_zero(audio_stream.get('bit_rate')) if audio_stream else 0
+
+        # Windows Explorer's Properties -> Details tab computes "Data rate"
+        # (video-only) and "Total bitrate" (video+audio) from each stream's
+        # reconstructed byte count (that stream's own bit_rate * its own
+        # duration), divided by the CONTAINER's total duration rounded to the
+        # nearest whole second. ffprobe's raw per-stream bit_rate instead
+        # divides by the stream's own duration without that rounding -- and
+        # that duration can be shorter than the container's when the stream
+        # has a start-time offset -- which is why the app's reading ran a few
+        # percent higher than what Windows shows for the same file. Re-derive
+        # both figures the same way Windows does so they agree exactly.
+        total_bit_rate = bit_rate
+        rounded_duration = round(duration) if duration > 0 else 0
+        if rounded_duration and bit_rate and not bit_rate_estimated:
+            video_duration = _float_or_zero(video_stream.get('duration')) or duration
+            video_bits = bit_rate * video_duration
+            bit_rate = round(video_bits / rounded_duration)
+            total_bit_rate = bit_rate
+            if audio_bit_rate:
+                audio_duration = (_float_or_zero(audio_stream.get('duration')) if audio_stream else 0.0) or duration
+                audio_bits = audio_bit_rate * audio_duration
+                total_bit_rate = round((video_bits + audio_bits) / rounded_duration)
+
         props = {
             "width": int(video_stream.get('width', 0)),
             "height": int(video_stream.get('height', 0)),
             "bit_rate": bit_rate,
             "bit_rate_estimated": bit_rate_estimated,
+            "total_bit_rate": total_bit_rate,
             "codec_name": video_stream.get('codec_name', ''),
             "frame_rate": float(frame_rate),
             "duration": duration,
             "audio_codec": audio_stream.get('codec_name', '') if audio_stream else '',
-            "audio_bit_rate": _int_or_zero(audio_stream.get('bit_rate')) if audio_stream else 0,
+            "audio_bit_rate": audio_bit_rate,
             "subtitle_streams": subtitle_streams,
             "color_primaries": video_stream.get('color_primaries', ''),
             "color_transfer": video_stream.get('color_transfer', ''),

@@ -1175,7 +1175,11 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         format_tags = []
         if properties.get('is_dolby_vision'):
             format_tags.append('Dolby Vision')
-        bit_rate = properties.get('bit_rate') or 0
+        # total_bit_rate (video+audio, container-duration-rounded) is what
+        # matches Windows Explorer's Properties -> Details "Total bitrate"
+        # exactly -- bit_rate alone (video-only) is reserved for the Target
+        # Bitrate slider's ceiling, see _source_bitrate_kbps.
+        bit_rate = properties.get('total_bit_rate') or properties.get('bit_rate') or 0
         parts = [f"{w}×{h}", fps_str, codec, *format_tags,
                  f"{hdr_tag}{maxcll_str}", bit_depth_str]
         if bit_rate:

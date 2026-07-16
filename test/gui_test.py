@@ -602,7 +602,7 @@ class TestBuildInfoTextBitrate(TestCase):
     """The info strip shows the probed source bitrate when known, omitted
     entirely when it isn't (matching the existing DoVi-tag omission pattern)."""
 
-    def _props(self, bit_rate=None):
+    def _props(self, bit_rate=None, total_bit_rate=None):
         props = {
             'width': 3840, 'height': 2160,
             'frame_rate': 23.976,
@@ -613,6 +613,8 @@ class TestBuildInfoTextBitrate(TestCase):
         }
         if bit_rate is not None:
             props['bit_rate'] = bit_rate
+        if total_bit_rate is not None:
+            props['total_bit_rate'] = total_bit_rate
         return props
 
     def test_shows_formatted_bitrate_before_audio(self):
@@ -641,6 +643,17 @@ class TestBuildInfoTextBitrate(TestCase):
             self._props(bit_rate=84_376_000), maxcll=1000.0)
         self.assertIn('Bitrate: 84,376 kbps', text)
         self.assertNotIn('~', text)
+
+    def test_prefers_total_bit_rate_over_video_only_bit_rate(self):
+        """The info strip is what users compare against Windows Explorer's
+        Properties -> Details "Total bitrate" (video+audio) -- it must show
+        total_bit_rate, not the video-only bit_rate used for the Target
+        Bitrate slider's ceiling, whenever both are present."""
+        text = HDRConverterGUI._build_info_text(
+            self._props(bit_rate=47_358_389, total_bit_rate=47_547_461),
+            maxcll=1000.0)
+        self.assertIn('Bitrate: 47,547 kbps', text)
+        self.assertNotIn('47,358', text)
 
 
 class TestBuildInfoTextOutputBitDepth(TestCase):

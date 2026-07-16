@@ -37,7 +37,7 @@ def _png_bytes():
     Image.new('RGB', (8, 8), (1, 2, 3)).save(buf, format='PNG')
     return buf.getvalue()
 
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+SMOKE_DIR = os.path.join(os.path.dirname(__file__), 'smoke_test_videos')
 
 
 def _bare_gui():
@@ -55,8 +55,10 @@ def _best_ms(fn, runs=7):
 
 
 def _first_sample():
-    for name in ('video.mkv', 'drag multi bo6.mp4'):
-        path = os.path.join(PROJECT_ROOT, name)
+    # Committed smoke_test_videos fixtures only -- no reliance on files that
+    # aren't specifically meant for tests.
+    for name in ('hdr10_10bit_truehd_pgs.mkv', 'hdr10_10bit.mp4'):
+        path = os.path.join(SMOKE_DIR, name)
         if os.path.exists(path):
             return path
     return None
@@ -199,13 +201,14 @@ class TestExtractionPerfAudit(unittest.TestCase):
     """Real-ffmpeg decode-bound path: report timings, guard against catastrophes."""
 
     def test_report_preview_extraction_times(self):
+        # smoke_test_videos fixtures are only ~2s long -- stay well inside that.
         e_original = _best_ms(
-            lambda: extract_frame(_SAMPLE, time_position=2.0,
+            lambda: extract_frame(_SAMPLE, time_position=1.0,
                                   width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1]),
             runs=2)
         e_dynamic = _best_ms(
             lambda: extract_frame_with_conversion(
-                _SAMPLE, gamma=1.0, tonemapper='mobius', time_position=2.0,
+                _SAMPLE, gamma=1.0, tonemapper='mobius', time_position=1.0,
                 width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1]),
             runs=2)
         # Loose ceiling: catches a catastrophic regression, tolerant of slow CI/disk.
@@ -223,11 +226,12 @@ class TestExtractionPerfAudit(unittest.TestCase):
                 _SAMPLE, gamma=1.0, tonemapper='mobius', time_position=t,
                 width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1])
 
-        extract(3.0)
+        # smoke_test_videos fixtures are only ~2s long -- stay well inside that.
+        extract(0.5)
         # No hard ceiling (decode time is disk/CI-load dependent) -- this test only
         # documents that a second extraction doesn't crash or hang (an exception
         # here fails the test; there's nothing else worth asserting on timing).
-        _best_ms(lambda: extract(4.0), runs=2)
+        _best_ms(lambda: extract(1.0), runs=2)
 
 
 if __name__ == '__main__':

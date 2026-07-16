@@ -64,6 +64,7 @@ class TestGetVideoProperties(unittest.TestCase):
             "is_dolby_vision": False,
             "dovi_profile": None,
             "bit_rate_estimated": False,
+            "total_bit_rate": 5128000,
         }
 
         properties = get_video_properties(input_file)
@@ -129,6 +130,7 @@ class TestGetVideoProperties(unittest.TestCase):
             "is_dolby_vision": False,
             "dovi_profile": None,
             "bit_rate_estimated": False,
+            "total_bit_rate": 4128000,
         }
         self.assertEqual(properties, expected_properties)
 
@@ -987,6 +989,72 @@ class TestGetVideoPropertiesRobustness(unittest.TestCase):
         props = get_video_properties('regular.mp4')
         self.assertEqual(props['bit_rate'], 5000000)
         self.assertFalse(props['bit_rate_estimated'])
+
+    @patch('src.utils.subprocess.Popen')
+    def test_bit_rate_matches_windows_when_video_stream_starts_late(self, mock_popen):
+        """A video stream that starts partway into the container (a start-time
+        offset, common after editing/remuxing) has a shorter own-duration than
+        the container. ffprobe's raw bit_rate divides by that shorter duration,
+        reading a few percent higher than Windows Explorer's Properties ->
+        Details tab, which always divides by the container's total duration.
+        Values below are real ffprobe output captured from an actual HDR10 clip;
+        Windows reported Data rate=47358 kbps and Total bitrate=47547 kbps for
+        the same file -- the corrected bit_rate/total_bit_rate must match."""
+        proc = mock_popen.return_value
+        proc.returncode = 0
+        proc.communicate.return_value = (json.dumps({
+            "streams": [
+                {"codec_type": "video", "width": 2560, "height": 1440,
+                 "codec_name": "hevc", "avg_frame_rate": "60/1",
+                 "bit_rate": "50084850", "duration": "17.965700",
+                 "start_time": "0.744256"},
+                {"codec_type": "audio", "codec_name": "aac",
+                 "bit_rate": "192012", "duration": "18.709083"},
+            ],
+            "format": {"duration": "18.709956"},
+        }).encode(), b'')
+        props = get_video_properties('sample.mp4')
+        self.assertEqual(props['bit_rate'], 47358389)
+        self.assertEqual(props['bit_rate'] // 1000, 47358)
+        self.assertEqual(props['total_bit_rate'], 47547461)
+        self.assertEqual(props['total_bit_rate'] // 1000, 47547)
+        self.assertFalse(props['bit_rate_estimated'])
+
+    @patch('src.utils.subprocess.Popen')
+    def test_bit_rate_rounds_container_duration_even_without_offset(self, mock_popen):
+        """Windows always divides by the container duration rounded to the
+        nearest whole second, even when the video stream has no start-time
+        offset -- a non-whole-second duration alone is enough to produce a
+        (small) correction versus ffprobe's unrounded per-stream bit_rate."""
+        proc = mock_popen.return_value
+        proc.returncode = 0
+        proc.communicate.return_value = (json.dumps({
+            "streams": [{"codec_type": "video", "width": 1920, "height": 1080,
+                         "codec_name": "h264", "avg_frame_rate": "30/1",
+                         "bit_rate": "5000000", "duration": "90.4"}],
+            "format": {"duration": "90.4"},
+        }).encode(), b'')
+        props = get_video_properties('rounds.mp4')
+        # 5,000,000 * 90.4 / round(90.4) == 5,000,000 * 90.4 / 90 == 5,022,222
+        self.assertEqual(props['bit_rate'], 5022222)
+
+    @patch('src.utils.subprocess.Popen')
+    def test_total_bit_rate_falls_back_to_bit_rate_when_estimated(self, mock_popen):
+        """When bit_rate itself is only a container-total estimate (no real
+        per-stream reading, e.g. Matroska), there's no separate video/audio
+        split to compute -- total_bit_rate must just mirror the estimate."""
+        proc = mock_popen.return_value
+        proc.returncode = 0
+        proc.communicate.return_value = (json.dumps({
+            "streams": [{"codec_type": "video", "width": 1920, "height": 1080,
+                         "codec_name": "vp9", "avg_frame_rate": "24/1"},
+                        {"codec_type": "audio", "codec_name": "aac",
+                         "bit_rate": "128000"}],
+            "format": {"duration": "126.592000", "bit_rate": "28424731"},
+        }).encode(), b'')
+        props = get_video_properties('example.mkv')
+        self.assertEqual(props['total_bit_rate'], props['bit_rate'])
+        self.assertEqual(props['total_bit_rate'], 28424731)
 
 
 class TestVideoPropertiesCache(unittest.TestCase):

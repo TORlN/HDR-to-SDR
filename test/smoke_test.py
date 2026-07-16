@@ -5,22 +5,17 @@ Unlike the unit/characterization suites (which mock ffmpeg), these exercise the
 and real HDR->SDR encodes. They prove the production command strings really work
 against genuine HDR input (HEVC, bt2020/smpte2084 PQ).
 
-Two tiers of sample:
-
-1. ``test/smoke_test_videos/`` -- small (each well under 500KB), synthetic clips
-   built with plain ffmpeg (+ dovi_tool for the Dolby Vision one) and committed
-   to git specifically so CI exercises the real pipeline instead of only the
-   mocked unit tests. Covers the attribute matrix the app actually branches on:
-   plain SDR, HDR10 at 10-bit and 12-bit, Dolby Vision profile 8.1, and an MKV
-   carrying TrueHD audio + an ASS subtitle track (container-aware fallback).
-
-2. Large real-world captures in the project root (gitignored, so present only
-   on a dev machine -- these tests skip, not fail, on CI):
-     - ``drag multi bo6.mp4``      HEVC PQ 2560x1440, AAC, no subs
-     - ``video.mkv``               HEVC PQ 3840x1632, TrueHD audio, PGS + SubRip subs
-     - ``Shogun S01e01 Anjin.mkv`` HEVC PQ 1920x1080, AAC, ASS subs
-   These stay because they cover real-world muxing quirks (PGS bitmap subs,
-   multi-GB files) that aren't practical to synthesize small.
+All samples live in ``test/smoke_test_videos/`` -- small (each well under
+500KB), committed to git specifically so CI exercises the real pipeline
+instead of only the mocked unit tests, and never depend on any file outside
+the repo. Covers the attribute matrix the app actually branches on: plain
+SDR, HDR10 at 10-bit and 12-bit, Dolby Vision profile 8.1, an MKV carrying
+TrueHD audio + an ASS subtitle track, and an MKV adding a real PGS (bitmap)
+subtitle track on top of that (container-aware fallback, including the
+drop-image-subtitle path that no synthesized bitmap sub can otherwise cover
+-- ffmpeg has no PGS encoder, so ``hdr10_10bit_truehd_pgs.mkv`` was built by
+extracting a few real PGS packets, stream-copied from a personal capture,
+into an otherwise fully synthetic clip; see its recipe below).
 
 Regenerating ``smoke_test_videos/*`` (all built with plain lavfi sources; the
 critical gotcha is that ``testsrc2`` produces ordinary Rec.709-range pixel
@@ -67,8 +62,20 @@ between colorspaces" on this ffmpeg build, so tag via ``setparams`` first):
     zero, since the raw ``.hevc`` input reports an unknown duration.
     dovi_tool: https://github.com/quietvoid/dovi_tool (must be on PATH).
 
-The full-encode tests against the large gitignored root samples run on 2s
-stream-copied clips so the suite stays quick.
+  - ``hdr10_10bit_truehd_pgs.mkv``: the ``hdr10_10bit_truehd_ass.mkv`` recipe
+    (same HDR10 video, same truehd audio, ``-i subs.ass -c:s:0 ass``), plus a
+    fourth input mapped in as a second subtitle stream (``-c:s:1 copy``): a
+    ~2s window stream-copied (``-ss <offset> -t <n>``) from a real capture's
+    PGS track, picked at a timestamp known to contain actual subtitle packets
+    (verify with ``ffprobe -select_streams s -show_entries packet=stream_index,pts_time``
+    -- a naive ``-t N`` from the start can easily land on a stretch with none).
+    ffmpeg has no PGS *encoder* (text-to-bitmap subtitle rasterization isn't
+    supported), so this handful of real packets is the only way to exercise
+    the app's drop-image-subtitle-on-MP4-export path against genuine PGS
+    data; everything else in the file is synthetic.
+
+All samples are small enough that the full-encode tests run directly against
+them (no separate trimming step needed).
 """
 import os
 import sys
@@ -93,28 +100,22 @@ from src.utils import (
 )
 from src.conversion import ConversionManager
 
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 SMOKE_DIR = os.path.join(os.path.dirname(__file__), 'smoke_test_videos')
-
-SAMPLE_VIDEO = os.path.join(PROJECT_ROOT, 'drag multi bo6.mp4')
-MKV_VIDEO = os.path.join(PROJECT_ROOT, 'video.mkv')
-SHOGUN_VIDEO = os.path.join(PROJECT_ROOT, 'Shōgun S01e01 Anjin.mkv')
 
 SDR_VIDEO = os.path.join(SMOKE_DIR, 'sdr_h264_8bit.mp4')
 HDR10_10BIT_VIDEO = os.path.join(SMOKE_DIR, 'hdr10_10bit.mp4')
 HDR10_12BIT_VIDEO = os.path.join(SMOKE_DIR, 'hdr10_12bit.mp4')
 TRUEHD_ASS_MKV = os.path.join(SMOKE_DIR, 'hdr10_10bit_truehd_ass.mkv')
+TRUEHD_PGS_MKV = os.path.join(SMOKE_DIR, 'hdr10_10bit_truehd_pgs.mkv')
 DOVI_VIDEO = os.path.join(SMOKE_DIR, 'dovi_p8.mp4')
 
 _FFMPEG_OK = bool(FFMPEG_EXECUTABLE) and os.path.exists(FFMPEG_EXECUTABLE)
-_BO6_OK = _FFMPEG_OK and os.path.exists(SAMPLE_VIDEO)
-_MKV_OK = _FFMPEG_OK and os.path.exists(MKV_VIDEO)
-_SHOGUN_OK = _FFMPEG_OK and os.path.exists(SHOGUN_VIDEO)
 
 _SDR_OK = _FFMPEG_OK and os.path.exists(SDR_VIDEO)
 _HDR10_10BIT_OK = _FFMPEG_OK and os.path.exists(HDR10_10BIT_VIDEO)
 _HDR10_12BIT_OK = _FFMPEG_OK and os.path.exists(HDR10_12BIT_VIDEO)
 _TRUEHD_ASS_OK = _FFMPEG_OK and os.path.exists(TRUEHD_ASS_MKV)
+_TRUEHD_PGS_OK = _FFMPEG_OK and os.path.exists(TRUEHD_PGS_MKV)
 _DOVI_OK = _FFMPEG_OK and os.path.exists(DOVI_VIDEO)
 
 _LIBPLACEBO_OK = _FFMPEG_OK and vulkan_libplacebo_available()
@@ -137,38 +138,6 @@ def _x265_supports_12bit():
 
 
 _X265_12BIT_OK = _HDR10_12BIT_OK and _x265_supports_12bit()
-
-# Trimmed clips, built once in setUpModule (None until then / when unavailable).
-_CLIP_DIR = None
-_BO6_CLIP = None
-_MKV_CLIP = None
-
-
-def _build_clip(src, name, seconds=2):
-    """Stream-copy the first ``seconds`` of ``src`` (keeps HDR side data; fast)."""
-    dst = os.path.join(_CLIP_DIR, name)
-    subprocess.run(
-        [FFMPEG_EXECUTABLE, '-y', '-ss', '0', '-t', str(seconds), '-i', src,
-         '-map', '0', '-c', 'copy', dst],
-        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
-    return dst
-
-
-def setUpModule():
-    global _CLIP_DIR, _BO6_CLIP, _MKV_CLIP
-    if not _FFMPEG_OK:
-        return
-    _CLIP_DIR = tempfile.mkdtemp(prefix='hdr_smoke_')
-    if _BO6_OK:
-        _BO6_CLIP = _build_clip(SAMPLE_VIDEO, 'bo6.mp4')
-    if _MKV_OK:
-        _MKV_CLIP = _build_clip(MKV_VIDEO, 'clip.mkv')
-
-
-def tearDownModule():
-    if _CLIP_DIR and os.path.isdir(_CLIP_DIR):
-        shutil.rmtree(_CLIP_DIR, ignore_errors=True)
 
 
 def _probe_video(path):
@@ -337,8 +306,7 @@ class TestRealHdr10TwelveBitConversion(unittest.TestCase):
 @unittest.skipUnless(_TRUEHD_ASS_OK, "sample 'smoke_test_videos/hdr10_10bit_truehd_ass.mkv' / ffmpeg not available")
 class TestRealTrueHdAssMkv(unittest.TestCase):
     """Small MKV carrying TrueHD audio and an ASS subtitle track -- covers the
-    same container-aware transcode/drop logic as the (gitignored, large)
-    real-world MKV/Shogun samples, but small enough to run in CI."""
+    container-aware transcode/drop logic for text-only subtitle tracks."""
 
     def test_properties_detect_truehd_and_ass_subtitle(self):
         props = get_video_properties(TRUEHD_ASS_MKV)
@@ -402,165 +370,89 @@ class TestRealTrueHdAssMkv(unittest.TestCase):
             self.assertTrue(subs and subs[0]['codec_name'] == 'mov_text')
 
 
-@unittest.skipUnless(_BO6_OK, "sample 'drag multi bo6.mp4' / ffmpeg not available")
-class TestRealVideoProbing(unittest.TestCase):
-
-    def test_get_video_properties_reads_real_hdr_metadata(self):
-        props = get_video_properties(SAMPLE_VIDEO)
-        self.assertIsNotNone(props)
-        self.assertEqual(props['width'], 2560)
-        self.assertEqual(props['height'], 1440)
-        self.assertEqual(props['codec_name'], 'hevc')
-        self.assertGreater(props['duration'], 0)
-        self.assertGreater(props['frame_rate'], 0)
-
-    def test_get_maxcll_returns_float_or_none(self):
-        # Returns a float when MaxCLL metadata is present, None when absent.
-        # This sample carries no MaxCLL side data so None is expected here.
-        value = get_maxcll(SAMPLE_VIDEO)
-        self.assertTrue(value is None or isinstance(value, float))
-
-
-@unittest.skipUnless(_BO6_OK, "sample 'drag multi bo6.mp4' / ffmpeg not available")
-class TestRealFrameExtraction(unittest.TestCase):
-
-    def test_extract_frame_returns_real_image(self):
-        img = extract_frame(SAMPLE_VIDEO, time_position=1.0)
-        self.assertIsInstance(img, Image.Image)
-        self.assertGreater(img.width, 0)
-        self.assertGreater(img.height, 0)
-
-    def test_dynamic_filter_extraction_produces_image(self):
-        img = extract_frame_with_conversion(
-            SAMPLE_VIDEO, gamma=1.2,
-            tonemapper='mobius', time_position=1.0,
-        )
-        self.assertIsInstance(img, Image.Image)
-        self.assertEqual((img.width, img.height), (2560, 1440))
-
-
-@unittest.skipUnless(_BO6_OK, "sample 'drag multi bo6.mp4' / ffmpeg not available")
-class TestRealConversion(unittest.TestCase):
-    """The full HDR->SDR encode using the production command string."""
-
-    def test_dynamic_conversion_outputs_valid_sdr(self):
-        self.assertIsNotNone(_BO6_CLIP, "trimmed clip was not created")
-        props = get_video_properties(_BO6_CLIP)
-        self.assertIsNotNone(props)
-
-        out_path = os.path.join(_CLIP_DIR, 'out_dynamic.mp4')
-        manager = ConversionManager()
-        cmd = manager.construct_ffmpeg_command(
-            _BO6_CLIP, out_path, gamma=1.0, properties=props,
-            use_gpu=False, tonemapper='mobius',
-        )
-
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        self.assertEqual(
-            result.returncode, 0,
-            msg=f"ffmpeg failed:\n{result.stderr.decode('utf-8', 'replace')[-2000:]}",
-        )
-        self.assertTrue(os.path.exists(out_path))
-        self.assertGreater(os.path.getsize(out_path), 0)
-
-        transfer, width, height, pix_fmt = _probe_video(out_path)
-        self.assertNotEqual(transfer, 'smpte2084')  # must be SDR, not PQ
-        self.assertEqual((width, height), (2560, 1440))
-        self.assertEqual(pix_fmt, 'yuv420p')
-
-
-@unittest.skipUnless(_MKV_OK, "sample 'video.mkv' / ffmpeg not available")
-class TestRealMkvWithTrueHDAndSubtitles(unittest.TestCase):
-    """MKV carrying TrueHD audio and PGS + SubRip subtitle streams."""
+@unittest.skipUnless(_TRUEHD_PGS_OK, "sample 'smoke_test_videos/hdr10_10bit_truehd_pgs.mkv' / ffmpeg not available")
+class TestRealTrueHdPgsMkv(unittest.TestCase):
+    """MKV carrying TrueHD audio and both an ASS (text) and a real PGS
+    (bitmap) subtitle track -- covers the drop-image-subtitle-on-MP4-export
+    path against genuine PGS data, which no synthesized fixture can exercise
+    since ffmpeg has no PGS encoder."""
 
     def test_properties_detect_truehd_and_subtitle_streams(self):
-        props = get_video_properties(MKV_VIDEO)
+        props = get_video_properties(TRUEHD_PGS_MKV)
         self.assertIsNotNone(props)
         self.assertEqual(props['codec_name'], 'hevc')
         self.assertEqual(props['audio_codec'], 'truehd')
-        # The file carries many subtitle tracks; detection must capture them.
-        self.assertGreater(len(props['subtitle_streams']), 1)
+        self.assertEqual(len(props['subtitle_streams']), 2)
+        self.assertTrue(
+            any(s.get('codec_name') == 'hdmv_pgs_subtitle' for s in props['subtitle_streams'])
+        )
 
     def test_mkv_to_mkv_preserves_truehd_and_subtitles(self):
-        self.assertIsNotNone(_MKV_CLIP, "trimmed mkv clip was not created")
-        props = get_video_properties(_MKV_CLIP)
+        props = get_video_properties(TRUEHD_PGS_MKV)
         self.assertEqual(props['audio_codec'], 'truehd')
-        self.assertGreater(len(props['subtitle_streams']), 1)
+        self.assertEqual(len(props['subtitle_streams']), 2)
 
-        out_path = os.path.join(_CLIP_DIR, 'out.mkv')
-        manager = ConversionManager()
-        cmd = manager.construct_ffmpeg_command(
-            _MKV_CLIP, out_path, gamma=1.0, properties=props,
-            use_gpu=False, tonemapper='mobius',
-        )
+        with tempfile.TemporaryDirectory(prefix='hdr_smoke_pgs_') as tmpdir:
+            out_path = os.path.join(tmpdir, 'out.mkv')
+            manager = ConversionManager()
+            cmd = manager.construct_ffmpeg_command(
+                TRUEHD_PGS_MKV, out_path, gamma=1.0, properties=props,
+                use_gpu=False, tonemapper='mobius',
+            )
 
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        self.assertEqual(
-            result.returncode, 0,
-            msg=f"mkv->mkv conversion failed:\n"
-                f"{result.stderr.decode('utf-8', 'replace')[-2000:]}",
-        )
-        # Video is now SDR, and the copy-through audio + subtitle streams survive.
-        transfer, _, _, pix_fmt = _probe_video(out_path)
-        self.assertNotEqual(transfer, 'smpte2084')
-        self.assertEqual(pix_fmt, 'yuv420p')
-        self.assertGreaterEqual(_count_streams(out_path, 'audio'), 1)
-        self.assertGreaterEqual(_count_streams(out_path, 'subtitle'), 1)
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(
+                result.returncode, 0,
+                msg=f"mkv->mkv conversion failed:\n"
+                    f"{result.stderr.decode('utf-8', 'replace')[-2000:]}",
+            )
+            # Video is now SDR, and the copy-through audio + subtitle streams survive.
+            transfer, _, _, pix_fmt = _probe_video(out_path)
+            self.assertNotEqual(transfer, 'smpte2084')
+            self.assertEqual(pix_fmt, 'yuv420p')
+            self.assertGreaterEqual(_count_streams(out_path, 'audio'), 1)
+            self.assertEqual(_count_streams(out_path, 'subtitle'), 2)
 
     def test_mp4_output_transcodes_audio_and_drops_image_subs(self):
-        """Container-aware fallback: converting this TrueHD + PGS/SubRip MKV to an
-        MP4 output must now succeed by transcoding TrueHD audio to AAC, converting
-        text subtitles to mov_text, and dropping PGS image subtitles that no MP4
-        codec can represent.
+        """Container-aware fallback: converting this TrueHD + ASS/PGS MKV to an
+        MP4 output must succeed by transcoding TrueHD audio to AAC, converting
+        the ASS text subtitle to mov_text, and dropping the PGS image subtitle
+        that no MP4 codec can represent.
         """
-        self.assertIsNotNone(_MKV_CLIP, "trimmed mkv clip was not created")
-        props = get_video_properties(_MKV_CLIP)
+        props = get_video_properties(TRUEHD_PGS_MKV)
 
-        out_path = os.path.join(_CLIP_DIR, 'out_from_mkv.mp4')
-        manager = ConversionManager()
-        cmd = manager.construct_ffmpeg_command(
-            _MKV_CLIP, out_path, gamma=1.0, properties=props,
-            use_gpu=False, tonemapper='mobius',
-        )
+        with tempfile.TemporaryDirectory(prefix='hdr_smoke_pgs_mp4_') as tmpdir:
+            out_path = os.path.join(tmpdir, 'out_from_mkv.mp4')
+            manager = ConversionManager()
+            cmd = manager.construct_ffmpeg_command(
+                TRUEHD_PGS_MKV, out_path, gamma=1.0, properties=props,
+                use_gpu=False, tonemapper='mobius',
+            )
 
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        self.assertEqual(
-            result.returncode, 0,
-            msg=f"mkv->mp4 fallback conversion failed:\n"
-                f"{result.stderr.decode('utf-8', 'replace')[-2000:]}",
-        )
-        self.assertTrue(os.path.exists(out_path))
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(
+                result.returncode, 0,
+                msg=f"mkv->mp4 fallback conversion failed:\n"
+                    f"{result.stderr.decode('utf-8', 'replace')[-2000:]}",
+            )
+            self.assertTrue(os.path.exists(out_path))
 
-        # SDR video, AAC audio, and only MP4-legal (text/mov_text) subtitles.
-        out_streams = json.loads(subprocess.check_output(
-            [FFPROBE_EXECUTABLE, '-v', 'error', '-show_entries',
-             'stream=codec_type,codec_name', '-of', 'json', out_path],
-            stderr=subprocess.DEVNULL,
-        ))['streams']
-        transfer, _, _, pix_fmt = _probe_video(out_path)
-        self.assertNotEqual(transfer, 'smpte2084')
-        self.assertEqual(pix_fmt, 'yuv420p')
+            # SDR video, AAC audio, and only MP4-legal (text/mov_text) subtitles.
+            out_streams = json.loads(subprocess.check_output(
+                [FFPROBE_EXECUTABLE, '-v', 'error', '-show_entries',
+                 'stream=codec_type,codec_name', '-of', 'json', out_path],
+                stderr=subprocess.DEVNULL,
+            ))['streams']
+            transfer, _, _, pix_fmt = _probe_video(out_path)
+            self.assertNotEqual(transfer, 'smpte2084')
+            self.assertEqual(pix_fmt, 'yuv420p')
 
-        audio = [s for s in out_streams if s['codec_type'] == 'audio']
-        self.assertTrue(audio and audio[0]['codec_name'] == 'aac')
-        subs = [s for s in out_streams if s['codec_type'] == 'subtitle']
-        # No image subtitles survived into the MP4.
-        self.assertFalse(any(s['codec_name'] == 'hdmv_pgs_subtitle' for s in subs))
-
-
-@unittest.skipUnless(_SHOGUN_OK, "sample 'Shōgun S01e01 Anjin.mkv' / ffmpeg not available")
-class TestRealShogunSubtitles(unittest.TestCase):
-    """MKV with ASS (text) subtitle tracks and AAC audio."""
-
-    def test_properties_detect_ass_subtitle_streams(self):
-        props = get_video_properties(SHOGUN_VIDEO)
-        self.assertIsNotNone(props)
-        self.assertEqual(props['codec_name'], 'hevc')
-        self.assertEqual(props['audio_codec'], 'aac')
-        self.assertGreater(len(props['subtitle_streams']), 1)
-        self.assertTrue(
-            any(s.get('codec_name') == 'ass' for s in props['subtitle_streams'])
-        )
+            audio = [s for s in out_streams if s['codec_type'] == 'audio']
+            self.assertTrue(audio and audio[0]['codec_name'] == 'aac')
+            subs = [s for s in out_streams if s['codec_type'] == 'subtitle']
+            self.assertTrue(any(s['codec_name'] == 'mov_text' for s in subs))
+            # No image subtitles survived into the MP4.
+            self.assertFalse(any(s['codec_name'] == 'hdmv_pgs_subtitle' for s in subs))
 
 
 @unittest.skipUnless(_DOVI_OK, "sample 'smoke_test_videos/dovi_p8.mp4' / ffmpeg not available")

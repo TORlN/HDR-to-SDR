@@ -120,10 +120,23 @@ def save_license_token(key: str, instance_id: str) -> None:
     )
     sig = _sign(payload, fingerprint)
     token_str = json.dumps({'payload': payload, 'sig': sig})
+    tmp_file = LICENSE_FILE + '.tmp'
     with _lock:
         os.makedirs(SETTINGS_DIR, exist_ok=True)
-        with open(LICENSE_FILE, 'w', encoding='utf-8') as f:
-            f.write(token_str)
+        try:
+            with open(tmp_file, 'w', encoding='utf-8') as f:
+                f.write(token_str)
+            # Atomic replace, like settings.py's save_settings -- a crash or
+            # AV lock mid-write must not leave a truncated license.dat, or
+            # load_license_token would treat it as corrupt and report a
+            # previously-activated machine as unlicensed.
+            os.replace(tmp_file, LICENSE_FILE)
+        except OSError:
+            try:
+                os.remove(tmp_file)
+            except OSError:
+                pass
+            raise
 
 
 def load_license_token() -> Optional[dict]:  # type: ignore[type-arg]

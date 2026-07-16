@@ -231,7 +231,7 @@ class TestConstruction(_GuiTestBase):
             self.gui.open_after_conversion_checkbutton,
             self.gui.display_image_checkbutton, self.gui.input_entry,
             self.gui.output_entry, self.gui.gamma_entry,
-            self.gui.gpu_accel_checkbutton,
+            self.gui.gpu_accel_checkbutton, self.gui.batch_listbox,
             self.gui.quality_slider, self.gui.quality_mode_combobox, self.gui.format_combobox,
             self.gui.custom_time_entry, self.gui.custom_seek_button,
             self.gui.add_files_button, self.gui.clear_batch_button,
@@ -240,6 +240,14 @@ class TestConstruction(_GuiTestBase):
             self.gui.apply_settings_button,
         }
         self.assertEqual(set(self.gui.interactable_elements), expected)
+
+    def test_batch_listbox_disabled_during_conversion(self):
+        # Regression: batch_listbox was never gated by disable_ui, so clicking
+        # a different queue row mid-conversion could overwrite input/output
+        # path vars while a GPU->CPU retry was about to re-read them fresh,
+        # corrupting which file gets converted to which path.
+        conversion_manager.disable_ui(self.gui.interactable_elements)
+        self.assertEqual(str(self.gui.batch_listbox.cget('state')), 'disabled')
 
     def test_drop_target_registered_on_start(self):
         self.assertTrue(self.gui.drop_target_registered)
@@ -666,6 +674,13 @@ class TestBatchQueueWidgets(_GuiTestBase):
             self.gui.on_gamma_change()
         self.assertAlmostEqual(self.gui.batch_items[0]['settings']['gamma'], 1.9)
 
+    def test_output_path_edit_writes_back_to_selected_queue_item(self):
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])
+            self.gui.output_path_var.set('C:/custom/a_custom.mkv')
+            self.gui._on_output_path_change()
+        self.assertEqual(self.gui.batch_items[0]['output'], 'C:/custom/a_custom.mkv')
+
     def test_gpu_toggle_writes_back_to_selected_queue_item(self):
         with patch.object(self.gui, 'update_frame_preview'):
             self.gui.add_batch_files(['C:/v/a.mp4'])
@@ -719,6 +734,33 @@ class TestBatchQueueWidgets(_GuiTestBase):
 
         self.assertAlmostEqual(first_gamma, 1.2)
         self.assertAlmostEqual(second_gamma, 0.7)
+
+    def test_batch_run_uses_edited_output_path_for_selected_item(self):
+        """Editing the Output File box for a queued item must not be
+        silently discarded when the batch actually runs."""
+        with patch('src.gui.get_video_properties', return_value=None), \
+             patch.object(self.gui, 'update_frame_preview'), \
+             patch.object(self.gui, 'highlight_frame_button'):
+            self.gui.add_batch_files(['C:/v/a.mp4', 'C:/v/b.mp4'])
+            self.gui.batch_listbox.selection_clear(0, tk.END)
+            self.gui.batch_listbox.selection_set(1)
+            self.gui.on_batch_item_select()
+            self.gui.output_path_var.set('C:/custom/b_custom.mkv')
+            self.gui._on_output_path_change()
+
+        self.assertEqual(self.gui.batch_items[1]['output'], 'C:/custom/b_custom.mkv')
+
+        with patch('src.gui.get_video_properties', return_value=None), \
+             patch.object(self.gui, 'update_frame_preview'), \
+             patch.object(self.gui, 'highlight_frame_button'), \
+             patch('src.batch.conversion_manager') as mock_cm, \
+             patch('src.batch.os.path.isfile', return_value=True), \
+             patch('src.batch.os.path.exists', return_value=False):
+            self.gui.batch_items[0]['status'] = 'Done'  # skip straight to item 2
+            self.gui._start_next_batch_item()
+            output_path = mock_cm.start_conversion.call_args.args[1]
+
+        self.assertEqual(output_path, os.path.normpath('C:/custom/b_custom.mkv'))
 
     def test_copied_gpu_only_tonemapper_falls_back_when_target_lacks_gpu(self):
         """A settings dict carrying a GPU-only tonemapper (e.g. via a future
@@ -1953,6 +1995,17 @@ class TestDropToQueue(unittest.TestCase):
         gui.batch_items = [self._queued('C:/a.mkv')]
         gui.input_path_var.set('C:/a.mkv')
         gui.add_batch_files(['C:/a.mkv', 'C:/b.mkv'])
+        self.assertEqual([it['input'] for it in gui.batch_items],
+                         ['C:/a.mkv', 'C:/b.mkv'])
+
+    def test_add_batch_files_skips_case_variant_of_already_queued_path(self):
+        # NTFS is case-insensitive: 'C:/A.mkv' and 'C:/a.mkv' are the same
+        # file on Windows, so queuing both must not create two queue entries
+        # whose outputs could silently overwrite each other.
+        gui = self._make_gui(licensed=True)
+        gui.batch_items = [self._queued('C:/a.mkv')]
+        gui.input_path_var.set('C:/a.mkv')
+        gui.add_batch_files(['C:/A.mkv', 'C:/b.mkv'])
         self.assertEqual([it['input'] for it in gui.batch_items],
                          ['C:/a.mkv', 'C:/b.mkv'])
 

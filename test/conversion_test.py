@@ -204,8 +204,6 @@ class TestConversionManager(unittest.TestCase):
     def test_handle_completion_success(self, mock_webbrowser_open, mock_showinfo):
         """Test handle_completion for a successful conversion."""
         manager = ConversionManager()
-        manager.process = MagicMock()
-        manager.process.returncode = 0
         error_messages = []
 
         # Create a mock GUI instance with a 'root' attribute
@@ -218,7 +216,7 @@ class TestConversionManager(unittest.TestCase):
 
         with patch.object(manager, 'enable_ui') as mock_enable_ui:
             manager.handle_completion(
-                mock_gui, [], cancel_button, 'output.mkv', True, error_messages
+                mock_gui, [], cancel_button, 'output.mkv', True, error_messages, 0
             )
 
             mock_showinfo.assert_called_once_with(
@@ -232,8 +230,6 @@ class TestConversionManager(unittest.TestCase):
     def test_handle_completion_failure(self, mock_showerror):
         """Test handle_completion for a failed conversion."""
         manager = ConversionManager()
-        manager.process = MagicMock()
-        manager.process.returncode = 1
         error_messages = ['error message']
 
         # Create a mock GUI instance with a 'root' attribute
@@ -248,7 +244,7 @@ class TestConversionManager(unittest.TestCase):
 
         with patch.object(manager, 'enable_ui') as mock_enable_ui:
             manager.handle_completion(
-                mock_gui, [], cancel_button, 'output.mkv', False, error_messages
+                mock_gui, [], cancel_button, 'output.mkv', False, error_messages, 1
             )
 
             mock_showerror.assert_called_once_with(
@@ -266,8 +262,6 @@ class TestConversionManager(unittest.TestCase):
         them makes the dialog unreadable -- only the tail is shown instead.
         """
         manager = ConversionManager()
-        manager.process = MagicMock()
-        manager.process.returncode = 1
         manager.cancelled = False
         spam = [f"frame={i} fps=30 time=00:00:{i:02d}.00" for i in range(190)]
         real_errors = ["Error: something went wrong", "Error: codec not found"]
@@ -281,7 +275,7 @@ class TestConversionManager(unittest.TestCase):
 
         with patch.object(manager, 'enable_ui'):
             manager.handle_completion(
-                mock_gui, [], cancel_button, 'out.mkv', False, error_messages
+                mock_gui, [], cancel_button, 'out.mkv', False, error_messages, 1
             )
 
         call_args = mock_showerror.call_args[0]
@@ -682,19 +676,17 @@ class TestBatchCompletionHook(unittest.TestCase):
     @patch('src.conversion.webbrowser.open')
     def test_on_complete_called_instead_of_dialog_on_success(self, mock_open, mock_mb):
         manager = ConversionManager()
-        manager.process = MagicMock(); manager.process.returncode = 0
         manager._on_complete = MagicMock()
-        manager.handle_completion(self._gui(), [], MagicMock(), 'out.mkv', False, [])
+        manager.handle_completion(self._gui(), [], MagicMock(), 'out.mkv', False, [], 0)
         manager._on_complete.assert_called_once_with(True)
         mock_mb.showinfo.assert_not_called()  # no per-file success dialog
 
     @patch('src.conversion.messagebox')
     def test_on_complete_called_with_false_on_failure(self, mock_mb):
         manager = ConversionManager()
-        manager.process = MagicMock(); manager.process.returncode = 1
         manager.cancelled = False
         manager._on_complete = MagicMock()
-        manager.handle_completion(self._gui(), [], MagicMock(), 'out.mkv', False, ['err'])
+        manager.handle_completion(self._gui(), [], MagicMock(), 'out.mkv', False, ['err'], 1)
         manager._on_complete.assert_called_once_with(False)
         mock_mb.showerror.assert_not_called()  # no per-file error dialog
 
@@ -702,11 +694,10 @@ class TestBatchCompletionHook(unittest.TestCase):
     def test_on_complete_does_not_enable_ui_between_files(self, mock_mb):
         # Between queued files the UI must stay disabled and the cancel button shown.
         manager = ConversionManager()
-        manager.process = MagicMock(); manager.process.returncode = 0
         manager._on_complete = MagicMock()
         cancel = MagicMock()
         with patch.object(manager, 'enable_ui') as mock_enable:
-            manager.handle_completion(self._gui(), ['e'], cancel, 'out.mkv', False, [])
+            manager.handle_completion(self._gui(), ['e'], cancel, 'out.mkv', False, [], 0)
         mock_enable.assert_not_called()
         cancel.grid_remove.assert_not_called()
 
@@ -729,7 +720,14 @@ class TestStartConversionSignalsFailureOnEarlyReturn(unittest.TestCase):
     on_complete callback was supplied (the batch/queue path) -- call it with
     False. Without this, a batch item that hits one of these guards is left
     stuck at 'Converting' forever (nothing ever advances the queue), and a
-    single-file caller has no way to tell the attempt never started."""
+    single-file caller has no way to tell the attempt never started.
+
+    In batch mode these guards must also not pop a blocking messagebox --
+    _start_next_batch_item does no pre-validation of its own, so any of
+    these guards is reachable mid-unattended-batch-run; a modal dialog
+    nobody's watching for stalls the whole queue until someone clicks it,
+    defeating "queue it and walk away" semantics. Interactive (single-file)
+    mode keeps the dialog, since a human is right there to see it."""
 
     _PROPS = {
         "width": 1920, "height": 1080, "bit_rate": 4000000, "codec_name": 'h264',
@@ -746,6 +744,7 @@ class TestStartConversionSignalsFailureOnEarlyReturn(unittest.TestCase):
             False, MagicMock(), on_complete=done)
         self.assertFalse(result)
         done.assert_called_once_with(False)
+        mock_warn.assert_not_called()  # batch mode: no blocking dialog
 
     @patch('src.conversion.messagebox.showwarning')
     def test_bit_depth_incompatibility_signals_failure(self, mock_warn):
@@ -756,6 +755,7 @@ class TestStartConversionSignalsFailureOnEarlyReturn(unittest.TestCase):
             False, MagicMock(), bit_depth=10, on_complete=done)
         self.assertFalse(result)
         done.assert_called_once_with(False)
+        mock_warn.assert_not_called()  # batch mode: no blocking dialog
 
     @patch('src.conversion.messagebox.showwarning')
     @patch('src.conversion.get_video_properties', return_value=None)
@@ -767,6 +767,7 @@ class TestStartConversionSignalsFailureOnEarlyReturn(unittest.TestCase):
             False, MagicMock(), on_complete=done)
         self.assertFalse(result)
         done.assert_called_once_with(False)
+        mock_warn.assert_not_called()  # batch mode: no blocking dialog
 
     @patch('src.conversion.messagebox.showwarning')
     @patch('src.conversion.get_video_properties')
@@ -779,16 +780,19 @@ class TestStartConversionSignalsFailureOnEarlyReturn(unittest.TestCase):
             False, MagicMock(), on_complete=done)
         self.assertFalse(result)
         done.assert_called_once_with(False)
+        mock_warn.assert_not_called()  # batch mode: no blocking dialog
 
     @patch('src.conversion.messagebox.showwarning')
     def test_early_return_without_on_complete_does_not_crash(self, mock_warn):
         """The single-file path passes no on_complete -- the None default
-        must not be called."""
+        must not be called, and (unlike batch mode) the dialog still shows
+        since a human is present to see it."""
         manager = ConversionManager()
         result = manager.start_conversion(
             '', 'output.mkv', 2.2, False, MagicMock(), [], MagicMock(),
             False, MagicMock())
         self.assertFalse(result)
+        mock_warn.assert_called_once()
 
     @patch('src.conversion.subprocess.Popen')
     @patch('src.conversion.get_video_properties')
@@ -1597,6 +1601,46 @@ class TestMonitorProgressCancellationRace(unittest.TestCase):
                 f"cleared mid-iteration: {exc}"
             )
 
+    def test_success_survives_process_nulled_before_handle_runs(self) -> None:
+        """A third race, deeper than (a)/(b) above: monitor_progress captures
+        `proc` locally and no longer crashes, but handle_completion's
+        after(0)-scheduled _handle still re-reads self.process.returncode
+        independently -- not the value monitor_progress already computed.
+        If cancel_conversion (main thread) sets self.process = None in the
+        window between monitor_progress finishing and _handle actually
+        running, a conversion that succeeded (returncode 0) gets reported
+        as failed/cancelled.
+
+        RED today   — _handle reads self.process.returncode, sees None,
+                      reports success=False.
+        GREEN after — handle_completion receives monitor_progress's already
+                      -captured returncode and never touches self.process.
+        """
+        manager = ConversionManager()
+        manager.cancelled = False
+        manager.use_gpu = False
+        manager._on_complete = MagicMock()
+
+        mock_proc = MagicMock()
+        mock_proc.stderr = iter([])  # empty -> loop exits immediately
+        mock_proc.returncode = 0
+        manager.process = mock_proc
+
+        gui = MagicMock()
+        captured = {}
+        gui.root.after = MagicMock(
+            side_effect=lambda delay, func: captured.setdefault('cb', func))
+
+        with patch('src.conversion.messagebox'):
+            manager.monitor_progress(
+                MagicMock(), 10.0, gui, [], MagicMock(), 'out.mkv', False, 2.2)
+            # cancel_conversion races in right after monitor_progress decided
+            # the process succeeded, but before the scheduled handler runs.
+            manager.process = None
+            captured['cb']()
+
+        manager._on_complete.assert_called_once_with(True)
+
 
 class TestGpuErrorDetectionFalsePositive(unittest.TestCase):
     """gpu_error_detected must not fire just because the input/output filename
@@ -1893,6 +1937,26 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
                                     False, 1.0, 'reinhard')
         self.assertEqual(mock_start.call_args.kwargs.get('quality_mode'), 'bitrate')
         self.assertEqual(mock_start.call_args.kwargs.get('quality'), 30000)
+
+    def test_cpu_retry_calls_on_complete_when_construct_ffmpeg_command_raises(self):
+        """A CPU retry that still can't build a command (e.g. a GPU-only
+        tonemapper with no CPU implementation) must still call on_complete,
+        or the batch item is stuck at 'Converting' forever -- unlike a first
+        (non-retry) attempt, nothing else in this call path (there's no
+        surrounding try/except the way _start_next_batch_item wraps its own
+        call to start_conversion) catches the exception."""
+        manager = ConversionManager()
+        manager._on_complete = MagicMock()
+        mock_gui = MagicMock()
+        mock_gui.input_path_var.get.return_value = 'in.mkv'
+        mock_gui.output_path_var.get.return_value = 'out.mkv'
+        with patch.object(manager, 'construct_ffmpeg_command',
+                          side_effect=ValueError('bt.2390 requires GPU tonemapping')), \
+             patch('src.conversion.get_video_properties', return_value={'duration': 10.0}), \
+             patch('src.conversion.messagebox'):
+            manager._retry_with_cpu(mock_gui, [], MagicMock(), MagicMock(),
+                                    False, 1.0, 'bt.2390')
+        manager._on_complete.assert_called_once_with(False)
 
     def test_cpu_retry_writes_back_gpu_accel_off_to_current_batch_item(self):
         """gpu_accel_var.set(False) alone doesn't persist -- it's a raw

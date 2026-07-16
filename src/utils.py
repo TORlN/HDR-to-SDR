@@ -225,16 +225,24 @@ def _probe_hdr_metadata(video_path):
     ]
 
     startupinfo, creationflags = _startupinfo()
-
-    out = subprocess.check_output(
-        cmd,
-        stdin=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        startupinfo=startupinfo,
-        creationflags=creationflags
-    )
-    data = json.loads(out.decode('utf-8'))
     result: dict = {'maxcll': None, 'maxfall': None, 'mastering_peak': None}
+
+    try:
+        out = subprocess.check_output(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            startupinfo=startupinfo,
+            creationflags=creationflags
+        )
+        data = json.loads(out.decode('utf-8'))
+    except (subprocess.SubprocessError, OSError, json.JSONDecodeError, ValueError) as e:
+        # A stream that passes the basic ffprobe (get_video_properties) can
+        # still fail this second frame-level probe (e.g. truncated/corrupt
+        # HDR data) -- degrade to "no HDR metadata" like get_video_properties
+        # already does, instead of raising uncaught out of the load path.
+        logging.error(f"Error probing HDR metadata for {video_path}: {e}")
+        return result
     for frame in data.get('frames', []):
         for sd in frame.get('side_data_list', []):
             sdt = sd.get('side_data_type')

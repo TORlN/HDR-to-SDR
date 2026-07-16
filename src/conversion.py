@@ -31,17 +31,21 @@ class ConversionManager:
         # fires without calling it leaves the item stuck at 'Converting'
         # forever. Returning False also lets single-file callers know the
         # conversion never actually started.
+        # A batch run has no human watching for a per-guard dialog -- see
+        # _reject/verify_paths.
+        show_dialog = on_complete is None
+
         def _abort_before_start():
             if on_complete is not None:
                 on_complete(False)
             return False
 
-        if not self.verify_paths(input_path, output_path):
+        if not self.verify_paths(input_path, output_path, show_dialog=show_dialog):
             return _abort_before_start()
 
         incompatibility = self.validate_bit_depth_output(output_path, bit_depth)
         if incompatibility:
-            messagebox.showwarning("Warning", incompatibility)
+            self._reject(incompatibility, show_dialog)
             return _abort_before_start()
 
         input_path = os.path.abspath(input_path)
@@ -61,14 +65,15 @@ class ConversionManager:
 
         properties = get_video_properties(input_path)
         if properties is None:
-            messagebox.showwarning("Warning", "Failed to retrieve video properties.")
+            self._reject("Failed to retrieve video properties.", show_dialog)
             return _abort_before_start()
 
         # A missing/zero duration would make progress tracking divide by zero in
         # the monitor thread (which would then die silently, leaving the UI stuck).
         if not properties.get('duration'):
-            messagebox.showwarning(
-                "Warning", "Could not determine the video's duration, so it can't be converted.")
+            self._reject(
+                "Could not determine the video's duration, so it can't be converted.",
+                show_dialog)
             return _abort_before_start()
 
         self.disable_ui(interactable_elements)
@@ -101,18 +106,28 @@ class ConversionManager:
         thread.start()
         return True
 
-    def verify_paths(self, input_path, output_path):
+    @staticmethod
+    def _reject(message, show_dialog):
+        """Log a guard rejection; only pop a blocking dialog in interactive
+        (single-file) mode. A batch run has no human watching for it, so a
+        modal here would stall the whole queue until someone clicks it --
+        the item is still marked Failed and visible in the batch list."""
+        if show_dialog:
+            messagebox.showwarning("Warning", message)
+        else:
+            logging.error(f"Conversion rejected: {message}")
+
+    def verify_paths(self, input_path, output_path, show_dialog=True):
         if not input_path or not output_path:
-            messagebox.showwarning(
-                "Warning", "Please select both an input file and specify an output file.")
+            self._reject(
+                "Please select both an input file and specify an output file.", show_dialog)
             return False
         # normcase folds case on Windows (NTFS is case-insensitive) and is a
         # no-op elsewhere -- without it, 'movie.mp4' vs 'Movie.mp4' would
         # pass this guard and ffmpeg (-y) would read and write the same file.
         if os.path.normcase(os.path.abspath(input_path)) == \
                 os.path.normcase(os.path.abspath(output_path)):
-            messagebox.showwarning(
-                "Warning", "Input and output file cannot be the same.")
+            self._reject("Input and output file cannot be the same.", show_dialog)
             return False
         return True
 
@@ -548,7 +563,8 @@ class ConversionManager:
                     open_after_conversion, gamma, tonemapper))
             else:
                 self.handle_completion(gui_instance, interactable_elements, cancel_button,
-                                    output_path, open_after_conversion, error_messages)
+                                    output_path, open_after_conversion, error_messages,
+                                    returncode)
 
     def _retry_with_cpu(self, gui_instance, interactable_elements, cancel_button,
                         progress_var, open_after_conversion, gamma, tonemapper):
@@ -562,34 +578,49 @@ class ConversionManager:
         gui_instance._write_back_current_settings()
         messagebox.showwarning("GPU Acceleration Failed",
                                "GPU acceleration failed. Switching to CPU encoding.")
-        self.start_conversion(
-            input_path=gui_instance.input_path_var.get(),
-            output_path=gui_instance.output_path_var.get(),
-            gamma=gamma,
-            use_gpu=False,  # Force CPU encoding
-            progress_var=progress_var,
-            interactable_elements=interactable_elements,
-            gui_instance=gui_instance,
-            open_after_conversion=open_after_conversion,
-            cancel_button=cancel_button,
-            tonemapper=tonemapper,
-            quality=getattr(self, '_quality', 23),
-            quality_mode=getattr(self, '_quality_mode', 'cq'),
-            on_complete=getattr(self, '_on_complete', None),
-            bit_depth=getattr(self, '_bit_depth', 8),
-            licensed=getattr(self, '_licensed', False),
-        )
+        on_complete = getattr(self, '_on_complete', None)
+        try:
+            self.start_conversion(
+                input_path=gui_instance.input_path_var.get(),
+                output_path=gui_instance.output_path_var.get(),
+                gamma=gamma,
+                use_gpu=False,  # Force CPU encoding
+                progress_var=progress_var,
+                interactable_elements=interactable_elements,
+                gui_instance=gui_instance,
+                open_after_conversion=open_after_conversion,
+                cancel_button=cancel_button,
+                tonemapper=tonemapper,
+                quality=getattr(self, '_quality', 23),
+                quality_mode=getattr(self, '_quality_mode', 'cq'),
+                on_complete=on_complete,
+                bit_depth=getattr(self, '_bit_depth', 8),
+                licensed=getattr(self, '_licensed', False),
+            )
+        except Exception as e:
+            # E.g. a GPU-only tonemapper (BT.2390/Spline) that has no CPU
+            # implementation: construct_ffmpeg_command already restored UI
+            # state and re-raised. Unlike a first attempt (wrapped by
+            # _start_next_batch_item's own try/except), nothing else in this
+            # call path calls on_complete -- without this, the batch item
+            # would be stuck at 'Converting' forever.
+            logging.error(f"CPU retry failed to start ({tonemapper}): {e}")
+            if on_complete is not None:
+                on_complete(False)
 
     def parse_time(self, time_str):
         hours, minutes, seconds = map(float, time_str.split(':'))
         return hours * 3600 + minutes * 60 + seconds
 
     def handle_completion(self, gui_instance, interactable_elements, cancel_button,
-                          output_path, open_after_conversion, error_messages):
+                          output_path, open_after_conversion, error_messages, returncode):
         def _handle():
-            # Snapshot the exit code once (the process may be None on a bare/mock
-            # instance); None is treated as "not success" everywhere below.
-            returncode = self.process.returncode if self.process is not None else None
+            # returncode is the value monitor_progress already read from its
+            # own locally-captured proc, not re-read from self.process here:
+            # cancel_conversion (main thread) can set self.process = None
+            # between monitor_progress finishing and this after(0)-scheduled
+            # callback actually running, which would otherwise misreport a
+            # conversion that had already finished successfully.
             on_complete = getattr(self, '_on_complete', None)
             if on_complete is not None:
                 # Batch/queue mode: no per-file dialog and the UI stays disabled

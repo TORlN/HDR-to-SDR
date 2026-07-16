@@ -335,6 +335,32 @@ class TestTokenStorage(unittest.TestCase):
         self.assertEqual(payload['instance_id'], 'my-instance-id')  # type: ignore[index]
         self.assertEqual(payload['fingerprint'], get_hardware_fingerprint())  # type: ignore[index]
 
+    def test_failed_write_does_not_corrupt_existing_token(self):
+        """A crash/power-loss/AV-lock mid-write must not leave a truncated
+        license.dat -- load_license_token would then treat it as corrupt and
+        check_license() would report a previously-activated machine as
+        unlicensed. Writing to a temp file and atomically replacing the
+        original (like settings.py's save_settings already does) avoids
+        this."""
+        with tempfile.TemporaryDirectory() as tmp:
+            lic_file = os.path.join(tmp, 'license.dat')
+            with patch('src.licensing.LICENSE_FILE', lic_file), \
+                 patch('src.licensing.SETTINGS_DIR', tmp):
+                save_license_token('GOOD-KEY', 'good-instance-id')
+                with open(lic_file, 'r', encoding='utf-8') as f:
+                    original_bytes = f.read()
+
+                with patch('src.licensing.os.replace', side_effect=OSError('disk full')):
+                    with self.assertRaises(OSError):
+                        save_license_token('NEW-KEY', 'new-instance-id')
+
+                with open(lic_file, 'r', encoding='utf-8') as f:
+                    after_bytes = f.read()
+
+            self.assertEqual(after_bytes, original_bytes)
+            # No stray temp file left behind.
+            self.assertEqual(os.listdir(tmp), ['license.dat'])
+
     def test_tampered_token_rejected(self):
         """Modifying the stored payload causes load_license_token to return None."""
         with tempfile.TemporaryDirectory() as tmp:

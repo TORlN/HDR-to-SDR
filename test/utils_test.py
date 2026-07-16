@@ -1159,6 +1159,29 @@ class TestProbeHdrMetadata(unittest.TestCase):
         result = self._u._probe_hdr_metadata('/fake/hdr.mkv')
         self.assertAlmostEqual(result['mastering_peak'], 4000.0)
 
+    @patch('src.utils.subprocess.check_output')
+    def test_ffprobe_failure_returns_none_values_instead_of_raising(self, mock_out):
+        """A truncated/corrupt HDR stream can pass the basic ffprobe (used
+        for get_video_properties) but fail this second frame-level probe --
+        get_video_properties already degrades to None on failure instead of
+        raising, and this probe must match that convention. Without it, the
+        exception propagates out of _load_input_file's caller with no
+        try/except anywhere in the chain (the Browse-button path has none),
+        leaving the GUI half-loaded with no error shown."""
+        mock_out.side_effect = self._u.subprocess.CalledProcessError(1, ['ffprobe'])
+        result = self._u._probe_hdr_metadata('/fake/corrupt.mkv')
+        self.assertIsNone(result['maxcll'])
+        self.assertIsNone(result['maxfall'])
+        self.assertIsNone(result['mastering_peak'])
+
+    @patch('src.utils.subprocess.check_output')
+    def test_malformed_json_returns_none_values_instead_of_raising(self, mock_out):
+        mock_out.return_value = b'not valid json {{{'
+        result = self._u._probe_hdr_metadata('/fake/corrupt.mkv')
+        self.assertIsNone(result['maxcll'])
+        self.assertIsNone(result['maxfall'])
+        self.assertIsNone(result['mastering_peak'])
+
 
 class TestDynamicOnlyFilter(unittest.TestCase):
     """After removing Static, there is one filter chain: Dynamic with npl=100."""

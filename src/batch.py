@@ -78,11 +78,14 @@ class _BatchMixin:
         route through here too, so re-dropping a file to preview it must not
         stack up copies."""
         self._cancel_batch_conflict_review()
-        queued = {it['input'] for it in self.batch_items}
+        # normcase folds case on Windows (NTFS is case-insensitive) so
+        # 'Movie.mp4' and 'movie.mp4' -- the same file on disk -- dedupe as
+        # one queue entry instead of two whose outputs could collide unseen.
+        queued = {os.path.normcase(it['input']) for it in self.batch_items}
         for path in paths:  # type: ignore[union-attr]
-            if not path or path in queued:
+            if not path or os.path.normcase(path) in queued:
                 continue
-            queued.add(path)
+            queued.add(os.path.normcase(path))
             fmt = self._format_for_input(path)  # type: ignore[attr-defined]
             base = os.path.splitext(path)[0]
             output_path = self._output_path_with_format(f"{base}_sdr", fmt)  # type: ignore[attr-defined]
@@ -259,7 +262,10 @@ class _BatchMixin:
         for item in self.batch_items:
             if item['status'] != 'Pending':
                 continue
-            key = os.path.normpath(item['output'])
+            # normcase folds case on Windows (NTFS is case-insensitive), so
+            # case-variant outputs pointing at the same file are grouped
+            # into one conflict instead of two invisible ones.
+            key = os.path.normcase(os.path.normpath(item['output']))
             groups.setdefault(key, []).append(item)
         return [group for path, group in groups.items()
                 if len(group) > 1 or os.path.exists(path)]
@@ -319,6 +325,10 @@ class _BatchMixin:
         conflicting item 'Skipped' -- and starts the batch."""
         if not self.batch_items:
             return False
+        # Capture whatever's currently shown (e.g. a just-typed Output File
+        # edit the user never pressed Return on) onto its item before this
+        # runs -- _start_next_batch_item reads item['output'], not the live var.
+        self._write_back_current_settings()  # type: ignore[attr-defined]
         if not any(it['status'] == 'Pending' for it in self.batch_items):
             for it in self.batch_items:
                 it['status'] = 'Pending'
@@ -348,56 +358,63 @@ class _BatchMixin:
         return self._start_next_batch_item()
 
     def _start_next_batch_item(self) -> bool:
-        """Start the next Pending item, or finish the batch if none remain."""
-        item = next((it for it in self.batch_items if it['status'] == 'Pending'), None)
-        if item is None:
-            self._finish_batch()
-            return False
+        """Start the next Pending item, or finish the batch if none remain.
 
-        input_path = os.path.normpath(item['input'])
-        if not os.path.isfile(input_path):
-            logging.error(f"Batch input not found, skipping: {input_path}")
-            item['status'] = 'Failed'
+        Skips over an item whose input is missing or that fails to start by
+        looping, not recursing: a long run of consecutive failures (e.g. a
+        queue built from a since-unmounted network drive) would otherwise
+        grow one Python stack frame per skipped item and could exceed the
+        interpreter's recursion limit."""
+        while True:
+            item = next((it for it in self.batch_items if it['status'] == 'Pending'), None)
+            if item is None:
+                self._finish_batch()
+                return False
+
+            input_path = os.path.normpath(item['input'])
+            if not os.path.isfile(input_path):
+                logging.error(f"Batch input not found, skipping: {input_path}")
+                item['status'] = 'Failed'
+                self._refresh_batch_list()
+                continue
+
+            output_path = os.path.normpath(item['output'])
+            item['status'] = 'Converting'
+            self._current_batch_item = item
             self._refresh_batch_list()
-            return self._start_next_batch_item()
+            self.progress_var.set(0)
 
-        output_path = os.path.normpath(item['output'])
-        item['status'] = 'Converting'
-        self._current_batch_item = item
-        self._refresh_batch_list()
-        self.progress_var.set(0)
+            current = self.input_path_var.get() if hasattr(self, 'input_path_var') else None
+            if current != item['input']:
+                self._load_input_file(item['input'])  # type: ignore[attr-defined]
 
-        current = self.input_path_var.get() if hasattr(self, 'input_path_var') else None
-        if current != item['input']:
-            self._load_input_file(item['input'])  # type: ignore[attr-defined]
+            gamma = self.gamma_var.get()
+            use_gpu = self.gpu_accel_var.get()
+            tonemapper = self.tonemap_var.get().lower()
+            quality_mode = self._QUALITY_MODE_TO_INTERNAL.get(  # type: ignore[attr-defined]
+                self.quality_mode_var.get(), 'cq')
+            quality = (int(self.bitrate_var.get()) if quality_mode == 'bitrate'
+                       else int(self.quality_var.get()))
+            bit_depth = self._selected_bit_depth()  # type: ignore[attr-defined]
 
-        gamma = self.gamma_var.get()
-        use_gpu = self.gpu_accel_var.get()
-        tonemapper = self.tonemap_var.get().lower()
-        quality_mode = self._QUALITY_MODE_TO_INTERNAL.get(  # type: ignore[attr-defined]
-            self.quality_mode_var.get(), 'cq')
-        quality = (int(self.bitrate_var.get()) if quality_mode == 'bitrate'
-                   else int(self.quality_var.get()))
-        bit_depth = self._selected_bit_depth()  # type: ignore[attr-defined]
-
-        try:
-            started = conversion_manager.start_conversion(
-                input_path, output_path, gamma, use_gpu,
-                self.progress_var, self.interactable_elements, self,
-                self.open_after_conversion_var.get(), self.cancel_button,
-                tonemapper=tonemapper, quality=quality, quality_mode=quality_mode,
-                bit_depth=bit_depth, licensed=self._licensed,
-                on_complete=self._on_batch_item_complete
-            )
-        except Exception as e:
-            logging.error(f"Batch item failed to start ({input_path}): {e}")
-            item['status'] = 'Failed'
-            self._refresh_batch_list()
-            return self._start_next_batch_item()
-        # A guard rejecting the item (e.g. bad duration) already advanced the
-        # queue synchronously via on_complete above; `started` just reports
-        # what actually happened instead of always claiming success.
-        return started
+            try:
+                started = conversion_manager.start_conversion(
+                    input_path, output_path, gamma, use_gpu,
+                    self.progress_var, self.interactable_elements, self,
+                    self.open_after_conversion_var.get(), self.cancel_button,
+                    tonemapper=tonemapper, quality=quality, quality_mode=quality_mode,
+                    bit_depth=bit_depth, licensed=self._licensed,
+                    on_complete=self._on_batch_item_complete
+                )
+            except Exception as e:
+                logging.error(f"Batch item failed to start ({input_path}): {e}")
+                item['status'] = 'Failed'
+                self._refresh_batch_list()
+                continue
+            # A guard rejecting the item (e.g. bad duration) already advanced the
+            # queue synchronously via on_complete above; `started` just reports
+            # what actually happened instead of always claiming success.
+            return started
 
     def _on_batch_item_complete(self, success: bool) -> None:
         """Mark the finished item and advance the queue (runs on the main thread)."""

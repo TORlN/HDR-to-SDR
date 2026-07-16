@@ -367,6 +367,36 @@ class TestPreviewWorkerThread(unittest.TestCase):
         callback()
         gui.handle_preview_error.assert_called_once()
 
+    def test_stale_generation_error_does_not_clobber_newer_preview(self):
+        """The success path already checks generation == self._preview_generation
+        before rendering (see test_render_preview_images_ignores_stale_generation
+        above); the exception path must guard the same way. Without it, a slow-
+        to-fail worker for a file the user already navigated away from can wipe
+        out a newer, already-rendered valid preview."""
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui.current_frame_index = 1
+        gui.total_frames = 5
+        gui.original_image = None
+        gui.last_time_position = None
+        gui.tonemap_var = MagicMock()
+        gui.tonemap_var.get.return_value = 'Mobius'
+        gui.handle_preview_error = MagicMock()
+
+        def bump_generation_then_fail(video_path):
+            # Simulate a second, newer display_frames() call (e.g. the user
+            # switched files) bumping the generation counter while this
+            # (now-stale) worker is still in flight.
+            gui._preview_generation += 1
+            return None  # get_video_properties -> None makes the worker raise
+
+        with patch('src.preview.get_video_properties', side_effect=bump_generation_then_fail):
+            gui.display_frames('stale.mp4')
+            gui._preview_thread.result(timeout=5)
+
+        gui.root.after.assert_not_called()
+        gui.handle_preview_error.assert_not_called()
+
     def test_worker_prewarms_other_frames_after_render(self):
         gui = _bare_gui()
         gui.root = MagicMock()
@@ -1374,6 +1404,16 @@ class TestBatchConflictDetection(unittest.TestCase):
         with patch('src.batch.os.path.exists', return_value=False):
             self.assertEqual(gui._detect_batch_conflicts(), [[a, b]])
 
+    def test_case_variant_output_paths_are_grouped_as_one_conflict(self):
+        # NTFS is case-insensitive: 'Same_sdr.mkv' and 'same_sdr.mkv' resolve
+        # to the same file on disk, so they must be treated as one conflict
+        # group, not two independent (and therefore invisible) outputs.
+        a = self._item('Same_sdr.mkv', input_name='a')
+        b = self._item('same_sdr.mkv', input_name='b')
+        gui = self._gui([a, b])
+        with patch('src.batch.os.path.exists', return_value=False):
+            self.assertEqual(gui._detect_batch_conflicts(), [[a, b]])
+
     def test_non_pending_items_are_ignored(self):
         done = self._item('a_sdr.mkv', status='Done')
         gui = self._gui([done])
@@ -1554,6 +1594,7 @@ class TestBatchProcessing(unittest.TestCase):
         gui.quality_var = MagicMock(); gui.quality_var.get.return_value = 20
         gui.quality_mode_var = MagicMock(); gui.quality_mode_var.get.return_value = 'Constant Quality'
         gui.bitrate_var = MagicMock(); gui.bitrate_var.get.return_value = 8000
+        gui.bit_depth_var = MagicMock(); gui.bit_depth_var.get.return_value = '10-bit'
         gui._source_bit_depth = 8
         gui._licensed = True
         gui.open_after_conversion_var = MagicMock()
@@ -1565,6 +1606,7 @@ class TestBatchProcessing(unittest.TestCase):
         gui.unregister_drop_target = MagicMock()
         gui.register_drop_target = MagicMock()
         gui._load_input_file = MagicMock()  # preview follows the converting file
+        gui.output_path_var = MagicMock(); gui.output_path_var.get.return_value = ''
         return gui
 
     def _item(self, name, status='Pending'):
@@ -1689,6 +1731,23 @@ class TestBatchProcessing(unittest.TestCase):
         self.assertEqual(gui.batch_items[1]['status'], 'Converting')
         mock_cm.start_conversion.assert_called_once()
 
+    @patch('src.batch.messagebox')
+    @patch('src.batch.conversion_manager')
+    def test_many_consecutive_missing_inputs_does_not_recurse(self, mock_cm, mock_mb):
+        """A long run of consecutive missing/moved source files (e.g. a
+        queue built from a since-unmounted network drive) must not blow the
+        Python recursion limit -- advancing past a failed item has to be
+        iterative, not a direct recursive self-call."""
+        gui = self._gui()
+        missing = [self._item(f'gone{i}') for i in range(3000)]
+        good = self._item('good')
+        gui.batch_items = missing + [good]
+        with patch('src.gui.os.path.isfile', side_effect=lambda p: 'good.mkv' in p):
+            gui.start_batch()
+        self.assertTrue(all(it['status'] == 'Failed' for it in missing))
+        self.assertEqual(good['status'], 'Converting')
+        mock_cm.start_conversion.assert_called_once()
+
     @patch('src.gui.conversion_manager')
     def test_convert_video_runs_batch_when_queue_nonempty(self, mock_cm):
         gui = self._gui()
@@ -1714,6 +1773,7 @@ class TestBatchProcessing(unittest.TestCase):
         # re-render it (no spinner flash on the file already on screen).
         gui = self._gui()
         gui.input_path_var = MagicMock(); gui.input_path_var.get.return_value = 'a.mkv'
+        gui.output_path_var.get.return_value = 'a_sdr.mkv'  # matches the loaded item
         gui.batch_items = [self._item('a'), self._item('b')]
         gui.start_batch()
         gui._load_input_file.assert_not_called()
@@ -2647,6 +2707,8 @@ class TestBatchListRefreshDebounce(unittest.TestCase):
         item = {'settings': {}}
         gui._batch_item_for_current_input = MagicMock(return_value=item)
         gui._current_settings_dict = MagicMock(return_value={'x': 1})
+        gui.output_path_var = MagicMock()
+        gui.output_path_var.get.return_value = 'out.mkv'
         gui._refresh_batch_list = MagicMock()
         gui._item = item
         return gui

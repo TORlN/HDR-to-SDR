@@ -297,7 +297,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.browse_button, self.convert_button, self.gamma_slider,
             self.open_after_conversion_checkbutton, self.display_image_checkbutton,
             self.input_entry, self.output_entry, self.gamma_entry,
-            self.gpu_accel_checkbutton, self.bit_depth_10_radio,
+            self.gpu_accel_checkbutton, self.bit_depth_10_radio, self.batch_listbox,
         ]
         premium = [
             self.quality_slider, self.quality_mode_combobox, self.format_combobox,
@@ -362,6 +362,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.output_entry = ttk.Entry(
             self.control_frame, textvariable=self.output_path_var, width=40)
         self.output_entry.grid(row=1, column=1, sticky=tk.W + tk.E, padx=(10, 10))
+        self.output_entry.bind('<Return>', self._on_output_path_change)
         self.format_combobox = ttk.Combobox(
             self.control_frame, textvariable=self.format_var,
             values=self._OUTPUT_FORMATS, state='readonly', width=6)
@@ -607,7 +608,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.browse_button, self.convert_button, self.gamma_slider,
             self.open_after_conversion_checkbutton, self.display_image_checkbutton,
             self.input_entry, self.output_entry, self.gamma_entry,
-            self.gpu_accel_checkbutton, self.quality_slider, self.quality_mode_combobox,
+            self.gpu_accel_checkbutton, self.batch_listbox,
+            self.quality_slider, self.quality_mode_combobox,
             self.format_combobox,
             self.custom_time_entry, self.custom_seek_button,
             self.add_files_button, self.clear_batch_button, self.remove_batch_button,
@@ -669,16 +671,22 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.input_path_var.set(file_path)
         fmt = self._format_for_input(file_path) if self._licensed else 'MP4'
         self.format_var.set(fmt)
-        base = os.path.splitext(file_path)[0]
-        self.output_path_var.set(self._output_path_with_format(f"{base}_sdr", fmt))
         self.original_image = None
         self.converted_image_base = None
         self._reset_custom_seek()
         self._reset_preview_cache()
         self._restoring_batch_item_settings = True
         try:
-            self._update_info_label(file_path)
             item = self._batch_item_for_current_input()
+            # A queued item's own (possibly user-edited) output path wins over
+            # recomputing the auto default, so a prior edit survives reselect
+            # instead of being silently overwritten back to <name>_sdr.<ext>.
+            if item is not None and item.get('output'):
+                self.output_path_var.set(item['output'])
+            else:
+                base = os.path.splitext(file_path)[0]
+                self.output_path_var.set(self._output_path_with_format(f"{base}_sdr", fmt))
+            self._update_info_label(file_path)
             if item is not None and item.get('settings'):
                 self._restore_settings_dict(item['settings'])
         finally:
@@ -740,6 +748,15 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 self._output_path_with_format(current, self.format_var.get()))
         if hasattr(self, 'format_combobox'):
             self.format_combobox.selection_clear()
+        self._write_back_current_settings()
+
+    def _on_output_path_change(self, event: object = None) -> None:
+        """<Return> handler for output_entry: persist a manually-typed output
+        path onto the selected queue item (mirrors on_gamma_change/
+        gamma_entry) -- without this, editing the box for a queued item is
+        silently discarded the moment the batch actually runs, since
+        _start_next_batch_item reads item['output'], not the live var."""
+        self._write_back_current_settings()
 
     # ── Output Color Depth ──────────────────────────────────────────────────────
 
@@ -870,6 +887,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         item = self._batch_item_for_current_input()
         if item is not None:
             item['settings'] = self._current_settings_dict()
+            item['output'] = self.output_path_var.get()
             if debounce_listbox:
                 self._schedule_batch_list_refresh()
             else:

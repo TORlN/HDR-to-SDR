@@ -670,7 +670,13 @@ class _HDRPreviewMixin:
                         original, converted, time_position, generation))
                 self._prewarm_other_frames(video_path, duration, tonemapper, generation)
             except Exception as e:
-                self._schedule_on_main(lambda err=e: self.handle_preview_error(err))
+                # A stale (superseded) job's error must not clobber a newer
+                # preview the same way its success path already guards
+                # against above -- otherwise a slow-to-fail worker for a file
+                # the user already navigated away from can wipe out a newer,
+                # already-rendered valid preview.
+                if generation == self._preview_generation:
+                    self._schedule_on_main(lambda err=e: self.handle_preview_error(err))
 
         if not hasattr(self, '_preview_pool'):
             self._preview_pool = ThreadPoolExecutor(

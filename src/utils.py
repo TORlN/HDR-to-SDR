@@ -3,10 +3,12 @@ import subprocess
 import os
 import io
 import logging
+import logging.handlers
 import re
 import sys
 import json
 import shutil
+import tempfile
 import threading
 
 # Constants and initialization
@@ -63,8 +65,31 @@ FFMPEG_EXECUTABLE = None
 FFPROBE_EXECUTABLE = None
 
 # Initialize logging
+def _log_file_path() -> str:
+    """Where the app's log file lives -- %LOCALAPPDATA%\\HDR to SDR\\app.log on
+    Windows. A windowed/onedir build has no console for stderr to reach, so
+    without this file warnings (e.g. a failed update check) were invisible."""
+    base = os.getenv('LOCALAPPDATA') or tempfile.gettempdir()
+    return os.path.join(base, 'HDR to SDR', 'app.log')
+
+
 def setup_logging():
-    logging.basicConfig(level=logging.WARNING, format='%(levelname)s - %(message)s')
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    try:
+        log_path = _log_file_path()
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        file_handler = logging.handlers.RotatingFileHandler(
+            log_path, maxBytes=1_000_000, backupCount=3, encoding='utf-8')
+        file_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s - %(message)s'))
+        handlers.append(file_handler)
+    except OSError:
+        # Importing this module must never crash the app -- fall back to
+        # console-only logging if the log directory can't be created/written.
+        pass
+    logging.basicConfig(
+        level=logging.WARNING, format='%(levelname)s - %(message)s',
+        handlers=handlers, force=True,
+    )
 
 # Initialize FFmpeg paths
 def get_executable_path(filename):

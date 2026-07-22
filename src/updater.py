@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 from typing import Callable
 
@@ -18,6 +20,8 @@ _HEADERS = {
     "User-Agent": "HDR-to-SDR-Updater/1.0",
     "Accept": "application/vnd.github+json",
 }
+
+logger = logging.getLogger(__name__)
 
 
 def _version_tuple(v: str) -> tuple[int, ...]:
@@ -48,7 +52,17 @@ def check_for_update() -> tuple[str, str, str] | None:
         if not url:
             return None
         return tag.lstrip("v"), url, RELEASES_URL
-    except Exception:
+    except urllib.error.HTTPError as e:
+        if e.code == 403 and e.headers.get("X-RateLimit-Remaining") == "0":
+            logger.warning(
+                "Update check skipped: GitHub API rate limit exceeded (resets at %s)",
+                e.headers.get("X-RateLimit-Reset"),
+            )
+        else:
+            logger.warning("Update check failed: HTTP %s %s", e.code, e.reason)
+        return None
+    except Exception as e:
+        logger.warning("Update check failed: %s", e)
         return None
 
 

@@ -1,3 +1,4 @@
+import os
 import sys
 import threading
 import unittest
@@ -866,6 +867,75 @@ class TestSetupDpiAwareness(unittest.TestCase):
             import src.utils as _u
             importlib.reload(_u)
             _u.setup_dpi_awareness()  # must not raise
+
+
+class TestSetupLogging(unittest.TestCase):
+    """setup_logging() should write warnings to a rotating log file under
+    %LOCALAPPDATA%, not just to stderr (which a windowed/onedir build has no
+    console for -- warnings were previously invisible after the app shipped)."""
+
+    def setUp(self):
+        import logging as _logging
+        self._orig_handlers = _logging.root.handlers[:]
+        self._orig_level = _logging.root.level
+        self.addCleanup(self._restore_root_logger)
+
+    def _restore_root_logger(self):
+        import logging as _logging
+        for h in _logging.root.handlers[:]:
+            if h not in self._orig_handlers:
+                h.close()
+        _logging.root.handlers[:] = self._orig_handlers
+        _logging.root.level = self._orig_level
+
+    def test_log_file_path_under_localappdata(self):
+        import tempfile
+        import src.utils as utils
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {'LOCALAPPDATA': tmp}):
+                path = utils._log_file_path()
+        self.assertEqual(path, os.path.join(tmp, 'HDR to SDR', 'app.log'))
+
+    def test_log_file_path_falls_back_without_localappdata(self):
+        import src.utils as utils
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('LOCALAPPDATA', None)
+            path = utils._log_file_path()  # must not raise
+        self.assertTrue(path.endswith(os.path.join('HDR to SDR', 'app.log')))
+
+    def test_setup_logging_creates_log_directory(self):
+        import tempfile
+        import src.utils as utils
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {'LOCALAPPDATA': tmp}):
+                utils.setup_logging()
+            try:
+                self.assertTrue(os.path.isdir(os.path.join(tmp, 'HDR to SDR')))
+            finally:
+                # Close the file handler before the TemporaryDirectory context
+                # tears down -- otherwise Windows refuses to delete the open file.
+                self._restore_root_logger()
+
+    def test_setup_logging_attaches_rotating_file_handler(self):
+        import tempfile
+        import logging.handlers
+        import src.utils as utils
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {'LOCALAPPDATA': tmp}):
+                utils.setup_logging()
+            try:
+                expected_path = os.path.join(tmp, 'HDR to SDR', 'app.log')
+                file_handlers = [
+                    h for h in logging.root.handlers
+                    if isinstance(h, logging.handlers.RotatingFileHandler)
+                ]
+                self.assertTrue(
+                    any(os.path.normpath(h.baseFilename) == os.path.normpath(expected_path)
+                        for h in file_handlers),
+                    f"no RotatingFileHandler found for {expected_path}"
+                )
+            finally:
+                self._restore_root_logger()
 
 
 class TestGetVideoPropertiesRobustness(unittest.TestCase):

@@ -150,6 +150,53 @@ class TestCheckForUpdate(unittest.TestCase):
         _, kwargs = m.call_args
         self.assertEqual(kwargs.get('timeout'), 10)
 
+    def _http_error(self, code: int, reason: str, headers: dict | None = None):
+        import urllib.error
+        import email.message
+        hdrs = email.message.Message()
+        for k, v in (headers or {}).items():
+            hdrs.add_header(k, v)
+        return urllib.error.HTTPError('https://api.github.com/x', code, reason, hdrs, None)
+
+    def test_rate_limit_error_logs_warning(self):
+        err = self._http_error(403, 'rate limit exceeded', {
+            'X-RateLimit-Remaining': '0', 'X-RateLimit-Reset': '1784742169',
+        })
+        with patch('urllib.request.urlopen', side_effect=err):
+            with patch.object(updater, 'logger') as mock_logger:
+                result = check_for_update()
+        self.assertIsNone(result)
+        mock_logger.warning.assert_called_once()
+        self.assertIn('rate limit', mock_logger.warning.call_args[0][0].lower())
+
+    def test_other_http_error_logs_warning(self):
+        err = self._http_error(500, 'Internal Server Error')
+        with patch('urllib.request.urlopen', side_effect=err):
+            with patch.object(updater, 'logger') as mock_logger:
+                result = check_for_update()
+        self.assertIsNone(result)
+        mock_logger.warning.assert_called_once()
+        message = mock_logger.warning.call_args[0]
+        self.assertIn(500, message)
+
+    def test_network_error_logs_warning(self):
+        with patch('urllib.request.urlopen', side_effect=OSError('no route')):
+            with patch.object(updater, 'logger') as mock_logger:
+                result = check_for_update()
+        self.assertIsNone(result)
+        mock_logger.warning.assert_called_once()
+
+    def test_malformed_json_logs_warning(self):
+        resp = MagicMock()
+        resp.read.return_value = b'not json'
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = MagicMock(return_value=False)
+        with patch('urllib.request.urlopen', return_value=resp):
+            with patch.object(updater, 'logger') as mock_logger:
+                result = check_for_update()
+        self.assertIsNone(result)
+        mock_logger.warning.assert_called_once()
+
 
 # ── download_installer ─────────────────────────────────────────────────────────
 

@@ -319,6 +319,16 @@ class TestLicenseCheck(unittest.TestCase):
              patch('os.remove', side_effect=OSError('permission denied')):
             self.assertFalse(check_license())
 
+    def test_revoked_key_logs_warning(self):
+        """A background revalidation that finds the key revoked is otherwise
+        silent -- no dialog, no exception -- so without a log line there is no
+        record anywhere of why a Pro user suddenly lost access."""
+        with patch('src.licensing.load_license_token', return_value=_stale_payload()), \
+             patch('urllib.request.urlopen', return_value=_urlopen_mock(_LS_VALIDATE_REVOKED)), \
+             patch('src.licensing.logger') as mock_logger:
+            self.assertFalse(check_license())
+        mock_logger.warning.assert_called_once()
+
 
 class TestClearLocalToken(unittest.TestCase):
     """_clear_local_token is the single shared implementation behind the three

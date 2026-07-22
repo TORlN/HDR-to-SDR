@@ -397,7 +397,8 @@ def check_license() -> bool:
         save_license_token(key, instance_id)
     except NetworkError:
         pass  # offline — trust the local token
-    except LicenseError:
+    except LicenseError as exc:
+        logger.warning("License revoked on refresh, clearing local token: %s", exc)
         _clear_local_token()
         return False
 

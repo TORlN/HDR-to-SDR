@@ -72,6 +72,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
 
     # Output containers the user can pick.
     _OUTPUT_FORMATS = ['MP4', 'MKV', 'MOV']
+    _ISSUES_URL = 'https://github.com/TORlN/HDR-to-SDR/issues'
     _INPUT_FORMAT_MAP = {'mp4': 'MP4', 'm4v': 'MP4', 'mov': 'MOV', 'mkv': 'MKV'}
 
     # Quality slider ranges as (worst, best): left end = smaller file, right = better.
@@ -245,6 +246,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
     def _show_update_dialog(self, current_ver: str, new_ver: str, url: str,
                              release_url: str) -> None:
         _UpdateDialog(self.root, current_ver, new_ver, url, release_url)
+
+    def _open_issues_page(self) -> None:
+        webbrowser.open(self._ISSUES_URL)
 
     # ── Licensing ──────────────────────────────────────────────────────────────
 
@@ -570,6 +574,16 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.progress_bar = ttk.Progressbar(
             self.image_frame, variable=self.progress_var, maximum=100)
         self.progress_bar.grid(row=3, column=0, columnspan=3, sticky=tk.W + tk.E)
+
+        self.footer_frame = ttk.Frame(self.root)
+        self.footer_frame.grid(row=4, column=0, sticky=tk.W + tk.E, padx=10, pady=(0, 5))
+        self.footer_frame.columnconfigure(0, weight=1)
+
+        self.feedback_link = ttk.Label(
+            self.footer_frame, text="Report an Issue / Suggest a Feature",
+            foreground='#4ea1ff', cursor="hand2")
+        self.feedback_link.grid(row=0, column=1, sticky=tk.E)
+        self.feedback_link.bind('<Button-1>', lambda _e: self._open_issues_page())
 
         self.batch_frame = ttk.LabelFrame(self.root, text="Batch Queue", padding="10")
         self.batch_frame.grid(row=2, column=0, padx=10, pady=(0, 5), sticky=tk.W + tk.E)

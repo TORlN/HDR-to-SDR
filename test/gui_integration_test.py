@@ -2352,5 +2352,21 @@ class TestDolbyVisionInfoBarTag(_GuiTestBase):
         self.assertNotIn('Dolby Vision', self.gui.info_label.cget('text'))
 
 
+class TestFeedbackLink(_GuiTestBase):
+    """A footer link opens the GitHub issues page for bug reports/feature
+    requests, anchored bottom-right so the rest of the footer row stays free
+    for future additions."""
+
+    def test_link_widget_exists_bottom_right(self):
+        info = self.gui.feedback_link.grid_info()
+        self.assertEqual(str(info['sticky']), 'e')
+        self.assertIn('issue', self.gui.feedback_link.cget('text').lower())
+
+    def test_click_opens_github_issues_page(self):
+        with patch('src.gui.webbrowser') as mock_wb:
+            self.gui._open_issues_page()
+        mock_wb.open.assert_called_once_with('https://github.com/TORlN/HDR-to-SDR/issues')
+
+
 if __name__ == '__main__':
     unittest.main()

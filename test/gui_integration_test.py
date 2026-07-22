@@ -89,7 +89,8 @@ class _GuiTestBase(unittest.TestCase):
 class TestConstruction(_GuiTestBase):
 
     def test_window_title_and_minsize(self):
-        self.assertEqual(self.root.title(), "HDR to SDR Converter")
+        from updater import APP_VERSION
+        self.assertEqual(self.root.title(), f"HDR to SDR Converter v{APP_VERSION}")
         # Min size is computed from the controls (issue 3) so they can't be
         # clipped: at least the default floor, and wide enough for the controls.
         min_w, min_h = self.root.minsize()

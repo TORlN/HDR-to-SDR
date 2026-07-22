@@ -100,7 +100,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         """Initialize the GUI and set up all components."""
         self.root = root
         self._licensed = licensed
-        self.root.title("HDR to SDR Converter")
+        from updater import APP_VERSION
+        self.root.title(f"HDR to SDR Converter v{APP_VERSION}")
         self._set_window_icon()
         self.root.after(0, self._set_window_icon)
         apply_dark_theme(self.root)

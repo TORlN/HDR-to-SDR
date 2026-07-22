@@ -461,6 +461,31 @@ class TestWindowIcon(unittest.TestCase):
         gui.on_close()
 
 
+class TestWindowTitle(TestCase):
+    """Window title should show the running app's version so users can tell what build they have."""
+
+    def _make_gui(self):
+        mock_root = MagicMock()
+        patches = {
+            'string_var': patch('src.gui.tk.StringVar', return_value=MagicMock(spec=tk.StringVar, get=MagicMock(return_value=''), set=MagicMock())),
+            'double_var': patch('src.gui.tk.DoubleVar', return_value=MagicMock(spec=tk.DoubleVar)),
+            'bool_var':   patch('src.gui.tk.BooleanVar', return_value=MagicMock(spec=tk.BooleanVar)),
+            'int_var':    patch('src.gui.tk.IntVar', return_value=MagicMock(
+                spec=tk.IntVar, get=MagicMock(return_value=23), set=MagicMock())),
+        }
+        mocks = {name: p.start() for name, p in patches.items()}
+        for p in patches.values():
+            self.addCleanup(_safe_stop, p)
+        gui = HDRConverterGUI(mock_root, licensed=True)
+        self.addCleanup(gui.on_close)
+        return gui, mock_root
+
+    def test_title_includes_app_version(self):
+        from updater import APP_VERSION
+        gui, mock_root = self._make_gui()
+        mock_root.title.assert_any_call(f"HDR to SDR Converter v{APP_VERSION}")
+
+
 class TestBatchCancel(TestCase):
     """Cancelling mid-batch must stop the queue, not advance to the next file."""
 

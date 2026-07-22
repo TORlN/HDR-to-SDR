@@ -580,7 +580,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.footer_frame.columnconfigure(0, weight=1)
 
         self.feedback_link = ttk.Label(
-            self.footer_frame, text="Report an Issue / Suggest a Feature",
+            self.footer_frame, text="Report an Issue",
             foreground='#4ea1ff', cursor="hand2")
         self.feedback_link.grid(row=0, column=1, sticky=tk.E)
         self.feedback_link.bind('<Button-1>', lambda _e: self._open_issues_page())

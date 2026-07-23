@@ -266,9 +266,8 @@ class TestLutReproducesLegacyGamutMath(unittest.TestCase):
     # content.
     #
     # This tolerance was originally guessed at 6 (a small margin over an
-    # isolated synthetic-color check that showed 1-3/255 between CPU lut3d
-    # and GPU libplacebo lut_type=2). This test itself then caught two real
-    # problems that guess didn't anticipate: (1) the generator's EOTF/OETF
+    # early, since-superseded synthetic-color check). This test itself then
+    # caught two real problems that guess didn't anticipate: (1) the generator's EOTF/OETF
     # used the piecewise BT.709 camera curve instead of the pure gamma-2.4
     # curve zscale's zimg backend actually implements for "bt709" transfer
     # (confirmed empirically -- see _rec709_eotf's docstring in
@@ -368,6 +367,58 @@ class TestRealGpuOnlyTonemappers(unittest.TestCase):
             HDR10_10BIT_VIDEO, gamma=1.0, tonemapper='bt.2390', time_position=0.5)
         self.assertGreater(img.width, 0)
         self.assertGreater(img.height, 0)
+
+
+@unittest.skipUnless(_LIBPLACEBO_OK, "Vulkan/libplacebo not available on this machine")
+class TestGpuLutStageActuallyChangesCpuCapableTonemapperOutput(unittest.TestCase):
+    """Regression guard for a real bug this test originally caught: earlier,
+    _effective_lut_enabled (preview.py) / _apply_lut_export_availability
+    (gui.py) forced "Accurate GPU Color" off for tonemappers with a native
+    CPU/zscale implementation (Reinhard, Mobius, Hable -- unlike bt.2390/
+    spline, which have none) whenever they ran on the GPU via libplacebo, on
+    the unverified claim that the LUT stage changed nothing for them. It
+    measurably does: real HDR10 content through Hable on GPU showed a
+    ~61/255 max pixel divergence between the LUT stage on vs. off -- the same
+    class of defect the LUT was originally added to fix for GPU-only
+    tonemappers (see the gpu-lut-libplacebo-native-broken investigation).
+    The forced-off behavior was removed in response. This test guards the
+    fix by asserting the LUT stage still has a real, substantial effect for
+    a CPU-capable tonemapper on GPU -- if this ever drops back near zero, the
+    checkbox has silently become a no-op again for these tonemappers.
+    """
+
+    # Well below the ~61/255 measured divergence, but far above the ~10/255
+    # noise floor two gamut-correction paths that are *supposed* to agree
+    # show in TestLutReproducesLegacyGamutMath -- a real "the LUT stage does
+    # nothing again" regression would fall under this, not just drift down to it.
+    _MIN_EXPECTED_DIFF = 30
+
+    def test_hable_gpu_output_differs_with_and_without_lut_stage(self):
+        from src.utils import extract_frame_with_gpu_conversion
+        with_lut = extract_frame_with_gpu_conversion(
+            HDR10_10BIT_VIDEO, gamma=1.0, tonemapper='hable',
+            time_position=0.5, lut_enabled=True).convert('RGB')
+        without_lut = extract_frame_with_gpu_conversion(
+            HDR10_10BIT_VIDEO, gamma=1.0, tonemapper='hable',
+            time_position=0.5, lut_enabled=False).convert('RGB')
+        self.assertEqual(with_lut.size, without_lut.size)
+
+        max_diff = 0
+        w, h = with_lut.size
+        for x in range(0, w, max(1, w // 20)):
+            for y in range(0, h, max(1, h // 20)):
+                a = with_lut.getpixel((x, y))
+                b = without_lut.getpixel((x, y))
+                diff = max(abs(ac - bc) for ac, bc in zip(a, b))
+                max_diff = max(max_diff, diff)
+
+        self.assertGreaterEqual(
+            max_diff, self._MIN_EXPECTED_DIFF,
+            f"Hable GPU output only differs by {max_diff}/255 between "
+            f"lut_enabled=True and lut_enabled=False (expected at least "
+            f"{self._MIN_EXPECTED_DIFF}/255) -- the LUT stage may have "
+            "silently become a no-op for CPU-capable tonemappers on GPU."
+        )
 
 
 @unittest.skipUnless(_HDR10_12BIT_OK, "sample 'smoke_test_videos/hdr10_12bit.mp4' / ffmpeg not available")

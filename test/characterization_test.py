@@ -903,11 +903,12 @@ class TestGuiInteractions(unittest.TestCase):
 
     @patch('src.gui.messagebox')
     @patch('src.gui.conversion_manager')
-    def test_check_gpu_acceleration_disables_lut_checkbox_for_non_gpu_only_tonemapper(
+    def test_check_gpu_acceleration_enables_lut_checkbox_for_non_gpu_only_tonemapper_too(
             self, mock_cm, mock_mb):
-        """Reinhard/Mobius/Hable produce the same colors with or without the
-        accurate LUT stage, so the checkbox has nothing to offer for them
-        even with GPU acceleration on -- only bt.2390/spline actually vary."""
+        """libplacebo's gamut handling was found to diverge from the LUT
+        reference for CPU-capable tonemappers too (Hable measured ~61/255),
+        not just bt.2390/spline, so the checkbox stays enabled for them too
+        whenever GPU acceleration is on."""
         gui = _bare_gui()
         gui.gpu_accel_var = MagicMock()
         gui.gpu_accel_var.get.return_value = True
@@ -919,7 +920,7 @@ class TestGuiInteractions(unittest.TestCase):
 
         gui.check_gpu_acceleration()
 
-        gui.lut_export_checkbutton.config.assert_called_once_with(state='disabled')
+        gui.lut_export_checkbutton.config.assert_called_once_with(state='normal')
 
     def test_handle_file_drop_sets_paths_and_refreshes(self):
         gui = _bare_gui()
@@ -1752,16 +1753,19 @@ class TestBatchProcessing(unittest.TestCase):
 
     @patch('src.batch.conversion_manager')
     @patch('src.gui.os.path.isfile', return_value=True)
-    def test_start_batch_forces_lut_off_for_non_gpu_only_tonemapper(self, _isfile, mock_cm):
-        """The fixture's tonemapper (Mobius) isn't GPU-only, so batch
-        conversion must ignore the checked "Accurate GPU Color" box, same as
-        the single-file path (see test_convert_forces_lut_off_...)."""
+    def test_start_batch_passes_through_lut_choice_for_non_gpu_only_tonemapper_too(
+            self, _isfile, mock_cm):
+        """The fixture's tonemapper (Mobius) isn't GPU-only, but libplacebo's
+        gamut handling diverges from the LUT reference for it too (Hable
+        measured ~61/255) -- batch conversion must honor the checked
+        "Accurate GPU Color" box the same as any other tonemapper (see
+        test_convert_passes_through_lut_choice_...)."""
         gui = self._gui()
         gui.lut_export_var.get.return_value = True
         gui.batch_items = [self._item('a')]
         gui.start_batch()
         kwargs = mock_cm.start_conversion.call_args.kwargs
-        self.assertFalse(kwargs['lut_enabled'])
+        self.assertTrue(kwargs['lut_enabled'])
 
     @patch('src.batch.conversion_manager')
     @patch('src.gui.os.path.isfile', return_value=True)
@@ -2427,11 +2431,13 @@ class TestConvertVideoBranches(unittest.TestCase):
     @patch('src.gui.messagebox')
     @patch('src.gui.os.path.exists', return_value=False)
     @patch('src.gui.os.path.isfile', return_value=True)
-    def test_convert_forces_lut_off_for_non_gpu_only_tonemapper(
+    def test_convert_passes_through_lut_choice_for_non_gpu_only_tonemapper_too(
             self, _isfile, _exists, mock_mb, mock_cm):
-        """The fixture's tonemapper (Mobius) isn't GPU-only, so the real
-        export must ignore the checked "Accurate GPU Color" box -- it has no
-        effect for that tonemapper (see gui.py's _apply_lut_export_availability)."""
+        """The fixture's tonemapper (Mobius) isn't GPU-only, but libplacebo's
+        gamut handling diverges from the LUT reference for it too (Hable
+        measured ~61/255), so the real export must honor the checked
+        "Accurate GPU Color" box for it the same as any other tonemapper
+        (see gui.py's _apply_lut_export_availability)."""
         gui = self._gui()
         gui.lut_export_var.get.return_value = True
         gui.drop_target_registered = False
@@ -2444,7 +2450,7 @@ class TestConvertVideoBranches(unittest.TestCase):
         gui.convert_video()
 
         _, kwargs = mock_cm.start_conversion.call_args
-        self.assertFalse(kwargs['lut_enabled'])
+        self.assertTrue(kwargs['lut_enabled'])
 
     @patch('src.gui.conversion_manager')
     @patch('src.gui.messagebox')

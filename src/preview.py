@@ -498,23 +498,29 @@ class _HDRPreviewMixin:
             if len(cache) > self._PREVIEW_CACHE_MAX:
                 cache.pop(next(iter(cache)))
 
-    def _effective_lut_enabled(self, tonemapper: str) -> bool:
-        """The lut_enabled value actually used by preview/export, as opposed
-        to lut_export_var's raw checked state. Accurate GPU Color only
-        changes anything for GPU-only tonemappers (bt.2390, spline) --
-        Reinhard/Mobius/Hable produce the same colors whether their
-        libplacebo pass includes the accurate LUT stage or not, so it's
-        forced off for them: a pure win (faster, no visible difference).
-        The checkbox's own state is left untouched elsewhere (see gui.py's
-        _apply_lut_export_availability) so it keeps showing whatever the
-        user last chose for when they're back on a GPU-only tonemapper.
+    def _effective_lut_enabled(self) -> bool:
+        """The lut_enabled value actually used by preview/export: simply
+        lut_export_var's raw checked state, applied uniformly regardless of
+        tonemapper.
+
+        This used to force the LUT off for tonemappers with a native CPU/
+        zscale implementation (Reinhard/Mobius/Hable), on the assumption that
+        libplacebo's own gamut handling already matched the LUT reference for
+        them. That assumption was disproven empirically: real HDR10 content
+        run through libplacebo with a CPU-capable tonemapper (Hable) showed a
+        ~61/255 max pixel divergence between the LUT stage on vs. off -- the
+        same class of defect the LUT was originally added to fix for
+        GPU-only tonemappers (see the gpu-lut-libplacebo-native-broken
+        investigation, and TestGpuLutForcedOffMatchesLutOnForCpuCapableTonemapper
+        in test/smoke_test.py). The tonemapper played has no bearing on
+        whether libplacebo's gamut conversion is accurate, so the checkbox
+        now controls the tradeoff for every tonemapper, matching
+        _apply_lut_export_availability's own tonemapper-independent gating.
 
         getattr-guarded: lut_export_var is set in HDRConverterGUI.__init__,
         but bare test doubles (object.__new__) may not have it -- default to
         the same True the real BooleanVar always starts at.
         """
-        if not is_gpu_only_tonemapper(tonemapper):
-            return False
         lut_export_var = getattr(self, 'lut_export_var', None)
         return lut_export_var.get() if lut_export_var is not None else True
 
@@ -528,7 +534,7 @@ class _HDRPreviewMixin:
         time_position = self._preview_time_position(duration)
         time_key = round(time_position, 3)
         tonemapper = self.tonemap_var.get().lower()
-        lut_enabled = self._effective_lut_enabled(tonemapper)
+        lut_enabled = self._effective_lut_enabled()
         return (
             (video_path, time_key) in self._preview_cache_original
             and (video_path, time_key, tonemapper, lut_enabled) in self._preview_cache_converted
@@ -709,7 +715,7 @@ class _HDRPreviewMixin:
     def display_frames(self, video_path: str) -> None:
         """Kick off frame extraction on a worker thread and render on the main thread."""
         tonemapper = self.tonemap_var.get().lower()
-        lut_enabled = self._effective_lut_enabled(tonemapper)
+        lut_enabled = self._effective_lut_enabled()
 
         self._preview_generation = getattr(self, '_preview_generation', 0) + 1
         generation = self._preview_generation

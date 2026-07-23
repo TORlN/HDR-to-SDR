@@ -444,8 +444,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         tooltip_text_lut_export = (
             "Applies precise BT.2020→BT.709 color correction on GPU exports.\n"
             "Uncheck for ~2-3x faster GPU exports using libplacebo's own, slightly\n"
-            "less accurate color conversion instead. Only affects tonemappers \n"
-            "that require GPU acceleration."
+            "less accurate color conversion instead. No effect on CPU exports,\n"
+            "which always apply accurate color correction."
         )
         info_button_lut_export.bind(
             '<Enter>', lambda e: self.show_tooltip(e, tooltip_text_lut_export))
@@ -1138,17 +1138,19 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
 
     def _apply_lut_export_availability(self) -> None:
         """Accurate GPU Color (lut_export_var) only affects the GPU/
-        libplacebo export path, and even then only for GPU-only tonemappers
-        (BT.2390, Spline) -- Reinhard/Mobius/Hable produce the same colors
-        either way (see _effective_lut_enabled in preview.py), and CPU
-        exports always apply accurate color correction regardless (see the
-        checkbox's tooltip). Grey it out whenever it wouldn't change
-        anything. Only touches the widget's interactive state, never
-        lut_export_var itself, so the underlying setting is preserved across
-        GPU toggles, tonemapper switches, and batch-item switches, and the
-        checkbox always keeps showing it."""
-        available = (self.gpu_accel_var.get()
-                     and is_gpu_only_tonemapper(self.tonemap_var.get()))
+        libplacebo export path -- CPU exports always apply accurate color
+        correction regardless (see the checkbox's tooltip). Grey it out
+        whenever GPU acceleration is off, since it wouldn't change anything
+        then. Applies uniformly across every tonemapper: libplacebo's own
+        gamut handling was found to measurably diverge from the LUT
+        reference for tonemappers with a CPU implementation too, not just
+        GPU-only ones (see _effective_lut_enabled in preview.py), so the
+        tradeoff is real regardless of which tonemapper is selected. Only
+        touches the widget's interactive state, never lut_export_var itself,
+        so the underlying setting is preserved across GPU toggles,
+        tonemapper switches, and batch-item switches, and the checkbox
+        always keeps showing it."""
+        available = self.gpu_accel_var.get()
         self.lut_export_checkbutton.config(state='normal' if available else 'disabled')
 
     def _on_lut_export_toggle(self) -> None:
@@ -1382,7 +1384,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 self.open_after_conversion_var.get(), self.cancel_button,
                 tonemapper=tonemapper, quality=quality, quality_mode=quality_mode,
                 bit_depth=bit_depth, licensed=self._licensed,
-                lut_enabled=self._effective_lut_enabled(tonemapper),
+                lut_enabled=self._effective_lut_enabled(),
             )
             if started:
                 if self.drop_target_registered:

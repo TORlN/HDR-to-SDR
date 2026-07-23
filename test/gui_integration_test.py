@@ -166,10 +166,12 @@ class TestConstruction(_GuiTestBase):
         self.assertEqual(self.gui._last_valid_tonemapper, 'BT.2390')
 
     @patch('src.gui.vulkan_libplacebo_available', return_value=True)
-    def test_lut_export_checkbox_regreys_when_switching_off_gpu_only_tonemapper(self, _avail):
-        """Reinhard/Mobius/Hable produce the same colors either way, so
-        selecting one of them mid-session must regrey Accurate GPU Color
-        even though it was enabled for the prior (GPU-only) tonemapper."""
+    def test_lut_export_checkbox_stays_enabled_across_any_tonemapper_switch(self, _avail):
+        """Accurate GPU Color's availability depends only on GPU acceleration
+        being on, not on which tonemapper is selected -- libplacebo's gamut
+        handling was found to diverge from the LUT reference for CPU-capable
+        tonemappers too (Hable measured ~61/255), not just GPU-only ones, so
+        switching tonemappers must never regrey it while GPU accel stays on."""
         self.gui.gpu_accel_var.set(True)
         self.gui._apply_tonemap_choices()
         self.gui.tonemap_var.set('BT.2390')
@@ -178,7 +180,7 @@ class TestConstruction(_GuiTestBase):
 
         self.gui.tonemap_var.set('Mobius')
         self.gui._on_tonemap_selected()
-        self.assertEqual(str(self.gui.lut_export_checkbutton.cget('state')), 'disabled')
+        self.assertEqual(str(self.gui.lut_export_checkbutton.cget('state')), 'normal')
 
     def test_gamma_slider_range(self):
         self.assertAlmostEqual(float(self.gui.gamma_slider.cget('from')), 0.1)

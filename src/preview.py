@@ -641,15 +641,12 @@ class _HDRPreviewMixin:
             return
         try:
             is_gpu_only = is_gpu_only_tonemapper(tonemapper)
-            batch_fn = (extract_frames_with_gpu_conversion_batch
-                        if is_gpu_only
-                        else extract_frames_with_conversion_batch)
             if is_gpu_only:
-                converted = batch_fn(
+                converted = extract_frames_with_gpu_conversion_batch(
                     video_path, positions, 1.0, tonemapper,
                     PREVIEW_SIZE[0], PREVIEW_SIZE[1])
             else:
-                converted = batch_fn(
+                converted = extract_frames_with_conversion_batch(
                     video_path, positions, 1.0, tonemapper,
                     PREVIEW_SIZE[0], PREVIEW_SIZE[1], lut_enabled=lut_enabled)
             # GPU-only tonemappers always produce lut_enabled=True content

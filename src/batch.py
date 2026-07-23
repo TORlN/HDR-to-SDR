@@ -406,7 +406,7 @@ class _BatchMixin:
                     self.open_after_conversion_var.get(), self.cancel_button,
                     tonemapper=tonemapper, quality=quality, quality_mode=quality_mode,
                     bit_depth=bit_depth, licensed=self._licensed,
-                    lut_enabled=self._effective_lut_enabled(),
+                    lut_enabled=self._effective_lut_enabled(),  # type: ignore[attr-defined]
                     on_complete=self._on_batch_item_complete
                 )
             except Exception as e:

@@ -59,6 +59,35 @@ class TestPreviewLutToggle(unittest.TestCase):
 
         self.assertEqual(mock_extract_conv.call_count, 1)
 
+    @patch('preview.extract_frames_with_conversion_batch')
+    @patch('preview.extract_frame_with_conversion')
+    @patch('preview.extract_frame')
+    def test_prewarmed_converted_cache_is_reachable_by_real_lookup(
+            self, mock_extract_frame, mock_extract_conv, mock_batch):
+        """_prewarm_batch_converted writes under the same 4-tuple key that
+        _extract_preview_images reads from -- a converted frame it pre-warms
+        must be servable as a cache hit by the real lookup path (same
+        video_path/time/tonemapper/lut_enabled), not silently re-extracted.
+
+        Before the fix, _prewarm_batch_converted wrote under the old 3-tuple
+        (video_path, round(t, 3), tonemapper) key while _extract_preview_images
+        always reads via the 4-tuple (..., lut_enabled) key -- tuples of
+        different lengths never compare equal, so this assertion would have
+        failed: mock_extract_conv.call_count would be 1 (a cache miss forcing
+        re-extraction) instead of 0.
+        """
+        gui = _FakeGui()
+        gui._preview_generation = 1
+        gui._preview_cache_original = {}
+        gui._preview_cache_converted = {}
+        mock_extract_frame.return_value = Image.open(__import__('io').BytesIO(_VALID_PNG))
+        mock_batch.return_value = [Image.open(__import__('io').BytesIO(_VALID_PNG))]
+
+        gui._prewarm_batch_converted('v.mp4', [1.0], 'reinhard', 1, lut_enabled=True)
+        gui._extract_preview_images('v.mp4', 1.0, 'reinhard', lut_enabled=True)
+
+        mock_extract_conv.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

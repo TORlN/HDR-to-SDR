@@ -412,7 +412,7 @@ class TestPreviewWorkerThread(unittest.TestCase):
             gui._preview_thread.result(timeout=5)
 
         gui._prewarm_other_frames.assert_called_once()
-        vp, duration, tm, gen = gui._prewarm_other_frames.call_args[0]
+        vp, duration, tm, gen, lut_enabled = gui._prewarm_other_frames.call_args[0]
         self.assertEqual((vp, duration, tm), ('in.mp4', 60.0, 'mobius'))
 
 
@@ -591,7 +591,7 @@ class TestPreviewPool(unittest.TestCase):
         for idx in range(2, 6):
             t = round((idx / 6) * duration, 3)
             orig[('v.mkv', t)] = MagicMock()
-            conv[('v.mkv', t, 'reinhard')] = MagicMock()
+            conv[('v.mkv', t, 'reinhard', True)] = MagicMock()
         gui._preview_cache_original = orig
         gui._preview_cache_converted = conv
         gui._preview_pool = MagicMock()
@@ -648,8 +648,8 @@ class TestPreviewPool(unittest.TestCase):
 
         gui._prewarm_batch_converted('v.mkv', [10.0], 'mobius', generation=1)
 
-        self.assertIn(('v.mkv', 10.0, 'mobius'), gui._preview_cache_converted)
-        self.assertIs(gui._preview_cache_converted[('v.mkv', 10.0, 'mobius')], img)
+        self.assertIn(('v.mkv', 10.0, 'mobius', True), gui._preview_cache_converted)
+        self.assertIs(gui._preview_cache_converted[('v.mkv', 10.0, 'mobius', True)], img)
 
     @patch('src.preview.extract_frames_with_conversion_batch')
     def test_batch_converted_bails_when_stale(self, mock_batch):
@@ -748,7 +748,7 @@ class TestGpuOnlyTonemapperPreviewDispatch(unittest.TestCase):
         gui._prewarm_batch_converted('v.mkv', [10.0], 'spline', generation=1)
         mock_gpu_batch.assert_called_once()
         mock_cpu_batch.assert_not_called()
-        self.assertIn(('v.mkv', 10.0, 'spline'), gui._preview_cache_converted)
+        self.assertIn(('v.mkv', 10.0, 'spline', True), gui._preview_cache_converted)
 
     @patch('src.preview.extract_frames_with_gpu_conversion_batch')
     @patch('src.preview.extract_frames_with_conversion_batch', return_value=['c0'])

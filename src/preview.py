@@ -595,24 +595,41 @@ class _HDRPreviewMixin:
             logging.exception('preview batch original pre-warm failed')
 
     def _prewarm_batch_converted(
-        self, video_path: str, positions: list[float], tonemapper: str, generation: int
+        self, video_path: str, positions: list[float], tonemapper: str, generation: int,
+        lut_enabled: bool = True,
     ) -> None:
         """Tonemap-convert all frames for the given positions in one ffmpeg pass
         (or, for GPU-only tonemappers, N looped GPU passes -- see
-        extract_frames_with_gpu_conversion_batch)."""
+        extract_frames_with_gpu_conversion_batch).
+
+        lut_enabled: TEMPORARY, dev-verification only -- must match
+        _extract_preview_images's real lookup key exactly (see
+        docs/superpowers/specs/2026-07-22-lut-color-pipeline-design.md), or
+        prewarmed entries become unreachable (or reachable under the wrong
+        key) from the real lookup path. extract_frames_with_gpu_conversion_batch
+        (the GPU-only-tonemapper batch path) has no lut_enabled parameter of
+        its own and always produces lut_enabled=True content; that pre-existing
+        gap is unchanged here.
+        """
         if generation != self._preview_generation:
             return
         try:
+            is_gpu_only = is_gpu_only_tonemapper(tonemapper)
             batch_fn = (extract_frames_with_gpu_conversion_batch
-                        if is_gpu_only_tonemapper(tonemapper)
+                        if is_gpu_only
                         else extract_frames_with_conversion_batch)
-            converted = batch_fn(
-                video_path, positions, 1.0, tonemapper,
-                PREVIEW_SIZE[0], PREVIEW_SIZE[1])
+            if is_gpu_only:
+                converted = batch_fn(
+                    video_path, positions, 1.0, tonemapper,
+                    PREVIEW_SIZE[0], PREVIEW_SIZE[1])
+            else:
+                converted = batch_fn(
+                    video_path, positions, 1.0, tonemapper,
+                    PREVIEW_SIZE[0], PREVIEW_SIZE[1], lut_enabled=lut_enabled)
             for t, img in zip(positions, converted):
                 self._cache_store(
                     self._preview_cache_converted,
-                    (video_path, round(t, 3), tonemapper), img)
+                    (video_path, round(t, 3), tonemapper, lut_enabled), img)
         except Exception:
             logging.exception('preview batch converted pre-warm failed')
 
@@ -622,6 +639,7 @@ class _HDRPreviewMixin:
         duration: float,
         tonemapper: str,
         generation: int,
+        lut_enabled: bool = True,
     ) -> None:
         """Dispatch pre-warm batch tasks for the non-visible seek frames."""
         if generation != self._preview_generation:
@@ -638,7 +656,7 @@ class _HDRPreviewMixin:
             t = (index / (self.total_frames + 1)) * duration
             t_key = round(t, 3)
             if ((video_path, t_key) not in self._preview_cache_original or
-                    (video_path, t_key, tonemapper) not in self._preview_cache_converted):
+                    (video_path, t_key, tonemapper, lut_enabled) not in self._preview_cache_converted):
                 positions.append(t)
 
         if not positions:
@@ -648,10 +666,12 @@ class _HDRPreviewMixin:
             self._preview_pool.submit(
                 self._prewarm_batch_originals, video_path, positions, generation)
             self._preview_pool.submit(
-                self._prewarm_batch_converted, video_path, positions, tonemapper, generation)
+                self._prewarm_batch_converted, video_path, positions, tonemapper, generation,
+                lut_enabled)
         else:
             self._prewarm_batch_originals(video_path, positions, generation)
-            self._prewarm_batch_converted(video_path, positions, tonemapper, generation)
+            self._prewarm_batch_converted(
+                video_path, positions, tonemapper, generation, lut_enabled)
 
     # ── Main display entrypoints ───────────────────────────────────────────────
 
@@ -678,7 +698,8 @@ class _HDRPreviewMixin:
                 if generation == self._preview_generation:
                     self._schedule_on_main(lambda: self._render_preview_images(
                         original, converted, time_position, generation))
-                self._prewarm_other_frames(video_path, duration, tonemapper, generation)
+                self._prewarm_other_frames(
+                    video_path, duration, tonemapper, generation, lut_enabled)
             except Exception as e:
                 # A stale (superseded) job's error must not clobber a newer
                 # preview the same way its success path already guards

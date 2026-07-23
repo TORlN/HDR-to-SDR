@@ -74,6 +74,7 @@ class _HDRPreviewMixin:
         input_path_var: tk.StringVar
         gamma_var: tk.DoubleVar
         tonemap_var: tk.StringVar
+        lut_preview_var: tk.BooleanVar
         tonemap_combobox: ttk.Combobox
         custom_time_var: tk.StringVar
         custom_time_position: float | None
@@ -86,7 +87,7 @@ class _HDRPreviewMixin:
         _preview_pool: ThreadPoolExecutor
         _preview_thread: Future | None
         _preview_cache_original: dict[tuple[str, float], Image.Image]
-        _preview_cache_converted: dict[tuple[str, float, str], Image.Image]
+        _preview_cache_converted: dict[tuple[str, float, str, bool], Image.Image]
         _cache_lock: threading.Lock
         current_frame_index: int
         total_frames: int
@@ -507,9 +508,12 @@ class _HDRPreviewMixin:
         time_position = self._preview_time_position(duration)
         time_key = round(time_position, 3)
         tonemapper = self.tonemap_var.get().lower()
+        # See the matching getattr guard in display_frames() below.
+        lut_preview_var = getattr(self, 'lut_preview_var', None)
+        lut_enabled = lut_preview_var.get() if lut_preview_var is not None else True
         return (
             (video_path, time_key) in self._preview_cache_original
-            and (video_path, time_key, tonemapper) in self._preview_cache_converted
+            and (video_path, time_key, tonemapper, lut_enabled) in self._preview_cache_converted
         )
 
     # ── Frame extraction ───────────────────────────────────────────────────────
@@ -538,8 +542,16 @@ class _HDRPreviewMixin:
         video_path: str,
         time_position: float,
         tonemapper: str,
+        lut_enabled: bool = True,
     ) -> tuple[Image.Image, Image.Image]:
-        """Return (original, converted) preview frames, caching ffmpeg results."""
+        """Return (original, converted) preview frames, caching ffmpeg results.
+
+        lut_enabled: TEMPORARY, dev-verification only -- controls only this
+        SDR ("converted") frame; the HDR original is never affected. See
+        docs/superpowers/specs/2026-07-22-lut-color-pipeline-design.md. Removed
+        (along with this whole parameter and the GUI toggle) once the LUT is
+        visually approved -- see the LUT color pipeline implementation plan, Task 9.
+        """
         if not hasattr(self, '_preview_cache_original'):
             self._preview_cache_original = {}
             self._preview_cache_converted = {}
@@ -552,7 +564,7 @@ class _HDRPreviewMixin:
                                      width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1])
             self._cache_store(self._preview_cache_original, original_key, original)
 
-        converted_key = (video_path, time_key, tonemapper)
+        converted_key = (video_path, time_key, tonemapper, lut_enabled)
         converted = self._preview_cache_converted.get(converted_key)
         if converted is None:
             extract_fn = (extract_frame_with_gpu_conversion
@@ -561,7 +573,8 @@ class _HDRPreviewMixin:
             converted = extract_fn(
                 video_path, gamma=1.0,
                 tonemapper=tonemapper, time_position=time_position,
-                width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1]
+                width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1],
+                lut_enabled=lut_enabled,
             )
             self._cache_store(self._preview_cache_converted, converted_key, converted)
         return original, converted
@@ -645,6 +658,12 @@ class _HDRPreviewMixin:
     def display_frames(self, video_path: str) -> None:
         """Kick off frame extraction on a worker thread and render on the main thread."""
         tonemapper = self.tonemap_var.get().lower()
+        # getattr-guarded: lut_preview_var is set in HDRConverterGUI.__init__,
+        # but bare test doubles built via object.__new__ (see
+        # characterization_test.py's _bare_gui()) may not have it -- default
+        # to the same True the real BooleanVar always starts at.
+        lut_preview_var = getattr(self, 'lut_preview_var', None)
+        lut_enabled = lut_preview_var.get() if lut_preview_var is not None else True
 
         self._preview_generation = getattr(self, '_preview_generation', 0) + 1
         generation = self._preview_generation
@@ -654,7 +673,7 @@ class _HDRPreviewMixin:
                 duration = self._get_duration(video_path)
                 time_position = self._preview_time_position(duration)
                 original, converted = self._extract_preview_images(
-                    video_path, time_position, tonemapper
+                    video_path, time_position, tonemapper, lut_enabled
                 )
                 if generation == self._preview_generation:
                     self._schedule_on_main(lambda: self._render_preview_images(

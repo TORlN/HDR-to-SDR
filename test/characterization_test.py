@@ -267,7 +267,7 @@ class TestPreviewWorkerThread(unittest.TestCase):
 
         seen = {}
 
-        def fake_extract(video_path, time_position, tonemapper):
+        def fake_extract(video_path, time_position, tonemapper, lut_enabled=True):
             seen['thread'] = threading.current_thread()
             seen['time_position'] = time_position
             seen['tonemapper'] = tonemapper

@@ -119,6 +119,11 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.converted_image_base = None
         self.gpu_accel_var = tk.BooleanVar(value=_s['gpu_accel'])
         self.tonemap_var = tk.StringVar(value=_s['tonemapper'])
+        # TEMPORARY, dev-verification only -- see
+        # docs/superpowers/specs/2026-07-22-lut-color-pipeline-design.md and
+        # the LUT color pipeline implementation plan, Task 5/9. Not
+        # persisted to settings; always defaults on at launch.
+        self.lut_preview_var = tk.BooleanVar(value=True)
         # Tracks the last selection that was actually valid, so a click on a
         # greyed-out GPU-only row (still clickable -- see _on_tonemap_selected)
         # has something sane to revert to.
@@ -404,6 +409,17 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.control_frame, text="Display Frame Preview",
             variable=self.display_image_var, command=self.update_frame_preview)
         self.display_image_checkbutton.grid(row=4, column=0, sticky=tk.W, pady=(5, 0))
+
+        # TEMPORARY, dev-verification only -- see
+        # docs/superpowers/specs/2026-07-22-lut-color-pipeline-design.md and
+        # the LUT color pipeline implementation plan, Task 5/9. Placed at
+        # row=4, column=2 (not row=5, column=0 as originally sketched) since
+        # that cell is occupied by quality_frame (columnspan=3); column 2 at
+        # row 4 is free.
+        self.lut_preview_checkbutton = ttk.Checkbutton(
+            self.control_frame, text="[DEV] LUT in preview",
+            variable=self.lut_preview_var, command=self.update_frame_preview)
+        self.lut_preview_checkbutton.grid(row=4, column=2, sticky=tk.W, pady=(5, 0))
 
         self.tonemap_frame = ttk.Frame(self.control_frame)
         self.tonemap_frame.grid(row=3, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))

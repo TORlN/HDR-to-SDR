@@ -11,7 +11,7 @@ from src.conversion import ConversionManager
 from src.utils import get_video_properties
 from tkinter import ttk
 from PIL import Image
-from src.utils import FFMPEG_CONVERT_FILTER
+from src.utils import FFMPEG_CONVERT_FILTER, get_lut_filter_path
 from src.utils import FFMPEG_EXECUTABLE  # Import FFMPEG_EXECUTABLE
 
 class TestConversionManager(unittest.TestCase):
@@ -174,7 +174,8 @@ class TestConversionManager(unittest.TestCase):
             False, tonemapper=tonemapper
         )
 
-        expected_filter = FFMPEG_CONVERT_FILTER.format(gamma=2.2, tonemapper=tonemapper)
+        expected_filter = FFMPEG_CONVERT_FILTER.format(
+            gamma=2.2, tonemapper=tonemapper, lut_path=get_lut_filter_path())
         expected_cmd = [
             FFMPEG_EXECUTABLE, '-loglevel', 'info',
             '-i', os.path.normpath('input.mp4'),
@@ -460,7 +461,8 @@ class TestConversionManager(unittest.TestCase):
         gamma = 2.2
         tonemapper = 'reinhard'
 
-        expected_filter = FFMPEG_CONVERT_FILTER.format(gamma=gamma, tonemapper=tonemapper)
+        expected_filter = FFMPEG_CONVERT_FILTER.format(
+            gamma=gamma, tonemapper=tonemapper, lut_path=get_lut_filter_path())
         cmd = manager.construct_ffmpeg_command('input.mp4', 'output.mkv', gamma, properties,
                                                use_gpu=False, tonemapper=tonemapper)
         expected_cmd = [

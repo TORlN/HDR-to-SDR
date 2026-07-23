@@ -10,6 +10,7 @@ from utils import (get_video_properties, FFMPEG_CONVERT_FILTER,
                    VULKAN_DEVICE_ARGS, VULKAN_CUDA_DEVICE_ARGS,
                    build_libplacebo_filter, is_gpu_only_tonemapper,
                    vulkan_libplacebo_available, vulkan_cuda_interop_available,
+                   get_lut_filter_path,
                    _startupinfo as _utils_startupinfo)
 from tkinterdnd2 import DND_FILES
 import sys
@@ -252,7 +253,8 @@ class ConversionManager:
                     "settings force CPU processing — change the tonemapper "
                     "or output bit depth."
                 )
-            filter_str = FFMPEG_CONVERT_FILTER.format(gamma=gamma, tonemapper=tonemapper)
+            filter_str = FFMPEG_CONVERT_FILTER.format(
+                gamma=gamma, tonemapper=tonemapper, lut_path=get_lut_filter_path())
         cmd += [
             '-filter_complex', f'[0:v:0]{filter_str}[vout]',
             '-map', '[vout]'  # Map the filtered video output

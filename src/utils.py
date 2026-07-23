@@ -16,14 +16,37 @@ TONEMAP = ["Reinhard", "Mobius", "Hable", "BT.2390", "Spline"]
 # npl=100 is the SDR reference white (100 nits). Lower values push the average
 # frame toward full white and crush highlight detail; higher values darken the
 # output. 100 is the correct target for standard SDR displays.
+#
+# The final zscale step deliberately omits p=bt709: dropping it leaves the
+# frame's transfer/matrix/range correct for bt709 but the primaries tag
+# still inherited from the source (bt2020) -- confirmed via ffprobe against
+# a real encode. lut3d then performs the actual gamut correction on those
+# gamma-encoded values (see src/luts/rec2020_to_rec709.cube,
+# tools/generate_lut.py), and setparams retags color_primaries/color_trc/
+# colorspace to bt709 (a metadata-only fix, no further pixel changes --
+# confirmed the retag is necessary, not redundant, by comparing ffprobe
+# output with and without it).
 FFMPEG_FILTER = (
-    'zscale=t=linear:npl=100,tonemap={tonemapper},zscale=t=bt709:m=bt709:r=tv:p=bt709,'
+    'zscale=t=linear:npl=100,tonemap={tonemapper},zscale=t=bt709:m=bt709:r=tv,'
+    'lut3d=file={lut_path},setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709,'
     'eq=gamma={gamma},scale={width}:{height}:force_original_aspect_ratio=decrease'
 )
 
 FFMPEG_CONVERT_FILTER = (
-    'zscale=t=linear:npl=100,tonemap={tonemapper},zscale=t=bt709:m=bt709:r=tv:p=bt709,'
+    'zscale=t=linear:npl=100,tonemap={tonemapper},zscale=t=bt709:m=bt709:r=tv,'
+    'lut3d=file={lut_path},setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709,'
     'eq=gamma={gamma}'
+)
+
+# TEMPORARY -- today's zscale-only gamut correction (no LUT). Used only by
+# the preview pane's dev-verification toggle (see
+# docs/superpowers/specs/2026-07-22-lut-color-pipeline-design.md) when LUT
+# preview is switched off, so the two can be compared side by side before
+# the old path is trusted and deleted. Removed in Task 9 of the LUT
+# implementation plan, together with the toggle -- never used by real export.
+FFMPEG_FILTER_LEGACY_NO_LUT = (
+    'zscale=t=linear:npl=100,tonemap={tonemapper},zscale=t=bt709:m=bt709:r=tv:p=bt709,'
+    'eq=gamma={gamma},scale={width}:{height}:force_original_aspect_ratio=decrease'
 )
 
 # Tonemappers with no zscale/CPU implementation -- confirmed via
@@ -240,9 +263,20 @@ def run_ffmpeg_command(cmd):
     
     # Replace the ffmpeg command with the bundled/system executable path
     cmd[0] = FFMPEG_EXECUTABLE
-    
-    # Normalize all paths in command
-    cmd = [os.path.normpath(str(arg)) if os.path.sep in str(arg) else str(arg) for arg in cmd]
+
+    # Normalize path-like args (e.g. input/output file paths) to the native
+    # separator. The -vf value is a filtergraph string, not a file path -- it
+    # can contain a deliberately pre-escaped LUT path (see
+    # _escape_path_for_filter: doubled backslash before the drive-letter
+    # colon, forward slashes elsewhere) that os.path.normpath would corrupt by
+    # collapsing the doubled backslash and swapping '/' back to '\\', breaking
+    # ffmpeg's filtergraph parser. Skip normalization for the arg immediately
+    # following -vf.
+    cmd = [
+        str(arg) if (i > 0 and cmd[i - 1] == '-vf') or os.path.sep not in str(arg)
+        else os.path.normpath(str(arg))
+        for i, arg in enumerate(cmd)
+    ]
     
     logging.debug(f"Running ffmpeg command: {' '.join(cmd)}")
     
@@ -590,11 +624,14 @@ def extract_frames_with_conversion_batch(
     tonemapper: str,
     width: int,
     height: int,
+    lut_enabled: bool = True,
 ) -> 'list[Image.Image]':
     """Tonemap-convert multiple frames in a single ffmpeg process.
 
     Applies the same CPU tonemap filter chain as extract_frame_with_conversion
     but to all N frames in one pass, reducing process count from N to 1.
+
+    lut_enabled: TEMPORARY, dev-verification only (see FFMPEG_FILTER_LEGACY_NO_LUT).
     """
     if not time_positions:
         return []
@@ -602,9 +639,15 @@ def extract_frames_with_conversion_batch(
         return []
     n = len(time_positions)
     startupinfo, creationflags = _startupinfo()
-    tone_filter = FFMPEG_FILTER.format(
-        gamma=gamma, width=width, height=height, tonemapper=tonemapper.lower()
-    )
+    if lut_enabled:
+        tone_filter = FFMPEG_FILTER.format(
+            gamma=gamma, width=width, height=height, tonemapper=tonemapper.lower(),
+            lut_path=get_lut_filter_path(),
+        )
+    else:
+        tone_filter = FFMPEG_FILTER_LEGACY_NO_LUT.format(
+            gamma=gamma, width=width, height=height, tonemapper=tonemapper.lower()
+        )
     cmd = [FFMPEG_EXECUTABLE]
     for t in time_positions:
         cmd += ['-ss', str(t), '-i', os.path.normpath(video_path)]
@@ -627,7 +670,7 @@ def extract_frames_with_conversion_batch(
 
 def extract_frame_with_conversion(video_path, gamma, tonemapper='reinhard',
                                   time_position=None, width: 'int | str' = 'iw',
-                                  height: 'int | str' = 'ih'):
+                                  height: 'int | str' = 'ih', lut_enabled: bool = True):
     """
     Extracts a frame from the video and applies tonemapping conversion.
     Args:
@@ -638,6 +681,7 @@ def extract_frame_with_conversion(video_path, gamma, tonemapper='reinhard',
         width, height: output scale for the filter chain. Default ('iw'/'ih') keeps
             the source resolution; pass concrete sizes (e.g. 960, 540) to have ffmpeg
             scale the preview down, decoding far less data for a snappier preview.
+        lut_enabled: TEMPORARY, dev-verification only -- see FFMPEG_FILTER_LEGACY_NO_LUT.
     Returns:
         PIL.Image: The extracted and converted frame as a PIL image.
     """
@@ -650,9 +694,15 @@ def extract_frame_with_conversion(video_path, gamma, tonemapper='reinhard',
     else:
         target_time = time_position
 
-    filter_str = FFMPEG_FILTER.format(
-        gamma=gamma, width=width, height=height, tonemapper=tonemapper.lower()
-    )
+    if lut_enabled:
+        filter_str = FFMPEG_FILTER.format(
+            gamma=gamma, width=width, height=height, tonemapper=tonemapper.lower(),
+            lut_path=get_lut_filter_path(),
+        )
+    else:
+        filter_str = FFMPEG_FILTER_LEGACY_NO_LUT.format(
+            gamma=gamma, width=width, height=height, tonemapper=tonemapper.lower()
+        )
     cmd = [
         FFMPEG_EXECUTABLE, '-ss', str(target_time), '-i', video_path,
         '-vf', filter_str,

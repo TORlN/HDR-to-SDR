@@ -157,6 +157,25 @@ class TestRunFfmpegCommand(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             run_ffmpeg_command(['ffmpeg', '-i', 'input.mp4', 'output.mkv'])
 
+    @patch('subprocess.Popen')
+    def test_run_ffmpeg_command_does_not_normalize_vf_filtergraph(self, mock_popen):
+        """The -vf value is a filtergraph string, not a file path. It can contain
+        deliberately-escaped backslashes (e.g. a LUT path's escaped drive-letter
+        colon, see _escape_path_for_filter) that os.path.normpath would corrupt
+        by collapsing doubled backslashes and swapping '/' for '\\'. Only actual
+        path-like args (those without an immediately preceding -vf) should be
+        normalized."""
+        mock_process = MagicMock()
+        mock_process.communicate.return_value = (b'output', b'')
+        mock_process.returncode = 0
+        mock_popen.return_value = mock_process
+
+        vf_value = 'lut3d=file=C\\\\:/Users/Torin/HDR to SDR/luts/rec2020_to_rec709.cube'
+        run_ffmpeg_command(['ffmpeg', '-i', 'input.mp4', '-vf', vf_value, 'output.mkv'])
+
+        actual_cmd = mock_popen.call_args[0][0]
+        self.assertEqual(actual_cmd[actual_cmd.index('-vf') + 1], vf_value)
+
 class TestExtractFrame(unittest.TestCase):
 
     @patch('src.utils.run_ffmpeg_command')
@@ -220,8 +239,9 @@ class TestExtractFrame(unittest.TestCase):
 
 class TestExtractFrameWithConversion(unittest.TestCase):
 
+    @patch('src.utils.get_lut_filter_path', return_value='FAKE_LUT_PATH')
     @patch('src.utils.run_ffmpeg_command')
-    def test_extract_frame_with_conversion_success(self, mock_run_ffmpeg):
+    def test_extract_frame_with_conversion_success(self, mock_run_ffmpeg, _mock_lut_path):
         with patch('src.utils.get_video_properties') as mock_get_props:
             mock_get_props.return_value = {
                 "width": 1920, "height": 1080, "bit_rate": 4000000,
@@ -240,7 +260,10 @@ class TestExtractFrameWithConversion(unittest.TestCase):
 
             expected_vf = (
                 'zscale=t=linear:npl=100,tonemap=reinhard,'
-                'zscale=t=bt709:m=bt709:r=tv:p=bt709,eq=gamma=2.2,'
+                'zscale=t=bt709:m=bt709:r=tv,'
+                'lut3d=file=FAKE_LUT_PATH,'
+                'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709,'
+                'eq=gamma=2.2,'
                 'scale=iw:ih:force_original_aspect_ratio=decrease'
             )
             self.assertIsInstance(frame, Image.Image)
@@ -250,6 +273,21 @@ class TestExtractFrameWithConversion(unittest.TestCase):
                 '-ss', str(90.0 / 3), '-i', 'input.mp4',
                 '-vf', expected_vf, '-vframes', '1', '-f', 'image2pipe', '-'
             ])
+
+    @patch('src.utils.run_ffmpeg_command')
+    def test_extract_frame_with_conversion_lut_disabled_uses_legacy_chain(self, mock_run_ffmpeg):
+        with patch('src.utils.get_video_properties') as mock_get_props:
+            mock_get_props.return_value = {"duration": 90.0}
+            mock_run_ffmpeg.return_value = (
+                b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01'
+                b'\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00'
+                b'\x00\x00\nIDATx\xdac\xf8\x0f\x00\x01\x01\x01\x00'
+                b'\x18\xdd\x8d\x1b\x00\x00\x00\x00IEND\xaeB`\x82'
+            )
+            extract_frame_with_conversion('input.mp4', gamma=1.0, lut_enabled=False)
+            vf = mock_run_ffmpeg.call_args[0][0][mock_run_ffmpeg.call_args[0][0].index('-vf') + 1]
+            self.assertIn('p=bt709', vf)
+            self.assertNotIn('lut3d', vf)
 
     @patch('src.utils.run_ffmpeg_command')
     def test_extract_frame_with_conversion_failure(self, mock_run_ffmpeg):

@@ -155,6 +155,17 @@ def _probe_video(path):
     return s.get('color_transfer'), s.get('width'), s.get('height'), s.get('pix_fmt')
 
 
+def _probe_color_primaries(path):
+    """Return the color_primaries tag of the first video stream, or None."""
+    out = subprocess.check_output(
+        [FFPROBE_EXECUTABLE, '-v', 'error', '-select_streams', 'v:0',
+         '-show_entries', 'stream=color_primaries',
+         '-of', 'json', path],
+        stderr=subprocess.DEVNULL,
+    )
+    return json.loads(out)['streams'][0].get('color_primaries')
+
+
 def _count_streams(path, codec_type):
     """Count streams of a given codec_type ('audio' | 'subtitle' | 'video')."""
     out = subprocess.check_output(
@@ -228,6 +239,10 @@ class TestRealHdr10TenBit(unittest.TestCase):
             transfer, _, _, pix_fmt = _probe_video(out_path)
             self.assertNotEqual(transfer, 'smpte2084')
             self.assertEqual(pix_fmt, 'yuv420p')
+            self.assertEqual(
+                _probe_color_primaries(out_path), 'bt709',
+                "converted output must be tagged bt709 primaries after the LUT gamut correction"
+            )
 
 
 @unittest.skipUnless(_HDR10_10BIT_OK, "sample 'smoke_test_videos/hdr10_10bit.mp4' / ffmpeg not available")
@@ -336,6 +351,10 @@ class TestRealGpuOnlyTonemappers(unittest.TestCase):
             )
             transfer, _, _, _ = _probe_video(out_path)
             self.assertNotEqual(transfer, 'smpte2084')
+            self.assertEqual(
+                _probe_color_primaries(out_path), 'bt709',
+                "GPU-converted output must be tagged bt709 primaries after the LUT gamut correction"
+            )
 
     def test_bt2390_gpu_conversion_completes(self):
         self._convert('BT.2390')

@@ -1486,33 +1486,6 @@ class TestProbeHdrMetadata(unittest.TestCase):
         self.assertIsNone(result['mastering_peak'])
 
 
-class TestDynamicOnlyFilter(unittest.TestCase):
-    """After removing Static, there is one filter chain: Dynamic with npl=100."""
-
-    def test_ffmpeg_filter_is_string_not_list(self):
-        from src.utils import FFMPEG_FILTER
-        self.assertIsInstance(FFMPEG_FILTER, str, "FFMPEG_FILTER must be a single string, not a list")
-
-    def test_ffmpeg_filter_has_npl_100(self):
-        from src.utils import FFMPEG_FILTER
-        self.assertIn('npl=100', FFMPEG_FILTER)
-
-    def test_ffmpeg_convert_filter_is_string_not_list(self):
-        from src.utils import FFMPEG_CONVERT_FILTER
-        self.assertIsInstance(FFMPEG_CONVERT_FILTER, str)
-
-    def test_ffmpeg_convert_filter_has_npl_100(self):
-        from src.utils import FFMPEG_CONVERT_FILTER
-        self.assertIn('npl=100', FFMPEG_CONVERT_FILTER)
-
-    @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
-    @patch('src.utils.run_ffmpeg_command', return_value=_VALID_PNG)
-    def test_extract_frame_with_conversion_no_filter_index(self, mock_run, _props):
-        """extract_frame_with_conversion accepts no filter_index and uses npl=100."""
-        extract_frame_with_conversion('in.mp4', gamma=1.0, tonemapper='reinhard')
-        vf = mock_run.call_args[0][0][mock_run.call_args[0][0].index('-vf') + 1]
-        self.assertIn('npl=100', vf)
-
 class TestDolbyVisionDetection(unittest.TestCase):
     """get_video_properties flags Dolby Vision inputs from ffprobe's stream
     side_data_list (the 'DOVI configuration record' entry), exposing

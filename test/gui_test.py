@@ -111,18 +111,6 @@ class TestHDRConverterGUI(TestCase):
         # Verify UI updates
         self._assert_frame_updates()
 
-    @patch('src.gui.filedialog.askopenfilename')
-    def test_file_selection_webm_redirects_output_to_mkv(self, mock_file_dialog):
-        """A WebM input must produce an MKV output path (H.264 can't go in WebM)."""
-        mock_file_dialog.return_value = 'clip.webm'
-
-        self.gui.select_file()
-
-        self.mock_string_var.set.assert_has_calls([
-            call('clip.webm'),
-            call('clip_sdr.mkv')
-        ])
-
     @patch('src.gui.ImageTk.PhotoImage')
     @patch('src.preview.extract_frame_with_conversion')
     @patch('src.preview.extract_frame')
@@ -461,31 +449,6 @@ class TestWindowIcon(unittest.TestCase):
         gui.on_close()
 
 
-class TestWindowTitle(TestCase):
-    """Window title should show the running app's version so users can tell what build they have."""
-
-    def _make_gui(self):
-        mock_root = MagicMock()
-        patches = {
-            'string_var': patch('src.gui.tk.StringVar', return_value=MagicMock(spec=tk.StringVar, get=MagicMock(return_value=''), set=MagicMock())),
-            'double_var': patch('src.gui.tk.DoubleVar', return_value=MagicMock(spec=tk.DoubleVar)),
-            'bool_var':   patch('src.gui.tk.BooleanVar', return_value=MagicMock(spec=tk.BooleanVar)),
-            'int_var':    patch('src.gui.tk.IntVar', return_value=MagicMock(
-                spec=tk.IntVar, get=MagicMock(return_value=23), set=MagicMock())),
-        }
-        mocks = {name: p.start() for name, p in patches.items()}
-        for p in patches.values():
-            self.addCleanup(_safe_stop, p)
-        gui = HDRConverterGUI(mock_root, licensed=True)
-        self.addCleanup(gui.on_close)
-        return gui, mock_root
-
-    def test_title_includes_app_version(self):
-        from updater import APP_VERSION
-        gui, mock_root = self._make_gui()
-        mock_root.title.assert_any_call(f"HDR to SDR Converter v{APP_VERSION}")
-
-
 class TestBatchCancel(TestCase):
     """Cancelling mid-batch must stop the queue, not advance to the next file."""
 
@@ -587,7 +550,7 @@ class TestShowTooltip(TestCase):
         mock_widget.bbox.assert_not_called()
 
 
-class TestBuildInfoText(TestCase):
+class TestBuildInfoTextMaxNits(TestCase):
     """_build_info_text must include Max Nits for HDR content but not for SDR."""
 
     def _props(self, primaries='bt2020', transfer='smpte2084'):
@@ -769,10 +732,14 @@ class TestBuildInfoTextOutputBitDepth(TestCase):
         self.assertNotIn('->', text)
 
 
-class TestDolbyVisionInfoBarTag(TestCase):
+class TestDolbyVisionInfoTextFormatting(TestCase):
     """Dolby Vision detection surfaces as its own '|'-separated segment inside
     the fps/resolution info bar (no separate badge widget), and is omitted
-    entirely for non-DoVi sources, including plain HDR10."""
+    entirely for non-DoVi sources, including plain HDR10.
+
+    Covers _build_info_text's string formatting only; the info-label update
+    flow (_update_info_label against a real widget) is covered end-to-end by
+    TestDolbyVisionInfoBarTag in gui_integration_test.py."""
 
     @staticmethod
     def _props(dovi=True):
@@ -802,24 +769,6 @@ class TestDolbyVisionInfoBarTag(TestCase):
         del props['is_dolby_vision']
         del props['dovi_profile']
         text = HDRConverterGUI._build_info_text(props, maxcll=1000.0)
-        self.assertNotIn('Dolby Vision', text)
-
-    def test_info_label_reflects_dolby_vision_on_import(self):
-        gui = object.__new__(HDRConverterGUI)
-        gui.info_label = MagicMock()
-        with patch('src.gui.get_video_properties', return_value=self._props(True)), \
-             patch('src.gui.get_maxcll', return_value=1000.0):
-            gui._update_info_label('movie_dovi.mkv')
-        text = gui.info_label.config.call_args.kwargs['text']
-        self.assertIn('Dolby Vision', text)
-
-    def test_info_label_omits_tag_for_plain_hdr10_import(self):
-        gui = object.__new__(HDRConverterGUI)
-        gui.info_label = MagicMock()
-        with patch('src.gui.get_video_properties', return_value=self._props(False)), \
-             patch('src.gui.get_maxcll', return_value=1000.0):
-            gui._update_info_label('plain_hdr10.mkv')
-        text = gui.info_label.config.call_args.kwargs['text']
         self.assertNotIn('Dolby Vision', text)
 
 

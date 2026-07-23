@@ -109,10 +109,12 @@ class TestCheckForUpdate(unittest.TestCase):
             result = check_for_update()
         self.assertIsNone(result)
 
-    def test_network_error_returns_none(self):
+    def test_network_error_returns_none_and_logs_warning(self):
         with patch('urllib.request.urlopen', side_effect=OSError('no route')):
-            result = check_for_update()
+            with patch.object(updater, 'logger') as mock_logger:
+                result = check_for_update()
         self.assertIsNone(result)
+        mock_logger.warning.assert_called_once()
 
     def test_missing_asset_returns_none(self):
         payload = json.dumps({
@@ -135,14 +137,16 @@ class TestCheckForUpdate(unittest.TestCase):
             result = check_for_update()
         self.assertIsNone(result)
 
-    def test_malformed_json_returns_none(self):
+    def test_malformed_json_returns_none_and_logs_warning(self):
         resp = MagicMock()
         resp.read.return_value = b'not json'
         resp.__enter__ = lambda s: s
         resp.__exit__ = MagicMock(return_value=False)
         with patch('urllib.request.urlopen', return_value=resp):
-            result = check_for_update()
+            with patch.object(updater, 'logger') as mock_logger:
+                result = check_for_update()
         self.assertIsNone(result)
+        mock_logger.warning.assert_called_once()
 
     def test_timeout_is_set(self):
         with patch('urllib.request.urlopen', side_effect=TimeoutError) as m:
@@ -178,24 +182,6 @@ class TestCheckForUpdate(unittest.TestCase):
         mock_logger.warning.assert_called_once()
         message = mock_logger.warning.call_args[0]
         self.assertIn(500, message)
-
-    def test_network_error_logs_warning(self):
-        with patch('urllib.request.urlopen', side_effect=OSError('no route')):
-            with patch.object(updater, 'logger') as mock_logger:
-                result = check_for_update()
-        self.assertIsNone(result)
-        mock_logger.warning.assert_called_once()
-
-    def test_malformed_json_logs_warning(self):
-        resp = MagicMock()
-        resp.read.return_value = b'not json'
-        resp.__enter__ = lambda s: s
-        resp.__exit__ = MagicMock(return_value=False)
-        with patch('urllib.request.urlopen', return_value=resp):
-            with patch.object(updater, 'logger') as mock_logger:
-                result = check_for_update()
-        self.assertIsNone(result)
-        mock_logger.warning.assert_called_once()
 
 
 # ── download_installer ─────────────────────────────────────────────────────────

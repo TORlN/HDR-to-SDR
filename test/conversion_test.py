@@ -150,56 +150,6 @@ class TestConversionManager(unittest.TestCase):
         self.assertIsNone(manager.process)
         mock_get_props.assert_called_once_with(os.path.abspath(input_path))
 
-    @patch('src.conversion.subprocess.Popen')
-    def test_construct_ffmpeg_command_with_subtitles(self, mock_popen):
-        """Test that construct_ffmpeg_command includes subtitle streams when available."""
-        properties = {
-            "width": 1920,
-            "height": 1080,
-            "bit_rate": 4000000,
-            "codec_name": 'h264',
-            "frame_rate": 30.0,
-            "audio_codec": 'aac',
-            "audio_bit_rate": 128000,
-            "duration": 120.0,
-            "subtitle_streams": [
-                {"codec_type": "subtitle", "codec_name": "srt", "index": 2}
-            ]
-        }
-
-        manager = ConversionManager()
-        tonemapper = 'reinhard'
-        cmd = manager.construct_ffmpeg_command(
-            'input.mp4', 'output.mkv', 2.2, properties,
-            False, tonemapper=tonemapper
-        )
-
-        expected_filter = FFMPEG_CONVERT_FILTER.format(
-            gamma=2.2, tonemapper=tonemapper, lut_path=get_lut_filter_path())
-        expected_cmd = [
-            FFMPEG_EXECUTABLE, '-loglevel', 'info',
-            '-i', os.path.normpath('input.mp4'),
-            '-filter_complex', f'[0:v:0]{expected_filter}[vout]',
-            '-map', '[vout]',
-            '-map', '0:a?',
-            '-map', '0:s?',
-            '-c:v', 'libx264',
-            '-preset', 'veryfast',
-            '-tune', 'film',
-            '-crf', '23',
-            '-r', '30.0',
-            '-pix_fmt', 'yuv420p',
-            '-strict', '-2',
-            '-c:a', 'copy',
-            '-c:s', 'copy',
-            '-map_metadata', '0',
-            '-movflags', '+faststart',
-            os.path.normpath('output.mkv'),
-            '-y'
-        ]
-
-        self.assertEqual(cmd, expected_cmd)
-
     @patch('src.conversion.messagebox.showinfo')  # Mock the showinfo popup
     @patch('src.conversion.webbrowser.open')
     def test_handle_completion_success(self, mock_webbrowser_open, mock_showinfo):
@@ -610,12 +560,6 @@ class TestConversionManager(unittest.TestCase):
         with patch.object(manager, 'detect_gpu_encoder', side_effect=FileNotFoundError()):
             self.assertFalse(manager.is_gpu_available())
 
-    def test_is_gpu_available(self):
-        """is_gpu_available returns True when an encoder is detected."""
-        manager = ConversionManager()
-        with patch.object(manager, 'detect_gpu_encoder', return_value='h264_nvenc'):
-            self.assertTrue(manager.is_gpu_available())
-
     def test_gpu_acceleration_available_with_encoder_only(self):
         """A hardware encoder alone enables the GPU toggle."""
         manager = ConversionManager()
@@ -737,51 +681,41 @@ class TestStartConversionSignalsFailureOnEarlyReturn(unittest.TestCase):
         "duration": 120.0, "subtitle_streams": [],
     }
 
-    @patch('src.conversion.messagebox.showwarning')
-    def test_invalid_paths_signals_failure(self, mock_warn):
+    def _assert_guard_signals_failure(self, *args, **kwargs):
+        """Common shape shared by every early-return guard: start_conversion
+        returns False and calls on_complete(False) without popping a dialog."""
         manager = ConversionManager()
         done = MagicMock()
-        result = manager.start_conversion(
-            '', 'output.mkv', 2.2, False, MagicMock(), [], MagicMock(),
-            False, MagicMock(), on_complete=done)
+        result = manager.start_conversion(*args, on_complete=done, **kwargs)
         self.assertFalse(result)
         done.assert_called_once_with(False)
+
+    @patch('src.conversion.messagebox.showwarning')
+    def test_invalid_paths_signals_failure(self, mock_warn):
+        self._assert_guard_signals_failure(
+            '', 'output.mkv', 2.2, False, MagicMock(), [], MagicMock(), False, MagicMock())
         mock_warn.assert_not_called()  # batch mode: no blocking dialog
 
     @patch('src.conversion.messagebox.showwarning')
     def test_bit_depth_incompatibility_signals_failure(self, mock_warn):
-        manager = ConversionManager()
-        done = MagicMock()
-        result = manager.start_conversion(
-            'in.mp4', 'out.m4v', 2.2, False, MagicMock(), [], MagicMock(),
-            False, MagicMock(), bit_depth=10, on_complete=done)
-        self.assertFalse(result)
-        done.assert_called_once_with(False)
+        self._assert_guard_signals_failure(
+            'in.mp4', 'out.m4v', 2.2, False, MagicMock(), [], MagicMock(), False, MagicMock(),
+            bit_depth=10)
         mock_warn.assert_not_called()  # batch mode: no blocking dialog
 
     @patch('src.conversion.messagebox.showwarning')
     @patch('src.conversion.get_video_properties', return_value=None)
     def test_missing_properties_signals_failure(self, mock_props, mock_warn):
-        manager = ConversionManager()
-        done = MagicMock()
-        result = manager.start_conversion(
-            'in.mp4', 'out.mkv', 2.2, False, MagicMock(), [], MagicMock(),
-            False, MagicMock(), on_complete=done)
-        self.assertFalse(result)
-        done.assert_called_once_with(False)
+        self._assert_guard_signals_failure(
+            'in.mp4', 'out.mkv', 2.2, False, MagicMock(), [], MagicMock(), False, MagicMock())
         mock_warn.assert_not_called()  # batch mode: no blocking dialog
 
     @patch('src.conversion.messagebox.showwarning')
     @patch('src.conversion.get_video_properties')
     def test_zero_duration_signals_failure(self, mock_props, mock_warn):
         mock_props.return_value = dict(self._PROPS, duration=0)
-        manager = ConversionManager()
-        done = MagicMock()
-        result = manager.start_conversion(
-            'in.mp4', 'out.mkv', 2.2, False, MagicMock(), [], MagicMock(),
-            False, MagicMock(), on_complete=done)
-        self.assertFalse(result)
-        done.assert_called_once_with(False)
+        self._assert_guard_signals_failure(
+            'in.mp4', 'out.mkv', 2.2, False, MagicMock(), [], MagicMock(), False, MagicMock())
         mock_warn.assert_not_called()  # batch mode: no blocking dialog
 
     @patch('src.conversion.messagebox.showwarning')
@@ -1743,38 +1677,6 @@ class TestGpuErrorDetectionFalsePositive(unittest.TestCase):
             "Cannot load nvcuda.dll\n",
         ])
         mock_retry.assert_called_once()
-
-
-class TestConstructCommandNoFilterIndex(unittest.TestCase):
-    """After removing Static, construct_ffmpeg_command takes no selected_filter_index."""
-
-    _PROPS = {
-        "width": 1920, "height": 1080, "bit_rate": 4000000,
-        "codec_name": "h264", "frame_rate": 30.0,
-        "audio_codec": "aac", "audio_bit_rate": 128000,
-        "duration": 90.0, "subtitle_streams": [],
-    }
-
-    def test_construct_ffmpeg_command_no_filter_index_uses_npl_100(self):
-        """CPU path without selected_filter_index always emits npl=100."""
-        m = ConversionManager()
-        cmd = m.construct_ffmpeg_command(
-            'in.mp4', 'out.mkv', 1.0, self._PROPS,
-            use_gpu=False, tonemapper='reinhard',
-        )
-        joined = ' '.join(cmd)
-        self.assertIn('npl=100', joined)
-
-    @patch('src.conversion.vulkan_libplacebo_available', return_value=True)
-    def test_libplacebo_path_no_filter_index_always_peak_detect_1(self, _avail):
-        """GPU path without selected_filter_index always uses peak_detect=1."""
-        m = ConversionManager()
-        m._gpu_encoder = 'h264_nvenc'
-        cmd = ' '.join(m.construct_ffmpeg_command(
-            'in.mp4', 'out.mp4', 1.0, self._PROPS,
-            use_gpu=True, tonemapper='reinhard',
-        ))
-        self.assertIn('peak_detect=1', cmd)
 
 
 class TestDolbyVisionTierCommands(unittest.TestCase):

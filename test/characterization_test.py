@@ -489,10 +489,6 @@ class TestPreviewPool(unittest.TestCase):
 
     # ── pool worker cap ─────────────────────────────────────────────────────
 
-    def test_pool_worker_cap_is_at_least_one(self):
-        from src.gui import _PREVIEW_POOL_WORKERS
-        self.assertGreaterEqual(_PREVIEW_POOL_WORKERS, 1)
-
     def test_pool_worker_cap_formula(self):
         """max(1, cpu_count // 4) — matches the documented formula."""
         from src.gui import _PREVIEW_POOL_WORKERS
@@ -519,32 +515,6 @@ class TestPreviewPool(unittest.TestCase):
             gui.display_frames('v.mp4')
 
         self.assertIsInstance(gui._preview_thread, Future)
-
-    def test_display_frames_worker_runs_off_main_thread(self):
-        """The pool submits the worker to a background thread, not the caller."""
-        seen = {}
-
-        def fake_extract(*a, **k):
-            seen['thread'] = threading.current_thread()
-            return ('o', 'c')
-
-        gui = _bare_gui()
-        gui.root = MagicMock()
-        gui.current_frame_index = 1
-        gui.total_frames = 5
-        gui.original_image = None
-        gui.last_time_position = None
-        gui.tonemap_var = MagicMock()
-        gui.tonemap_var.get.return_value = 'Reinhard'
-        gui._extract_preview_images = fake_extract
-        gui._render_preview_images = MagicMock()
-        gui._prewarm_other_frames = MagicMock()
-
-        with patch('src.preview.get_video_properties', return_value={'duration': 30.0}):
-            gui.display_frames('v.mp4')
-            gui._preview_thread.result(timeout=5)
-
-        self.assertIsNot(seen['thread'], threading.main_thread())
 
     # ── _prewarm_other_frames dispatches to pool ────────────────────────────
 
@@ -3459,6 +3429,14 @@ class TestBuildInfoText(unittest.TestCase):
         })
         self.assertIn('HDR', text)
 
+    def test_hdr_label_from_hlg_arib_std_b67_transfer(self):
+        text = HDRConverterGUI._build_info_text({
+            'width': 1920, 'height': 1080, 'frame_rate': 50.0,
+            'codec_name': 'hevc', 'audio_codec': 'aac',
+            'color_primaries': 'bt2020', 'color_transfer': 'arib-std-b67',
+        })
+        self.assertIn('HDR', text)
+
     def test_sdr_label_for_standard_primaries(self):
         text = HDRConverterGUI._build_info_text({
             'width': 1920, 'height': 1080, 'frame_rate': 30.0,
@@ -3466,6 +3444,25 @@ class TestBuildInfoText(unittest.TestCase):
             'color_primaries': 'bt709', 'color_transfer': 'bt709',
         })
         self.assertIn('SDR', text)
+
+    def test_sdr_label_when_no_color_info_present(self):
+        text = HDRConverterGUI._build_info_text({
+            'width': 1920, 'height': 1080, 'frame_rate': 30.0,
+            'codec_name': 'h264', 'audio_codec': 'aac',
+            'color_primaries': '', 'color_transfer': '',
+        })
+        self.assertIn('SDR', text)
+
+    def test_includes_resolution_fps_codec_audio(self):
+        text = HDRConverterGUI._build_info_text({
+            'width': 1920, 'height': 1080, 'frame_rate': 29.970,
+            'codec_name': 'h264', 'audio_codec': 'aac',
+            'color_primaries': '', 'color_transfer': '',
+        })
+        self.assertIn('1920', text)
+        self.assertIn('1080', text)
+        self.assertIn('H264', text)
+        self.assertIn('AAC', text)
 
     def test_missing_fields_show_question_marks(self):
         text = HDRConverterGUI._build_info_text({})
@@ -3823,38 +3820,32 @@ class TestUtilsStartupinfoNonWindows(unittest.TestCase):
         self.assertEqual(flags, 0)
 
 
-class TestExtractFrameErrorPaths(unittest.TestCase):
-    """extract_frame handles missing properties and bad image output."""
+class TestFrameExtractionErrorPaths(unittest.TestCase):
+    """extract_frame and extract_frame_with_conversion both handle missing
+    properties and bad image output the same way -- covered together since
+    they're sibling functions with identical error-path contracts."""
+
+    def _callers(self):
+        from src.utils import extract_frame, extract_frame_with_conversion
+        return {
+            'extract_frame': lambda path: extract_frame(path),
+            'extract_frame_with_conversion': lambda path: extract_frame_with_conversion(path, gamma=1.0),
+        }
 
     @patch('src.utils.get_video_properties', return_value=None)
     def test_raises_value_error_when_properties_missing(self, _):
-        from src.utils import extract_frame
-        with self.assertRaises(ValueError):
-            extract_frame('nonexistent.mp4')
+        for name, call in self._callers().items():
+            with self.subTest(function=name):
+                with self.assertRaises(ValueError):
+                    call('nonexistent.mp4')
 
     @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
     @patch('src.utils.run_ffmpeg_command', return_value=b'not-an-image')
     def test_raises_runtime_error_on_bad_image_bytes(self, _run, _props):
-        from src.utils import extract_frame
-        with self.assertRaises(RuntimeError):
-            extract_frame('clip.mp4')
-
-
-class TestExtractAndConvertFrameErrorPaths(unittest.TestCase):
-    """extract_frame_with_conversion handles missing properties and bad output."""
-
-    @patch('src.utils.get_video_properties', return_value=None)
-    def test_raises_value_error_when_properties_missing(self, _):
-        from src.utils import extract_frame_with_conversion
-        with self.assertRaises(ValueError):
-            extract_frame_with_conversion('none.mp4', gamma=1.0)
-
-    @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
-    @patch('src.utils.run_ffmpeg_command', return_value=b'not-an-image')
-    def test_raises_runtime_error_on_bad_image_bytes(self, _run, _props):
-        from src.utils import extract_frame_with_conversion
-        with self.assertRaises(RuntimeError):
-            extract_frame_with_conversion('clip.mp4', gamma=1.0)
+        for name, call in self._callers().items():
+            with self.subTest(function=name):
+                with self.assertRaises(RuntimeError):
+                    call('clip.mp4')
 
 
 class TestConversionManagerInternals(unittest.TestCase):

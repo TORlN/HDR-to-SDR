@@ -1505,48 +1505,6 @@ class TestInfoLabel(_GuiTestBase):
         self.assertEqual(self.gui.info_label.grid_info(), {})
 
 
-class TestBuildInfoText(unittest.TestCase):
-    """_build_info_text formats properties into a human-readable one-liner."""
-
-    def test_hdr_bt2020_smpte2084_tagged_hdr(self):
-        props = {'width': 3840, 'height': 2160, 'frame_rate': 23.976,
-                 'codec_name': 'hevc', 'audio_codec': 'truehd',
-                 'color_primaries': 'bt2020', 'color_transfer': 'smpte2084'}
-        text = HDRConverterGUI._build_info_text(props)
-        self.assertIn('HDR', text)
-
-    def test_hlg_arib_std_b67_tagged_hdr(self):
-        props = {'width': 1920, 'height': 1080, 'frame_rate': 50.0,
-                 'codec_name': 'hevc', 'audio_codec': 'aac',
-                 'color_primaries': 'bt2020', 'color_transfer': 'arib-std-b67'}
-        text = HDRConverterGUI._build_info_text(props)
-        self.assertIn('HDR', text)
-
-    def test_bt709_tagged_sdr(self):
-        props = {'width': 1920, 'height': 1080, 'frame_rate': 30.0,
-                 'codec_name': 'h264', 'audio_codec': 'aac',
-                 'color_primaries': 'bt709', 'color_transfer': 'bt709'}
-        text = HDRConverterGUI._build_info_text(props)
-        self.assertIn('SDR', text)
-
-    def test_no_color_info_tagged_sdr(self):
-        props = {'width': 1920, 'height': 1080, 'frame_rate': 30.0,
-                 'codec_name': 'h264', 'audio_codec': 'aac',
-                 'color_primaries': '', 'color_transfer': ''}
-        text = HDRConverterGUI._build_info_text(props)
-        self.assertIn('SDR', text)
-
-    def test_includes_resolution_fps_codec_audio(self):
-        props = {'width': 1920, 'height': 1080, 'frame_rate': 29.970,
-                 'codec_name': 'h264', 'audio_codec': 'aac',
-                 'color_primaries': '', 'color_transfer': ''}
-        text = HDRConverterGUI._build_info_text(props)
-        self.assertIn('1920', text)
-        self.assertIn('1080', text)
-        self.assertIn('H264', text)
-        self.assertIn('AAC', text)
-
-
 class TestDropTargetAndClose(_GuiTestBase):
 
     def test_unregister_then_register_round_trip(self):

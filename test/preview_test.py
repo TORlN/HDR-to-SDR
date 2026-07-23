@@ -165,6 +165,10 @@ class TestDisplayFramesReadsLutExportVar(unittest.TestCase):
 
     @patch('preview._HDRPreviewMixin._extract_preview_images')
     def test_toggle_on_is_forwarded(self, mock_extract):
+        """Forwarding is tonemapper-agnostic: libplacebo's gamut handling was
+        found to diverge from the LUT reference for CPU-capable tonemappers
+        too (Hable measured ~61/255), not just bt.2390/spline, so this must
+        hold for every tonemapper, not just GPU-only ones."""
         mock_extract.return_value = (MagicMock(), MagicMock())
         gui = self._gui(lut_enabled=True)
         gui.display_frames('v.mp4')
@@ -188,17 +192,6 @@ class TestDisplayFramesReadsLutExportVar(unittest.TestCase):
         gui.display_frames('v.mp4')
         self.assertTrue(mock_extract.call_args.args[-1])
 
-    @patch('preview._HDRPreviewMixin._extract_preview_images')
-    def test_non_gpu_only_tonemapper_passes_through_checkbox_too(self, mock_extract):
-        """libplacebo's gamut handling was found to diverge from the LUT
-        reference for CPU-capable tonemappers too (Hable measured ~61/255),
-        not just bt.2390/spline, so the checkbox's effect must apply to every
-        tonemapper, not just GPU-only ones."""
-        mock_extract.return_value = (MagicMock(), MagicMock())
-        gui = self._gui(lut_enabled=True, tonemapper='reinhard')
-        gui.display_frames('v.mp4')
-        self.assertTrue(mock_extract.call_args.args[-1])
-
 
 class TestEffectiveLutEnabled(unittest.TestCase):
     """_effective_lut_enabled is the single place that decides what
@@ -211,13 +204,7 @@ class TestEffectiveLutEnabled(unittest.TestCase):
         gui.lut_export_var = MagicMock(); gui.lut_export_var.get.return_value = lut_enabled
         return gui
 
-    def test_passes_through_checkbox_for_gpu_only_tonemappers(self):
-        gui = self._gui(lut_enabled=True)
-        self.assertTrue(gui._effective_lut_enabled())
-        gui2 = self._gui(lut_enabled=False)
-        self.assertFalse(gui2._effective_lut_enabled())
-
-    def test_passes_through_checkbox_for_non_gpu_only_tonemappers_too(self):
+    def test_passes_through_checkbox_state(self):
         gui = self._gui(lut_enabled=True)
         self.assertTrue(gui._effective_lut_enabled())
         gui2 = self._gui(lut_enabled=False)

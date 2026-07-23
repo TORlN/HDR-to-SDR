@@ -1,4 +1,4 @@
-"""Generate src/luts/rec2020_to_rec709.cube: a 33x33x33 3D LUT that performs
+"""Generate src/luts/rec2020_to_rec709.cube: a 65x65x65 3D LUT that performs
 BT.2020->BT.709 gamut correction on gamma-encoded (Rec.709 OETF) RGB values.
 
 Run once, by hand, whenever this script changes:
@@ -8,10 +8,24 @@ The output is committed to git like any other asset -- never regenerated at
 build or app-start time. This generator is specific to this one closed-form
 gamut transform; it is not a template for v4.0's creative preset LUTs, which
 will be authored in grading software or sourced externally, never scripted.
+
+Grid size: 65 (not the more common 33). The gamut correction has a hard
+per-channel clamp at the BT.709 boundary (matching zscale's own behavior,
+confirmed empirically -- see _rec709_eotf's docstring), which is a genuine
+kink/discontinuity, not a smooth curve. A 33^3 grid's trilinear/tetrahedral
+interpolation rounds off that kink, producing real (if small) errors
+concentrated at saturated near-gamut-boundary colors -- confirmed via
+real-ffmpeg pixel comparison against zscale's own p=bt709 conversion on real
+HDR10 content: 33^3 gave a worst-case diff of 26/255 (mean 4/255); 65^3 with
+lut3d's interp=tetrahedral cuts that to a worst-case of 10/255 (mean 2/255).
+This grid size is specific to this one generated transform -- it has no
+bearing on what size preset/custom .cube LUTs v4.0 loads later, since the
+.cube format is self-describing (LUT_3D_SIZE header) and neither lut3d nor
+libplacebo's lut= option hardcode a size anywhere in this codebase.
 """
 import os
 
-LUT_SIZE = 33
+LUT_SIZE = 65
 
 # BT.2020 RGB -> BT.709 RGB combined matrix (via CIE XYZ, D65 white point for
 # both standards -- no chromatic adaptation needed). Derived from each
@@ -27,17 +41,31 @@ BT2020_TO_BT709 = [
 
 
 def _rec709_eotf(v: float) -> float:
-    """Rec.709 inverse transfer function: gamma-encoded value -> linear light."""
-    if v < 0.081:
-        return v / 4.5
-    return ((v + 0.099) / 1.099) ** (1 / 0.45)
+    """Rec.709 inverse transfer function: gamma-encoded value -> linear light.
+
+    A pure gamma-2.4 power curve (BT.1886 reference-display EOTF), not the
+    piecewise BT.709 camera OETF's inverse. Confirmed empirically against the
+    real bundled ffmpeg's zscale filter: probed t=bt709->t=linear on isolated
+    test values (0.05, 0.2, 0.5, 0.8, 0.95, and the exact input that produced
+    this bug, 0.490196) via a lavfi geq source and raw float32 output --
+    zscale's actual output matched v**2.4 to 6 decimal places at every point,
+    while the piecewise camera-OETF formula previously used here diverged by
+    up to 15x at low values (e.g. v=0.05: zimg gives 0.000754, piecewise gives
+    0.011111). Using the wrong curve here produced real, systematic color
+    errors (up to 60/255) on saturated near-gamut-boundary colors, caught by
+    the pixel-comparison smoke test comparing this LUT's output against
+    zscale's own p=bt709 conversion on real HDR10 content.
+    """
+    return v ** 2.4
 
 
 def _rec709_oetf(linear: float) -> float:
-    """Rec.709 transfer function: linear light -> gamma-encoded value."""
-    if linear < 0.018:
-        return 4.5 * linear
-    return 1.099 * (linear ** 0.45) - 0.099
+    """Rec.709 transfer function: linear light -> gamma-encoded value.
+
+    Exact inverse of _rec709_eotf's gamma-2.4 power curve -- see that
+    docstring for the empirical confirmation against real zscale output.
+    """
+    return linear ** (1 / 2.4)
 
 
 def _clamp01(v: float) -> float:

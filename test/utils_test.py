@@ -558,6 +558,17 @@ class TestBuildLibplaceboFilter(unittest.TestCase):
         self.assertNotIn('eq=gamma=1.0', f)
         self.assertNotIn('eq=gamma=1', f)
 
+    @patch('src.utils.get_lut_filter_path', return_value='FAKE_LUT_PATH')
+    def test_lut_appended_by_default(self, _mock_lut_path):
+        f = build_libplacebo_filter(1.0, 'reinhard')
+        self.assertIn('lut=FAKE_LUT_PATH', f)
+        self.assertIn('lut_type=2', f)
+
+    def test_lut_omitted_when_disabled(self):
+        f = build_libplacebo_filter(1.0, 'reinhard', lut_enabled=False)
+        self.assertNotIn('lut=', f)
+        self.assertNotIn('lut_type=', f)
+
 
 class TestVulkanCudaInteropProbe(unittest.TestCase):
     """The cached CUDA→Vulkan interop capability probe."""

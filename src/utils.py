@@ -408,7 +408,8 @@ def get_maxcll(video_path):
 
 def build_libplacebo_filter(gamma, tonemapper, width: 'int | str' = 'iw',
                             height: 'int | str' = 'ih',
-                            cuda_input: bool = False) -> str:
+                            cuda_input: bool = False,
+                            lut_enabled: bool = True) -> str:
     """Build the GPU tonemapping filter chain (HDR->SDR) using libplacebo.
 
     Always uses peak_detect=1 (per-scene peak detection).  When cuda_input is
@@ -421,14 +422,23 @@ def build_libplacebo_filter(gamma, tonemapper, width: 'int | str' = 'iw',
     after libplacebo the Vulkan frame is remapped back to CUDA via hwmap and
     fed directly to NVENC.  For gamma≠1.0 we still download to CPU for the eq
     filter since FFmpeg has no GPU-native gamma correction outside libplacebo.
+
+    lut_enabled: applies the same BT.2020->BT.709 3D LUT the CPU path uses,
+        via libplacebo's native lut=/lut_type= options (lut_type=2 --
+        "normalized" -- confirmed empirically to match the CPU lut3d
+        reference; the other three modes produce materially different pixel
+        values on the same LUT file). TEMPORARY False path (see
+        FFMPEG_FILTER_LEGACY_NO_LUT) is dev-verification only -- see the LUT
+        color pipeline plan/spec.
     """
     tm = tonemapper.lower()
     prefix = ('hwmap=derive_device=vulkan,'
               if cuda_input else 'format=p010,hwupload,')
+    lut_opts = f':lut={get_lut_filter_path()}:lut_type=2' if lut_enabled else ''
     libplacebo = (
         f'libplacebo=w={width}:h={height}:tonemapping={tm}:'
         f'colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:'
-        f'peak_detect=1:format=nv12'
+        f'peak_detect=1:format=nv12{lut_opts}'
     )
     gamma_is_identity = abs(gamma - 1.0) < 1e-9
     if cuda_input and gamma_is_identity:
@@ -719,7 +729,7 @@ def extract_frame_with_conversion(video_path, gamma, tonemapper='reinhard',
 
 def extract_frame_with_gpu_conversion(video_path, gamma, tonemapper='bt.2390',
                                       time_position=None, width: 'int | str' = 'iw',
-                                      height: 'int | str' = 'ih'):
+                                      height: 'int | str' = 'ih', lut_enabled: bool = True):
     """GPU (libplacebo) counterpart to extract_frame_with_conversion.
 
     Used for tonemappers with no zscale/CPU implementation (see
@@ -727,6 +737,8 @@ def extract_frame_with_gpu_conversion(video_path, gamma, tonemapper='bt.2390',
     approximation, so these route through libplacebo/Vulkan instead of
     zscale. Uses the plain-Vulkan (CPU-decode) path, not CUDA interop:
     interop optimizes full-length encodes, not single preview frames.
+
+    lut_enabled: TEMPORARY, dev-verification only -- see build_libplacebo_filter.
     """
     properties = get_video_properties(video_path)
     if not properties or properties['duration'] == 0:
@@ -734,7 +746,8 @@ def extract_frame_with_gpu_conversion(video_path, gamma, tonemapper='bt.2390',
 
     target_time = properties['duration'] / 3 if time_position is None else time_position
 
-    filter_str = build_libplacebo_filter(gamma, tonemapper, width=width, height=height)
+    filter_str = build_libplacebo_filter(
+        gamma, tonemapper, width=width, height=height, lut_enabled=lut_enabled)
     cmd = [FFMPEG_EXECUTABLE] + VULKAN_DEVICE_ARGS + [
         '-ss', str(target_time), '-i', video_path,
         '-vf', filter_str,

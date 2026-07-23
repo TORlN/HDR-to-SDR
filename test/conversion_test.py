@@ -1514,6 +1514,49 @@ class TestCudaVulkanInteropPath(unittest.TestCase):
         self.assertIn('peak_detect=1', cmd)
         self.assertIn('eq=gamma=2.2', cmd)
 
+    @patch('src.conversion.vulkan_cuda_interop_available', return_value=True)
+    @patch('src.conversion.vulkan_libplacebo_available', return_value=True)
+    def test_lut_enabled_defaults_true_and_breaks_interop_zero_copy(self, _avail, _interop):
+        """construct_ffmpeg_command's lut_enabled defaults True. Since lut3d
+        is CPU-only, this correctly costs the interop path its zero-copy
+        fast route -- see build_libplacebo_filter's docstring."""
+        m = ConversionManager()
+        m._gpu_encoder = 'h264_nvenc'
+        cmd = ' '.join(m.construct_ffmpeg_command(
+            'in.mkv', 'out.mp4', 1.0, self._PROPS,
+            use_gpu=True, tonemapper='reinhard',
+        ))
+        self.assertIn('hwdownload', cmd)
+        self.assertIn('lut3d=file=', cmd)
+        self.assertNotIn('hwmap=reverse=1:derive_device=cuda', cmd)
+
+    @patch('src.conversion.vulkan_cuda_interop_available', return_value=True)
+    @patch('src.conversion.vulkan_libplacebo_available', return_value=True)
+    def test_lut_enabled_false_restores_interop_zero_copy(self, _avail, _interop):
+        """The export-speed toggle: lut_enabled=False restores the exact
+        pre-LUT-feature fully-GPU zero-copy path."""
+        m = ConversionManager()
+        m._gpu_encoder = 'h264_nvenc'
+        cmd = ' '.join(m.construct_ffmpeg_command(
+            'in.mkv', 'out.mp4', 1.0, self._PROPS,
+            use_gpu=True, tonemapper='reinhard', lut_enabled=False,
+        ))
+        self.assertIn('hwmap=reverse=1:derive_device=cuda', cmd)
+        self.assertNotIn('lut3d=file=', cmd)
+
+    @patch('src.conversion.vulkan_cuda_interop_available', return_value=False)
+    @patch('src.conversion.vulkan_libplacebo_available', return_value=True)
+    def test_lut_enabled_false_omits_lut_on_plain_vulkan_path(self, _avail, _interop):
+        """The toggle also applies to the plain-Vulkan (non-interop) GPU path."""
+        m = ConversionManager()
+        m._gpu_encoder = 'h264_nvenc'
+        cmd = ' '.join(m.construct_ffmpeg_command(
+            'in.mkv', 'out.mp4', 1.0, self._PROPS,
+            use_gpu=True, tonemapper='reinhard', lut_enabled=False,
+        ))
+        self.assertNotIn('lut3d=file=', cmd)
+        self.assertIn('format=p010,hwupload', cmd)
+
 
 # ---------------------------------------------------------------------------
 # Issue #2 — Concurrency: stable process reference in monitor_progress

@@ -829,6 +829,7 @@ class TestGuiInteractions(unittest.TestCase):
         gui = _bare_gui()
         gui.gpu_accel_var = MagicMock()
         gui.gpu_accel_var.get.return_value = True
+        gui.update_frame_preview = MagicMock()
         mock_cm.is_gpu_acceleration_available.return_value = False
 
         gui.check_gpu_acceleration()
@@ -842,12 +843,83 @@ class TestGuiInteractions(unittest.TestCase):
         gui = _bare_gui()
         gui.gpu_accel_var = MagicMock()
         gui.gpu_accel_var.get.return_value = True
+        gui.update_frame_preview = MagicMock()
         mock_cm.is_gpu_acceleration_available.return_value = True
 
         gui.check_gpu_acceleration()
 
         gui.gpu_accel_var.set.assert_not_called()
         mock_mb.showwarning.assert_not_called()
+
+    @patch('src.gui.messagebox')
+    @patch('src.gui.conversion_manager')
+    def test_check_gpu_acceleration_refreshes_preview(self, mock_cm, mock_mb):
+        """Toggling GPU acceleration can silently fall back the tonemapper
+        (e.g. Spline -> Mobius, via _apply_tonemap_choices) -- the preview
+        must be refreshed so it reflects whatever tonemapper/GPU state is
+        now actually active, not go on showing a stale frame."""
+        gui = _bare_gui()
+        gui.gpu_accel_var = MagicMock()
+        gui.gpu_accel_var.get.return_value = True
+        gui.update_frame_preview = MagicMock()
+        mock_cm.is_gpu_acceleration_available.return_value = True
+
+        gui.check_gpu_acceleration()
+
+        gui.update_frame_preview.assert_called_once()
+
+    @patch('src.gui.messagebox')
+    @patch('src.gui.conversion_manager')
+    def test_check_gpu_acceleration_disables_lut_checkbox_when_gpu_off(self, mock_cm, mock_mb):
+        """Accurate GPU Color only affects the GPU/libplacebo export path
+        (see its tooltip: "No effect on CPU exports") -- grey it out when
+        GPU acceleration is off so it can't be toggled to no effect."""
+        gui = _bare_gui()
+        gui.gpu_accel_var = MagicMock()
+        gui.gpu_accel_var.get.return_value = False
+        gui.update_frame_preview = MagicMock()
+        gui.lut_export_checkbutton = MagicMock()
+
+        gui.check_gpu_acceleration()
+
+        gui.lut_export_checkbutton.config.assert_called_once_with(state='disabled')
+
+    @patch('src.gui.messagebox')
+    @patch('src.gui.conversion_manager')
+    def test_check_gpu_acceleration_enables_lut_checkbox_for_gpu_only_tonemapper(
+            self, mock_cm, mock_mb):
+        gui = _bare_gui()
+        gui.gpu_accel_var = MagicMock()
+        gui.gpu_accel_var.get.return_value = True
+        gui.tonemap_var = MagicMock()
+        gui.tonemap_var.get.return_value = 'BT.2390'
+        gui.update_frame_preview = MagicMock()
+        gui.lut_export_checkbutton = MagicMock()
+        mock_cm.is_gpu_acceleration_available.return_value = True
+
+        gui.check_gpu_acceleration()
+
+        gui.lut_export_checkbutton.config.assert_called_once_with(state='normal')
+
+    @patch('src.gui.messagebox')
+    @patch('src.gui.conversion_manager')
+    def test_check_gpu_acceleration_disables_lut_checkbox_for_non_gpu_only_tonemapper(
+            self, mock_cm, mock_mb):
+        """Reinhard/Mobius/Hable produce the same colors with or without the
+        accurate LUT stage, so the checkbox has nothing to offer for them
+        even with GPU acceleration on -- only bt.2390/spline actually vary."""
+        gui = _bare_gui()
+        gui.gpu_accel_var = MagicMock()
+        gui.gpu_accel_var.get.return_value = True
+        gui.tonemap_var = MagicMock()
+        gui.tonemap_var.get.return_value = 'Mobius'
+        gui.update_frame_preview = MagicMock()
+        gui.lut_export_checkbutton = MagicMock()
+        mock_cm.is_gpu_acceleration_available.return_value = True
+
+        gui.check_gpu_acceleration()
+
+        gui.lut_export_checkbutton.config.assert_called_once_with(state='disabled')
 
     def test_handle_file_drop_sets_paths_and_refreshes(self):
         gui = _bare_gui()
@@ -1129,6 +1201,7 @@ class TestBatchQueue(unittest.TestCase):
         gui.tonemap_var = MagicMock(get=MagicMock(return_value='Mobius'))
         gui.gpu_accel_var = MagicMock(get=MagicMock(return_value=False))
         gui.bit_depth_var = MagicMock(get=MagicMock(return_value='10-bit'))
+        gui.lut_export_var = MagicMock(get=MagicMock(return_value=True))
         return gui
 
     def test_status_icons_include_skipped_status(self):
@@ -1640,6 +1713,7 @@ class TestBatchProcessing(unittest.TestCase):
         gui.batch_review_cancel_button = MagicMock()
         gui.gamma_var = MagicMock(); gui.gamma_var.get.return_value = 1.0
         gui.gpu_accel_var = MagicMock(); gui.gpu_accel_var.get.return_value = False
+        gui.lut_export_var = MagicMock(); gui.lut_export_var.get.return_value = True
         gui.tonemap_var = MagicMock(); gui.tonemap_var.get.return_value = 'Mobius'
         gui.quality_var = MagicMock(); gui.quality_var.get.return_value = 20
         gui.quality_mode_var = MagicMock(); gui.quality_mode_var.get.return_value = 'Constant Quality'
@@ -1675,6 +1749,30 @@ class TestBatchProcessing(unittest.TestCase):
         self.assertEqual(kwargs['on_complete'], gui._on_batch_item_complete)
         self.assertEqual(kwargs['quality'], 20)
         gui.unregister_drop_target.assert_called_once()  # like a single-file convert
+
+    @patch('src.batch.conversion_manager')
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_start_batch_forces_lut_off_for_non_gpu_only_tonemapper(self, _isfile, mock_cm):
+        """The fixture's tonemapper (Mobius) isn't GPU-only, so batch
+        conversion must ignore the checked "Accurate GPU Color" box, same as
+        the single-file path (see test_convert_forces_lut_off_...)."""
+        gui = self._gui()
+        gui.lut_export_var.get.return_value = True
+        gui.batch_items = [self._item('a')]
+        gui.start_batch()
+        kwargs = mock_cm.start_conversion.call_args.kwargs
+        self.assertFalse(kwargs['lut_enabled'])
+
+    @patch('src.batch.conversion_manager')
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_start_batch_passes_through_lut_choice_for_gpu_only_tonemapper(self, _isfile, mock_cm):
+        gui = self._gui()
+        gui.tonemap_var.get.return_value = 'BT.2390'
+        gui.lut_export_var.get.return_value = False
+        gui.batch_items = [self._item('a')]
+        gui.start_batch()
+        kwargs = mock_cm.start_conversion.call_args.kwargs
+        self.assertFalse(kwargs['lut_enabled'])
 
     @patch('src.batch.conversion_manager')
     @patch('src.gui.os.path.isfile', return_value=True)
@@ -1895,6 +1993,7 @@ class TestBatchConflictReviewFlow(unittest.TestCase):
         gui.batch_review_cancel_button = MagicMock()
         gui.gamma_var = MagicMock(get=MagicMock(return_value=1.0))
         gui.gpu_accel_var = MagicMock(get=MagicMock(return_value=False))
+        gui.lut_export_var = MagicMock(get=MagicMock(return_value=True))
         gui.tonemap_var = MagicMock(get=MagicMock(return_value='Mobius'))
         gui.quality_var = MagicMock(get=MagicMock(return_value=20))
         gui.quality_mode_var = MagicMock(get=MagicMock(return_value='Constant Quality'))
@@ -2241,6 +2340,7 @@ class TestConvertVideoBranches(unittest.TestCase):
         gui.output_path_var = MagicMock(); gui.output_path_var.get.return_value = 'out.mkv'
         gui.gamma_var = MagicMock(); gui.gamma_var.get.return_value = 1.0
         gui.gpu_accel_var = MagicMock(); gui.gpu_accel_var.get.return_value = False
+        gui.lut_export_var = MagicMock(); gui.lut_export_var.get.return_value = True
         gui.tonemap_var = MagicMock(); gui.tonemap_var.get.return_value = 'Mobius'
         gui.quality_var = MagicMock(); gui.quality_var.get.return_value = 21
         gui.quality_mode_var = MagicMock(); gui.quality_mode_var.get.return_value = 'Constant Quality'
@@ -2322,6 +2422,54 @@ class TestConvertVideoBranches(unittest.TestCase):
         _, kwargs = mock_cm.start_conversion.call_args
         self.assertEqual(kwargs['quality'], 19)
         gui.output_path_var.set.assert_called_with('out.mp4')  # MP4 container forced
+
+    @patch('src.gui.conversion_manager')
+    @patch('src.gui.messagebox')
+    @patch('src.gui.os.path.exists', return_value=False)
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_convert_forces_lut_off_for_non_gpu_only_tonemapper(
+            self, _isfile, _exists, mock_mb, mock_cm):
+        """The fixture's tonemapper (Mobius) isn't GPU-only, so the real
+        export must ignore the checked "Accurate GPU Color" box -- it has no
+        effect for that tonemapper (see gui.py's _apply_lut_export_availability)."""
+        gui = self._gui()
+        gui.lut_export_var.get.return_value = True
+        gui.drop_target_registered = False
+        gui.cancel_button = MagicMock()
+        gui.progress_var = MagicMock()
+        gui.interactable_elements = []
+        gui.open_after_conversion_var = MagicMock()
+        gui.open_after_conversion_var.get.return_value = False
+
+        gui.convert_video()
+
+        _, kwargs = mock_cm.start_conversion.call_args
+        self.assertFalse(kwargs['lut_enabled'])
+
+    @patch('src.gui.conversion_manager')
+    @patch('src.gui.messagebox')
+    @patch('src.gui.os.path.exists', return_value=False)
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_convert_passes_through_lut_choice_for_gpu_only_tonemapper(
+            self, _isfile, _exists, mock_mb, mock_cm):
+        gui = self._gui()
+        gui.tonemap_var.get.return_value = 'BT.2390'
+        gui.lut_export_var.get.return_value = False
+        gui.drop_target_registered = False
+        gui.cancel_button = MagicMock()
+        gui.progress_var = MagicMock()
+        gui.interactable_elements = []
+        gui.open_after_conversion_var = MagicMock()
+        gui.open_after_conversion_var.get.return_value = False
+
+        gui.convert_video()
+
+        _, kwargs = mock_cm.start_conversion.call_args
+        self.assertFalse(kwargs['lut_enabled'])
+        gui.lut_export_var.get.return_value = True
+        gui.convert_video()
+        _, kwargs = mock_cm.start_conversion.call_args
+        self.assertTrue(kwargs['lut_enabled'])
 
     @patch('src.gui.conversion_manager')
     @patch('src.gui.messagebox')
@@ -2463,6 +2611,7 @@ class TestGuiErrorAndResizePaths(unittest.TestCase):
         gui = _bare_gui()
         gui.gpu_accel_var = MagicMock()
         gui.gpu_accel_var.get.return_value = True
+        gui.update_frame_preview = MagicMock()
         mock_cm.is_gpu_acceleration_available.side_effect = RuntimeError('nope')
         gui.check_gpu_acceleration()
         gui.gpu_accel_var.set.assert_called_once_with(False)
@@ -2953,6 +3102,7 @@ class TestGuiLifecycle(unittest.TestCase):
         gui = _bare_gui()
         for name, val in [('gamma_var', 1.0),
                           ('tonemap_var', 'Mobius'), ('gpu_accel_var', False),
+                          ('lut_export_var', True),
                           ('open_after_conversion_var', False), ('display_image_var', True),
                           ('quality_var', 21), ('format_var', 'MKV'),
                           ('quality_mode_var', 'Constant Quality'), ('bitrate_var', 15000)]:
@@ -2969,6 +3119,7 @@ class TestGuiLifecycle(unittest.TestCase):
         gui = _bare_gui()
         for name, val in [('gamma_var', 1.0),
                           ('tonemap_var', 'Mobius'), ('gpu_accel_var', False),
+                          ('lut_export_var', True),
                           ('open_after_conversion_var', False), ('display_image_var', True),
                           ('quality_var', 21), ('format_var', 'MKV'),
                           ('quality_mode_var', 'Target Bitrate'), ('bitrate_var', 42000)]:
@@ -3753,6 +3904,7 @@ class TestBatchPassesLicenseTier(unittest.TestCase):
         gui._refresh_batch_list = MagicMock()
         gui.gamma_var = MagicMock(); gui.gamma_var.get.return_value = 1.0
         gui.gpu_accel_var = MagicMock(); gui.gpu_accel_var.get.return_value = False
+        gui.lut_export_var = MagicMock(); gui.lut_export_var.get.return_value = True
         gui.tonemap_var = MagicMock(); gui.tonemap_var.get.return_value = 'Mobius'
         gui.quality_var = MagicMock(); gui.quality_var.get.return_value = 20
         gui.quality_mode_var = MagicMock(); gui.quality_mode_var.get.return_value = 'Constant Quality'

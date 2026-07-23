@@ -74,7 +74,7 @@ class _HDRPreviewMixin:
         input_path_var: tk.StringVar
         gamma_var: tk.DoubleVar
         tonemap_var: tk.StringVar
-        lut_preview_var: tk.BooleanVar
+        lut_export_var: tk.BooleanVar
         tonemap_combobox: ttk.Combobox
         custom_time_var: tk.StringVar
         custom_time_position: float | None
@@ -498,6 +498,26 @@ class _HDRPreviewMixin:
             if len(cache) > self._PREVIEW_CACHE_MAX:
                 cache.pop(next(iter(cache)))
 
+    def _effective_lut_enabled(self, tonemapper: str) -> bool:
+        """The lut_enabled value actually used by preview/export, as opposed
+        to lut_export_var's raw checked state. Accurate GPU Color only
+        changes anything for GPU-only tonemappers (bt.2390, spline) --
+        Reinhard/Mobius/Hable produce the same colors whether their
+        libplacebo pass includes the accurate LUT stage or not, so it's
+        forced off for them: a pure win (faster, no visible difference).
+        The checkbox's own state is left untouched elsewhere (see gui.py's
+        _apply_lut_export_availability) so it keeps showing whatever the
+        user last chose for when they're back on a GPU-only tonemapper.
+
+        getattr-guarded: lut_export_var is set in HDRConverterGUI.__init__,
+        but bare test doubles (object.__new__) may not have it -- default to
+        the same True the real BooleanVar always starts at.
+        """
+        if not is_gpu_only_tonemapper(tonemapper):
+            return False
+        lut_export_var = getattr(self, 'lut_export_var', None)
+        return lut_export_var.get() if lut_export_var is not None else True
+
     def _preview_in_cache(self, video_path: str) -> bool:
         """Return True if both frames for the current state are already cached."""
         if not hasattr(self, '_preview_cache_original'):
@@ -508,9 +528,7 @@ class _HDRPreviewMixin:
         time_position = self._preview_time_position(duration)
         time_key = round(time_position, 3)
         tonemapper = self.tonemap_var.get().lower()
-        # See the matching getattr guard in display_frames() below.
-        lut_preview_var = getattr(self, 'lut_preview_var', None)
-        lut_enabled = lut_preview_var.get() if lut_preview_var is not None else True
+        lut_enabled = self._effective_lut_enabled(tonemapper)
         return (
             (video_path, time_key) in self._preview_cache_original
             and (video_path, time_key, tonemapper, lut_enabled) in self._preview_cache_converted
@@ -546,11 +564,10 @@ class _HDRPreviewMixin:
     ) -> tuple[Image.Image, Image.Image]:
         """Return (original, converted) preview frames, caching ffmpeg results.
 
-        lut_enabled: TEMPORARY, dev-verification only -- controls only this
-        SDR ("converted") frame; the HDR original is never affected. See
-        docs/superpowers/specs/2026-07-22-lut-color-pipeline-design.md. Removed
-        (along with this whole parameter and the GUI toggle) once the LUT is
-        visually approved -- see the LUT color pipeline implementation plan, Task 9.
+        lut_enabled: mirrors gui.py's permanent "Accurate GPU Color" export
+        setting (lut_export_var), so the preview shows what real export will
+        actually produce. Controls only this SDR ("converted") frame; the HDR
+        original is never affected.
         """
         if not hasattr(self, '_preview_cache_original'):
             self._preview_cache_original = {}
@@ -602,11 +619,9 @@ class _HDRPreviewMixin:
         (or, for GPU-only tonemappers, N looped GPU passes -- see
         extract_frames_with_gpu_conversion_batch).
 
-        lut_enabled: TEMPORARY, dev-verification only -- must match
-        _extract_preview_images's real lookup key exactly (see
-        docs/superpowers/specs/2026-07-22-lut-color-pipeline-design.md), or
-        prewarmed entries become unreachable (or reachable under the wrong
-        key) from the real lookup path. extract_frames_with_gpu_conversion_batch
+        lut_enabled: must match _extract_preview_images's real lookup key
+        exactly, or prewarmed entries become unreachable (or reachable under
+        the wrong key) from the real lookup path. extract_frames_with_gpu_conversion_batch
         (the GPU-only-tonemapper batch path) has no lut_enabled parameter of
         its own and always produces lut_enabled=True content, regardless of
         the toggle's actual state -- so for GPU-only tonemappers the result
@@ -694,12 +709,7 @@ class _HDRPreviewMixin:
     def display_frames(self, video_path: str) -> None:
         """Kick off frame extraction on a worker thread and render on the main thread."""
         tonemapper = self.tonemap_var.get().lower()
-        # getattr-guarded: lut_preview_var is set in HDRConverterGUI.__init__,
-        # but bare test doubles built via object.__new__ (see
-        # characterization_test.py's _bare_gui()) may not have it -- default
-        # to the same True the real BooleanVar always starts at.
-        lut_preview_var = getattr(self, 'lut_preview_var', None)
-        lut_enabled = lut_preview_var.get() if lut_preview_var is not None else True
+        lut_enabled = self._effective_lut_enabled(tonemapper)
 
         self._preview_generation = getattr(self, '_preview_generation', 0) + 1
         generation = self._preview_generation

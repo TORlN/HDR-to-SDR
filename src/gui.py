@@ -118,12 +118,14 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.original_image = None
         self.converted_image_base = None
         self.gpu_accel_var = tk.BooleanVar(value=_s['gpu_accel'])
+        # Persisted export setting: applies the gamut-correction LUT on GPU
+        # exports (costs a CPU round-trip, ~2x slower at 4K -- see
+        # build_libplacebo_filter's docstring). No effect on CPU exports,
+        # which always apply it. Also drives the preview pane (see
+        # preview.py's display_frames), so toggling it shows the same
+        # difference real GPU export would produce.
+        self.lut_export_var = tk.BooleanVar(value=_s['lut_enabled'])
         self.tonemap_var = tk.StringVar(value=_s['tonemapper'])
-        # TEMPORARY, dev-verification only -- see
-        # docs/superpowers/specs/2026-07-22-lut-color-pipeline-design.md and
-        # the LUT color pipeline implementation plan, Task 5/9. Not
-        # persisted to settings; always defaults on at launch.
-        self.lut_preview_var = tk.BooleanVar(value=True)
         # Tracks the last selection that was actually valid, so a click on a
         # greyed-out GPU-only row (still clickable -- see _on_tonemap_selected)
         # has something sane to revert to.
@@ -361,6 +363,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                     self.quality_mode_var.get(), 'cq'),
                 'quality_bitrate_kbps': self.bitrate_var.get(),
                 'filetype': self.format_var.get(),
+                'lut_enabled': self.lut_export_var.get(),
             })
         except AttributeError:
             pass  # bare/partially-initialized instance (test contexts only)
@@ -410,17 +413,6 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             variable=self.display_image_var, command=self.update_frame_preview)
         self.display_image_checkbutton.grid(row=4, column=0, sticky=tk.W, pady=(5, 0))
 
-        # TEMPORARY, dev-verification only -- see
-        # docs/superpowers/specs/2026-07-22-lut-color-pipeline-design.md and
-        # the LUT color pipeline implementation plan, Task 5/9. Placed at
-        # row=4, column=2 (not row=5, column=0 as originally sketched) since
-        # that cell is occupied by quality_frame (columnspan=3); column 2 at
-        # row 4 is free.
-        self.lut_preview_checkbutton = ttk.Checkbutton(
-            self.control_frame, text="[DEV] LUT in preview",
-            variable=self.lut_preview_var, command=self.update_frame_preview)
-        self.lut_preview_checkbutton.grid(row=4, column=2, sticky=tk.W, pady=(5, 0))
-
         self.tonemap_frame = ttk.Frame(self.control_frame)
         self.tonemap_frame.grid(row=3, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))
         self.tonemap_combobox = ttk.Combobox(
@@ -441,13 +433,31 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                                   lambda e: self.show_tooltip(e, tooltip_text_tonemap))
         info_button_tonemap.bind('<Leave>', self.hide_tooltip)
 
+        self.lut_export_frame = ttk.Frame(self.tonemap_frame)
+        self.lut_export_frame.grid(row=0, column=2, sticky=tk.W, padx=(15, 0))
+        self.lut_export_checkbutton = ttk.Checkbutton(
+            self.lut_export_frame, text="Accurate GPU Color",
+            variable=self.lut_export_var, command=self._on_lut_export_toggle)
+        self.lut_export_checkbutton.grid(row=0, column=0)
+        info_button_lut_export = ttk.Label(self.lut_export_frame, text="ⓘ", cursor="hand2")
+        info_button_lut_export.grid(row=0, column=1)
+        tooltip_text_lut_export = (
+            "Applies precise BT.2020→BT.709 color correction on GPU exports.\n"
+            "Uncheck for ~2-3x faster GPU exports using libplacebo's own, slightly\n"
+            "less accurate color conversion instead. Only affects tonemappers \n"
+            "that require GPU acceleration."
+        )
+        info_button_lut_export.bind(
+            '<Enter>', lambda e: self.show_tooltip(e, tooltip_text_lut_export))
+        info_button_lut_export.bind('<Leave>', self.hide_tooltip)
+
         # Conditional 10/12-bit toggle: hidden unless the loaded source has
         # more than 10 bits to preserve (see _update_bit_depth_choice). Nested
         # inside tonemap_frame so it sits next to the tonemapper selector but
         # lives in control_frame's stretchy column 1 -- gridding it into
         # column 2 would widen the Browse/format/gamma widgets stacked there.
         self.bit_depth_frame = ttk.Frame(self.tonemap_frame)
-        self.bit_depth_frame.grid(row=0, column=2, sticky=tk.W, padx=(15, 0))
+        self.bit_depth_frame.grid(row=0, column=3, sticky=tk.W, padx=(15, 0))
         ttk.Label(self.bit_depth_frame, text="Bit Depth:").grid(row=0, column=0, sticky=tk.W)
         self.bit_depth_10_radio = ttk.Radiobutton(
             self.bit_depth_frame, text='10-bit',
@@ -660,6 +670,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
 
         self._apply_quality_mode()
         self._apply_tonemap_choices()
+        self._apply_lut_export_availability()
 
     def configure_grid(self) -> None:
         """Configure the grid layout for the main window and frames."""
@@ -858,6 +869,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             'gpu_accel': self.gpu_accel_var.get(),
             'bit_depth_choice': self.bit_depth_var.get(),
             'bitrate_customized': getattr(self, '_bitrate_customized_for_current_item', False),
+            'lut_enabled': self.lut_export_var.get(),
         }
 
     def _restore_settings_dict(self, settings: dict) -> None:  # type: ignore[type-arg]
@@ -881,6 +893,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.gamma_var.set(settings.get('gamma', self.gamma_var.get()))
             self.gpu_accel_var.set(settings.get('gpu_accel', self.gpu_accel_var.get()))
             self.tonemap_var.set(settings.get('tonemapper', self.tonemap_var.get()))
+            self.lut_export_var.set(settings.get('lut_enabled', self.lut_export_var.get()))
             self.quality_mode_var.set(self._QUALITY_MODE_FROM_INTERNAL.get(
                 settings.get('quality_mode', 'cq'), 'Constant Quality'))
             self.quality_var.set(settings.get('quality', self.quality_var.get()))
@@ -896,6 +909,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 self._apply_quality_mode()
             if hasattr(self, 'tonemap_combobox'):
                 self._apply_tonemap_choices()
+            if hasattr(self, 'lut_export_checkbutton'):
+                self._apply_lut_export_availability()
         finally:
             self._restoring_batch_item_settings = already_restoring
 
@@ -971,7 +986,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         marker's meaning) discoverable from the queue panel itself."""
         return (
             "Each queued file remembers its own settings (gamma, quality, "
-            "tonemapper, GPU accel, bit depth).\n\n"
+            "tonemapper, GPU accel, bit depth, Accurate GPU Color).\n\n"
             "Selecting a queued file loads its own settings into the controls "
             "above; changing a control while a file is selected edits that "
             "file's settings only.\n\n"
@@ -1121,6 +1136,29 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.tonemap_var.set('Mobius')
         self._last_valid_tonemapper = self.tonemap_var.get()
 
+    def _apply_lut_export_availability(self) -> None:
+        """Accurate GPU Color (lut_export_var) only affects the GPU/
+        libplacebo export path, and even then only for GPU-only tonemappers
+        (BT.2390, Spline) -- Reinhard/Mobius/Hable produce the same colors
+        either way (see _effective_lut_enabled in preview.py), and CPU
+        exports always apply accurate color correction regardless (see the
+        checkbox's tooltip). Grey it out whenever it wouldn't change
+        anything. Only touches the widget's interactive state, never
+        lut_export_var itself, so the underlying setting is preserved across
+        GPU toggles, tonemapper switches, and batch-item switches, and the
+        checkbox always keeps showing it."""
+        available = (self.gpu_accel_var.get()
+                     and is_gpu_only_tonemapper(self.tonemap_var.get()))
+        self.lut_export_checkbutton.config(state='normal' if available else 'disabled')
+
+    def _on_lut_export_toggle(self) -> None:
+        """Accurate GPU Color checkbox click: persist the choice on the
+        queue entry for the loaded file, exactly like every other per-file
+        batch setting (see _batch_settings_tooltip_text), then refresh the
+        preview to reflect the new effective value."""
+        self._write_back_current_settings()
+        self.update_frame_preview()
+
     def _on_tonemap_selected(self, event: tk.Event = None) -> None:  # type: ignore[type-arg]
         """<<ComboboxSelected>> handler. A greyed GPU-only row is still
         clickable in a plain Tk listbox (the grey is cosmetic only), so this
@@ -1131,6 +1169,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.tonemap_var.set(self._last_valid_tonemapper)
             return
         self._last_valid_tonemapper = raw
+        if hasattr(self, 'lut_export_checkbutton'):
+            self._apply_lut_export_availability()
         self._write_back_current_settings()
         self.update_frame_preview(event)
 
@@ -1342,6 +1382,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 self.open_after_conversion_var.get(), self.cancel_button,
                 tonemapper=tonemapper, quality=quality, quality_mode=quality_mode,
                 bit_depth=bit_depth, licensed=self._licensed,
+                lut_enabled=self._effective_lut_enabled(tonemapper),
             )
             if started:
                 if self.drop_target_registered:
@@ -1397,7 +1438,10 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self._apply_quality_mode()
         if hasattr(self, 'tonemap_combobox'):
             self._apply_tonemap_choices()
+        if hasattr(self, 'lut_export_checkbutton'):
+            self._apply_lut_export_availability()
         self._write_back_current_settings()
+        self.update_frame_preview()
 
     # ── Tooltips ───────────────────────────────────────────────────────────────
 

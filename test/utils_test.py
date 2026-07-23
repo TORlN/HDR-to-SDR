@@ -539,15 +539,30 @@ class TestBuildLibplaceboFilter(unittest.TestCase):
         self.assertTrue(f.startswith('hwmap=derive_device=vulkan,'), f)
         self.assertNotIn('format=p010,hwupload', f)
 
-    def test_cuda_input_gamma_1_stays_fully_on_gpu(self):
-        """gamma=1.0 + CUDA interop: remap Vulkan→CUDA after libplacebo, no CPU round-trip."""
-        f = build_libplacebo_filter(1.0, 'reinhard', cuda_input=True)
+    def test_cuda_input_gamma_1_stays_fully_on_gpu_when_lut_disabled(self):
+        """gamma=1.0 + CUDA interop + lut_enabled=False: remap Vulkan→CUDA after
+        libplacebo, no CPU round-trip. Only reachable with the LUT off -- see
+        test_lut_enabled_breaks_cuda_zero_copy_fast_path for the default case."""
+        f = build_libplacebo_filter(1.0, 'reinhard', cuda_input=True, lut_enabled=False)
         self.assertIn('hwmap=reverse=1:derive_device=cuda', f)
         self.assertNotIn('hwdownload', f)
 
+    @patch('src.utils.get_lut_filter_path', return_value='FAKE_LUT_PATH')
+    def test_lut_enabled_breaks_cuda_zero_copy_fast_path(self, _mock_lut_path):
+        """lut_enabled defaults True. lut3d (the gamut-correction stage) is a
+        CPU-only filter, so it can't run on the zero-copy Vulkan->CUDA remap --
+        the frame must come down to system RAM first, same as the plain-Vulkan
+        path already does. This is the accepted ~2x GPU export cost of
+        correct LUT output (see gpu-lut-libplacebo-native-broken memory)."""
+        f = build_libplacebo_filter(1.0, 'reinhard', cuda_input=True)
+        self.assertIn('hwdownload', f)
+        self.assertNotIn('hwmap=reverse=1:derive_device=cuda', f)
+
     def test_cuda_input_gamma_not_1_still_downloads_for_eq(self):
-        """gamma≠1.0 + CUDA interop: must download to CPU for the eq filter."""
-        f = build_libplacebo_filter(2.2, 'reinhard', cuda_input=True)
+        """gamma≠1.0 + CUDA interop, lut_enabled=False: must download to CPU
+        for the eq filter (isolated from the LUT's own hwdownload requirement,
+        which is covered separately above)."""
+        f = build_libplacebo_filter(2.2, 'reinhard', cuda_input=True, lut_enabled=False)
         self.assertIn('hwdownload,format=nv12,eq=gamma=2.2', f)
         self.assertNotIn('hwmap=reverse=1:derive_device=cuda', f)
 
@@ -559,15 +574,42 @@ class TestBuildLibplaceboFilter(unittest.TestCase):
         self.assertNotIn('eq=gamma=1', f)
 
     @patch('src.utils.get_lut_filter_path', return_value='FAKE_LUT_PATH')
-    def test_lut_appended_by_default(self, _mock_lut_path):
+    def test_lut_applied_via_cpu_lut3d_by_default(self, _mock_lut_path):
+        """libplacebo's native lut=/lut_type= option cannot reproduce lut3d's
+        semantics (measured cross product of all 4 lut_type values x both
+        color_primaries settings against a verified-correct reference -- see
+        the gpu-lut-libplacebo-native-broken memory). The only mechanism that
+        actually matches the CPU path's output is applying our .cube file via
+        the same CPU lut3d filter after downloading the tonemapped frame."""
         f = build_libplacebo_filter(1.0, 'reinhard')
-        self.assertIn('lut=FAKE_LUT_PATH', f)
-        self.assertIn('lut_type=2', f)
+        self.assertNotIn('lut_type=', f)
+        self.assertNotIn(':lut=FAKE_LUT_PATH', f)  # never the native libplacebo lut= option
+        self.assertIn('lut3d=file=FAKE_LUT_PATH:interp=tetrahedral', f)
+        self.assertIn('setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709', f)
+
+    def test_lut_enabled_uses_auto_primaries_to_avoid_double_gamut_mapping(self):
+        """libplacebo's own color_primaries=bt709 would make it perform its own
+        BT.2020->BT.709 gamut mapping (default gamut_mode=perceptual) before our
+        lut3d stage runs again on top of it -- a double conversion. color_primaries
+        must stay 'auto' (keep source primaries) so lut3d is the only gamut step."""
+        f = build_libplacebo_filter(1.0, 'reinhard')
+        self.assertIn('color_primaries=auto:color_trc=bt709', f)
+
+    @patch('src.utils.get_lut_filter_path', return_value='FAKE_LUT_PATH')
+    def test_lut_stage_runs_before_gamma_eq(self, _mock_lut_path):
+        f = build_libplacebo_filter(2.2, 'reinhard')
+        self.assertLess(f.index('lut3d=file='), f.index('eq=gamma=2.2'))
 
     def test_lut_omitted_when_disabled(self):
+        """lut_enabled=False must reproduce the exact pre-LUT-feature filter:
+        no lut3d stage, and color_primaries stays bt709 (libplacebo does its
+        own gamut mapping again, same as before this feature existed)."""
         f = build_libplacebo_filter(1.0, 'reinhard', lut_enabled=False)
         self.assertNotIn('lut=', f)
         self.assertNotIn('lut_type=', f)
+        self.assertNotIn('lut3d=', f)
+        self.assertNotIn('setparams=', f)
+        self.assertIn('color_primaries=bt709:color_trc=bt709', f)
 
 
 class TestVulkanCudaInteropProbe(unittest.TestCase):

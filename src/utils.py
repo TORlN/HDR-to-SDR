@@ -431,25 +431,50 @@ def build_libplacebo_filter(gamma, tonemapper, width: 'int | str' = 'iw',
     fed directly to NVENC.  For gamma≠1.0 we still download to CPU for the eq
     filter since FFmpeg has no GPU-native gamma correction outside libplacebo.
 
-    lut_enabled: applies the same BT.2020->BT.709 3D LUT the CPU path uses,
-        via libplacebo's native lut=/lut_type= options (lut_type=2 --
-        "normalized" -- confirmed empirically to match the CPU lut3d
-        reference; the other three modes produce materially different pixel
-        values on the same LUT file). TEMPORARY False path (see
-        FFMPEG_FILTER_LEGACY_NO_LUT) is dev-verification only -- see the LUT
-        color pipeline plan/spec.
+    lut_enabled: applies the same BT.2020->BT.709 3D LUT the CPU path uses.
+        libplacebo's own native lut=/lut_type= option cannot reproduce
+        lut3d's semantics -- measured the full cross product of all 4
+        lut_type values x both color_primaries settings against a
+        verified-correct reference and none matched (see the
+        gpu-lut-libplacebo-native-broken memory / project notes). Root
+        cause, confirmed by reading libplacebo's renderer.c: the custom-LUT
+        hook it exposes runs *before* the main tonemap/gamut-conversion
+        pass (or replaces it entirely for lut_type=conversion) -- there is
+        no exposed hook for "after tonemap, before final gamut convert",
+        which is the slot our gamut-only correction needs. So instead this
+        applies the identical CPU lut3d filter the CPU path uses, after
+        downloading the tonemapped frame -- verified pixel-identical to the
+        CPU reference. This is real, measured cost (~2.1-2.4x slower GPU
+        exports at 4K): it forces a hwdownload even on the CUDA zero-copy
+        interop path, and disables that path's fully-GPU fast route
+        entirely. lut_enabled=False restores the exact pre-LUT-feature
+        behavior (including the zero-copy fast path) for callers that want
+        raw export speed over gamut correction accuracy.
     """
     tm = tonemapper.lower()
     prefix = ('hwmap=derive_device=vulkan,'
               if cuda_input else 'format=p010,hwupload,')
-    lut_opts = f':lut={get_lut_filter_path()}:lut_type=2' if lut_enabled else ''
+    # When the LUT is on, libplacebo must not do its own gamut mapping too --
+    # color_primaries=auto (keep source primaries) leaves gamut correction
+    # entirely to our lut3d stage below, avoiding a double conversion.
+    primaries = 'auto' if lut_enabled else 'bt709'
     libplacebo = (
         f'libplacebo=w={width}:h={height}:tonemapping={tm}:'
-        f'colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:'
-        f'peak_detect=1:format=nv12{lut_opts}'
+        f'colorspace=bt709:color_primaries={primaries}:color_trc=bt709:range=tv:'
+        f'peak_detect=1:format=nv12'
     )
     gamma_is_identity = abs(gamma - 1.0) < 1e-9
-    if cuda_input and gamma_is_identity:
+    if lut_enabled:
+        # lut3d is CPU-only, so the frame must come down to system RAM
+        # regardless of cuda_input -- there is no GPU-native path that
+        # reproduces this correctly (see docstring above).
+        lut_stage = (f'lut3d=file={get_lut_filter_path()}:interp=tetrahedral,'
+                     f'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709')
+        if gamma_is_identity:
+            suffix = f',hwdownload,format=nv12,{lut_stage}'
+        else:
+            suffix = f',hwdownload,format=nv12,{lut_stage},eq=gamma={gamma}'
+    elif cuda_input and gamma_is_identity:
         # Fully-GPU path: remap Vulkan→CUDA after libplacebo; NVENC encodes
         # CUDA frames directly with no CPU round-trip.
         suffix = ',hwmap=reverse=1:derive_device=cuda'

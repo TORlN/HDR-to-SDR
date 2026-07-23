@@ -165,6 +165,21 @@ class TestConstruction(_GuiTestBase):
         self.assertEqual(self.gui.tonemap_var.get(), 'BT.2390')
         self.assertEqual(self.gui._last_valid_tonemapper, 'BT.2390')
 
+    @patch('src.gui.vulkan_libplacebo_available', return_value=True)
+    def test_lut_export_checkbox_regreys_when_switching_off_gpu_only_tonemapper(self, _avail):
+        """Reinhard/Mobius/Hable produce the same colors either way, so
+        selecting one of them mid-session must regrey Accurate GPU Color
+        even though it was enabled for the prior (GPU-only) tonemapper."""
+        self.gui.gpu_accel_var.set(True)
+        self.gui._apply_tonemap_choices()
+        self.gui.tonemap_var.set('BT.2390')
+        self.gui._on_tonemap_selected()
+        self.assertEqual(str(self.gui.lut_export_checkbutton.cget('state')), 'normal')
+
+        self.gui.tonemap_var.set('Mobius')
+        self.gui._on_tonemap_selected()
+        self.assertEqual(str(self.gui.lut_export_checkbutton.cget('state')), 'disabled')
+
     def test_gamma_slider_range(self):
         self.assertAlmostEqual(float(self.gui.gamma_slider.cget('from')), 0.1)
         self.assertAlmostEqual(float(self.gui.gamma_slider.cget('to')), 3.0)
@@ -361,6 +376,7 @@ class TestBatchQueueWidgets(_GuiTestBase):
             'gamma': 1.7, 'quality_mode': 'cq', 'quality': 21,
             'tonemapper': 'Hable', 'gpu_accel': False, 'bit_depth_choice': '10-bit',
             'bitrate_customized': False, 'bitrate_fraction': 0.75,
+            'lut_enabled': True,
         })
 
     def test_clear_batch_empties_listbox(self):
@@ -673,8 +689,38 @@ class TestBatchQueueWidgets(_GuiTestBase):
             self.gui.add_batch_files(['C:/v/a.mp4'])
         self.gui.gpu_accel_var.set(True)
         with patch.object(conversion_manager, 'is_gpu_acceleration_available', return_value=True):
-            self.gui.check_gpu_acceleration()
+            with patch.object(self.gui, 'update_frame_preview'):
+                self.gui.check_gpu_acceleration()
         self.assertTrue(self.gui.batch_items[0]['settings']['gpu_accel'])
+
+    def test_lut_export_toggle_writes_back_to_selected_queue_item(self):
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])
+            self.gui.lut_export_var.set(False)
+            self.gui._on_lut_export_toggle()
+        self.assertFalse(self.gui.batch_items[0]['settings']['lut_enabled'])
+
+    def test_selecting_queue_item_restores_its_own_lut_enabled(self):
+        """Accurate GPU Color must be per-file, exactly like gamma/tonemapper/
+        etc (see test_selecting_queue_item_restores_its_own_settings) --
+        not one checkbox shared across the whole queue."""
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])  # auto-loads A
+            self.gui.lut_export_var.set(True)
+            self.gui._on_lut_export_toggle()
+
+            self.gui.add_batch_files(['C:/v/b.mp4'])  # queued, not auto-loaded
+            self.gui.batch_listbox.selection_clear(0, tk.END)
+            self.gui.batch_listbox.selection_set(1)
+            self.gui.on_batch_item_select()
+            self.gui.lut_export_var.set(False)
+            self.gui._on_lut_export_toggle()
+
+            self.gui.batch_listbox.selection_clear(0, tk.END)
+            self.gui.batch_listbox.selection_set(0)
+            self.gui.on_batch_item_select()
+
+        self.assertTrue(self.gui.lut_export_var.get())
 
     def test_quality_mode_change_writes_back_internal_form(self):
         with patch.object(self.gui, 'update_frame_preview'):
@@ -721,6 +767,50 @@ class TestBatchQueueWidgets(_GuiTestBase):
 
         self.assertAlmostEqual(first_gamma, 1.2)
         self.assertAlmostEqual(second_gamma, 0.7)
+
+    @patch('src.gui.vulkan_libplacebo_available', return_value=True)
+    def test_batch_run_uses_each_items_own_lut_enabled(self, _avail):
+        """Two queued files on a GPU-only tonemapper with different Accurate
+        GPU Color choices must each convert with their own effective value
+        -- the checkbox is per-file, exactly like gamma (see
+        test_batch_run_uses_each_items_own_gamma)."""
+        with patch('src.gui.get_video_properties', return_value=None), \
+             patch.object(self.gui, 'update_frame_preview'), \
+             patch.object(self.gui, 'highlight_frame_button'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])  # auto-loads A
+            self.gui.gpu_accel_var.set(True)
+            self.gui._apply_tonemap_choices()
+            self.gui.tonemap_var.set('BT.2390')
+            self.gui._on_tonemap_selected()
+            self.gui.lut_export_var.set(True)
+            self.gui._on_lut_export_toggle()  # writes back onto A
+
+            self.gui.add_batch_files(['C:/v/b.mp4'])  # does NOT auto-load (A is loaded)
+            self.gui.batch_listbox.selection_clear(0, tk.END)
+            self.gui.batch_listbox.selection_set(1)
+            self.gui.on_batch_item_select()  # actually loads B
+            self.gui.gpu_accel_var.set(True)
+            self.gui._apply_tonemap_choices()
+            self.gui.tonemap_var.set('BT.2390')
+            self.gui._on_tonemap_selected()
+            self.gui.lut_export_var.set(False)
+            self.gui._on_lut_export_toggle()  # writes back onto B, not A
+
+        with patch('src.gui.get_video_properties', return_value=None), \
+             patch.object(self.gui, 'update_frame_preview'), \
+             patch.object(self.gui, 'highlight_frame_button'), \
+             patch('src.batch.conversion_manager') as mock_cm, \
+             patch('src.batch.os.path.isfile', return_value=True), \
+             patch('src.batch.os.path.exists', return_value=False):
+            self.gui.start_batch()
+            first_lut = mock_cm.start_conversion.call_args.kwargs['lut_enabled']
+            self.gui.batch_items[0]['status'] = 'Done'
+            self.gui._current_batch_item = None
+            self.gui._start_next_batch_item()
+            second_lut = mock_cm.start_conversion.call_args.kwargs['lut_enabled']
+
+        self.assertTrue(first_lut)
+        self.assertFalse(second_lut)
 
     def test_batch_run_uses_edited_output_path_for_selected_item(self):
         """Editing the Output File box for a queued item must not be
@@ -807,6 +897,17 @@ class TestBatchQueueWidgets(_GuiTestBase):
         self.gui.batch_items[0]['settings']['gamma'] = 99.0
         self.assertNotEqual(self.gui.batch_items[1]['settings']['gamma'], 99.0)
 
+    def test_apply_to_all_copies_lut_enabled_to_every_item(self):
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4', 'C:/v/b.mp4', 'C:/v/c.mp4'])
+            self.gui.lut_export_var.set(False)
+            self.gui._on_lut_export_toggle()  # writes back onto item 0 (the loaded one)
+
+        self.gui.apply_settings_to_all_batch_items()
+
+        for item in self.gui.batch_items:
+            self.assertFalse(item['settings']['lut_enabled'])
+
     def test_selecting_queue_item_refreshes_markers_to_match_restored_settings(self):
         """Bug #1: the listbox '*' markers must be recomputed against the
         settings that were just restored into the panel by selecting a queue
@@ -856,6 +957,18 @@ class TestBatchQueueWidgets(_GuiTestBase):
         self.gui._refresh_batch_list()
 
         self.assertNotIn('*', self.gui.batch_listbox.get(1))
+
+    def test_marker_reflects_differing_lut_enabled(self):
+        """The '*' marker must treat Accurate GPU Color like every other
+        per-file setting (gamma, tonemapper, etc)."""
+        with patch.object(self.gui, 'update_frame_preview'):
+            self.gui.add_batch_files(['C:/v/a.mp4'])  # auto-loads A, lut_enabled default True
+
+            self.gui.add_batch_files(['C:/v/b.mp4'])  # queued only, not auto-loaded
+            self.gui.batch_items[1]['settings']['lut_enabled'] = False
+            self.gui._refresh_batch_list()
+
+        self.assertIn('*', self.gui.batch_listbox.get(1))
 
     def test_refresh_batch_list_tolerates_a_destroyed_listbox(self):
         """A debounced refresh (see _schedule_batch_list_refresh) can still

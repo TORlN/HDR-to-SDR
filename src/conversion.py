@@ -26,7 +26,7 @@ class ConversionManager:
                          progress_var, interactable_elements, gui_instance,
                          open_after_conversion, cancel_button, tonemapper='reinhard',
                          quality=23, quality_mode='cq', on_complete=None, bit_depth=8,
-                         licensed=False):
+                         licensed=False, lut_enabled=True):
         # Every early-out below must go through here rather than a bare
         # `return`: on_complete drives the batch queue, and a guard that
         # fires without calling it leaves the item stuck at 'Converting'
@@ -56,6 +56,7 @@ class ConversionManager:
         self._quality = quality  # remembered so a GPU->CPU retry keeps the same quality
         self._quality_mode = quality_mode  # remembered so a GPU->CPU retry keeps the same mode
         self._bit_depth = bit_depth  # remembered so a GPU->CPU retry keeps the same color depth
+        self._lut_enabled = lut_enabled  # remembered so a GPU->CPU retry keeps the same setting
         # Remembered so a GPU->CPU retry keeps the license tier: the Dolby
         # Vision audio split (Pro passthrough vs Free stereo downmix) must not
         # silently demote a Pro user on retry.
@@ -86,7 +87,7 @@ class ConversionManager:
             cmd = self.construct_ffmpeg_command(
                 input_path, output_path, gamma, properties, use_gpu,
                 tonemapper=tonemapper, quality=quality, quality_mode=quality_mode,
-                bit_depth=bit_depth, licensed=licensed
+                bit_depth=bit_depth, licensed=licensed, lut_enabled=lut_enabled
             )
         except Exception:
             # The UI was already disabled and the cancel button gridded above,
@@ -155,7 +156,7 @@ class ConversionManager:
 
     def construct_ffmpeg_command(self, input_path, output_path, gamma, properties, use_gpu,
                                tonemapper='reinhard', quality=23, quality_mode='cq',
-                               bit_depth=8, licensed=False):
+                               bit_depth=8, licensed=False, lut_enabled=True):
         # No hardware encoder (any vendor/generation) has a 12-bit HEVC profile
         # in its API -- it's a fixed silicon limitation, not a driver gap.
         # 12-bit always forces the full CPU pipeline (tonemap + encode).
@@ -245,7 +246,7 @@ class ConversionManager:
         tonemapper = tonemapper.lower()
         if use_libplacebo:
             filter_str = build_libplacebo_filter(
-                gamma, tonemapper, cuda_input=use_cuda_interop)
+                gamma, tonemapper, cuda_input=use_cuda_interop, lut_enabled=lut_enabled)
         else:
             if is_gpu_only_tonemapper(tonemapper):
                 raise ValueError(
@@ -598,6 +599,7 @@ class ConversionManager:
                 on_complete=on_complete,
                 bit_depth=getattr(self, '_bit_depth', 8),
                 licensed=getattr(self, '_licensed', False),
+                lut_enabled=getattr(self, '_lut_enabled', True),
             )
         except Exception as e:
             # E.g. a GPU-only tonemapper (BT.2390/Spline) that has no CPU

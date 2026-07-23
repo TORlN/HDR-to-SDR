@@ -1,7 +1,9 @@
-"""Tests for the temporary preview-pane LUT toggle (see
+"""Tests for the preview-pane LUT mechanism (see
 docs/superpowers/specs/2026-07-22-lut-color-pipeline-design.md and the LUT
-color pipeline implementation plan, Task 5). This whole file is deleted in
-Task 9 once the toggle itself is removed."""
+color pipeline implementation plan, Task 5). Originally built behind a
+temporary dev-only preview toggle; now driven by the permanent, user-facing
+"Accurate GPU Color" export setting (gui.py's lut_export_var) instead, so
+the preview always reflects what real GPU export will actually produce."""
 import os
 import sys
 import unittest
@@ -140,6 +142,89 @@ class TestPreviewLutToggle(unittest.TestCase):
         gui._extract_preview_images('v.mp4', 1.0, 'bt.2390', lut_enabled=True)
 
         mock_gpu_single.assert_not_called()
+
+
+class TestDisplayFramesReadsLutExportVar(unittest.TestCase):
+    """display_frames must read the permanent lut_export_var (the "Accurate
+    GPU Color" checkbox), not the old temporary lut_preview_var -- that
+    variable no longer exists on HDRConverterGUI. Only matters for GPU-only
+    tonemappers (bt.2390/spline) though -- see TestEffectiveLutEnabled: for
+    every other tonemapper it's forced off regardless of the checkbox."""
+
+    def _gui(self, lut_enabled: bool, tonemapper: str = 'bt.2390'):
+        gui = _FakeGui()
+        gui.tonemap_var = MagicMock(); gui.tonemap_var.get.return_value = tonemapper
+        gui.lut_export_var = MagicMock(); gui.lut_export_var.get.return_value = lut_enabled
+        gui._preview_pool = MagicMock()
+        gui._preview_pool.submit.side_effect = lambda fn, *a, **k: fn(*a, **k)
+        gui._schedule_on_main = lambda cb: cb()
+        gui._get_duration = MagicMock(return_value=10.0)
+        gui._preview_time_position = MagicMock(return_value=1.0)
+        gui._render_preview_images = MagicMock()
+        gui._prewarm_other_frames = MagicMock()
+        return gui
+
+    @patch('preview._HDRPreviewMixin._extract_preview_images')
+    def test_toggle_on_is_forwarded(self, mock_extract):
+        mock_extract.return_value = (MagicMock(), MagicMock())
+        gui = self._gui(lut_enabled=True)
+        gui.display_frames('v.mp4')
+        self.assertTrue(mock_extract.call_args.args[-1])
+
+    @patch('preview._HDRPreviewMixin._extract_preview_images')
+    def test_toggle_off_is_forwarded(self, mock_extract):
+        mock_extract.return_value = (MagicMock(), MagicMock())
+        gui = self._gui(lut_enabled=False)
+        gui.display_frames('v.mp4')
+        self.assertFalse(mock_extract.call_args.args[-1])
+
+    @patch('preview._HDRPreviewMixin._extract_preview_images')
+    def test_defaults_true_when_lut_export_var_missing(self, mock_extract):
+        """Bare test doubles (characterization_test.py's _bare_gui()) built via
+        object.__new__ may not set lut_export_var -- must default to the same
+        True the real BooleanVar always starts at, not raise."""
+        mock_extract.return_value = (MagicMock(), MagicMock())
+        gui = self._gui(lut_enabled=True)
+        del gui.lut_export_var
+        gui.display_frames('v.mp4')
+        self.assertTrue(mock_extract.call_args.args[-1])
+
+    @patch('preview._HDRPreviewMixin._extract_preview_images')
+    def test_non_gpu_only_tonemapper_forces_lut_off_even_when_checked(self, mock_extract):
+        """Reinhard/Mobius/Hable produce the same colors either way, so the
+        checkbox's effect is forced off for them regardless of its checked
+        state -- only bt.2390/spline actually vary with it."""
+        mock_extract.return_value = (MagicMock(), MagicMock())
+        gui = self._gui(lut_enabled=True, tonemapper='reinhard')
+        gui.display_frames('v.mp4')
+        self.assertFalse(mock_extract.call_args.args[-1])
+
+
+class TestEffectiveLutEnabled(unittest.TestCase):
+    """_effective_lut_enabled is the single place that decides what
+    preview/export actually use, as opposed to lut_export_var's raw checked
+    state -- see gui.py's _apply_lut_export_availability for the matching
+    checkbox-greying logic."""
+
+    def _gui(self, lut_enabled: bool):
+        gui = _FakeGui()
+        gui.lut_export_var = MagicMock(); gui.lut_export_var.get.return_value = lut_enabled
+        return gui
+
+    def test_gpu_only_tonemapper_passes_through_checkbox(self):
+        gui = self._gui(lut_enabled=True)
+        self.assertTrue(gui._effective_lut_enabled('bt.2390'))
+        gui2 = self._gui(lut_enabled=False)
+        self.assertFalse(gui2._effective_lut_enabled('spline'))
+
+    def test_non_gpu_only_tonemapper_always_off(self):
+        gui = self._gui(lut_enabled=True)
+        for tm in ('reinhard', 'mobius', 'hable'):
+            self.assertFalse(gui._effective_lut_enabled(tm))
+
+    def test_missing_lut_export_var_defaults_true_for_gpu_only_tonemapper(self):
+        gui = _FakeGui()
+        self.assertTrue(gui._effective_lut_enabled('bt.2390'))
 
 
 if __name__ == '__main__':

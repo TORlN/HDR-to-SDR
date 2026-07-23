@@ -97,6 +97,9 @@ from src.utils import (
     vulkan_libplacebo_available,
     FFMPEG_EXECUTABLE,
     FFPROBE_EXECUTABLE,
+    FFMPEG_CONVERT_FILTER,
+    FFMPEG_FILTER_LEGACY_NO_LUT,
+    get_lut_filter_path,
 )
 from src.conversion import ConversionManager
 
@@ -225,6 +228,89 @@ class TestRealHdr10TenBit(unittest.TestCase):
             transfer, _, _, pix_fmt = _probe_video(out_path)
             self.assertNotEqual(transfer, 'smpte2084')
             self.assertEqual(pix_fmt, 'yuv420p')
+
+
+@unittest.skipUnless(_HDR10_10BIT_OK, "sample 'smoke_test_videos/hdr10_10bit.mp4' / ffmpeg not available")
+class TestLutReproducesLegacyGamutMath(unittest.TestCase):
+    """Runs the same real HDR10 source through today's zscale-only gamut
+    correction (FFMPEG_FILTER_LEGACY_NO_LUT) and the new LUT-based chain
+    (FFMPEG_CONVERT_FILTER), then compares sampled pixels. This is the
+    primary automated color-correctness safety net for the LUT color
+    pipeline (see docs/superpowers/specs/2026-07-22-lut-color-pipeline-design.md) --
+    everything else only checks that the filter graph runs without error,
+    not that the math is right.
+
+    TEMPORARY: this test (and FFMPEG_FILTER_LEGACY_NO_LUT, which it depends
+    on) is removed in Task 9 of the LUT implementation plan once the LUT has
+    been visually approved and the legacy chain deleted -- there is nothing
+    left to compare against after that.
+    """
+
+    # Max allowed per-channel difference (0-255 scale) between the legacy
+    # zscale-matrix chain and the new LUT chain on real photographic-like
+    # content.
+    #
+    # This tolerance was originally guessed at 6 (a small margin over an
+    # isolated synthetic-color check that showed 1-3/255 between CPU lut3d
+    # and GPU libplacebo lut_type=2). This test itself then caught two real
+    # problems that guess didn't anticipate: (1) the generator's EOTF/OETF
+    # used the piecewise BT.709 camera curve instead of the pure gamma-2.4
+    # curve zscale's zimg backend actually implements for "bt709" transfer
+    # (confirmed empirically -- see _rec709_eotf's docstring in
+    # tools/generate_lut.py) -- fixed, this was a real ~60/255 math bug, not
+    # LUT-resolution noise; (2) even with the correct math, the gamut
+    # correction's hard per-channel clamp at the BT.709 boundary is a genuine
+    # kink (not a smooth curve), which any interpolated LUT rounds off to some
+    # degree at saturated near-gamut-boundary colors -- this residual was
+    # reduced (grid 33^3->65^3, interp=tetrahedral) but not eliminated: real
+    # HDR10 content measured a worst case of 10/255 (mean ~2/255) after both
+    # fixes. 12 keeps meaningful headroom above that measured worst case while
+    # still well below the ~26-60/255 a real generator-math regression
+    # produces -- this remains a safety net for a real bug, not a rubber stamp.
+    _TOLERANCE = 12
+
+    def test_lut_chain_matches_legacy_chain_within_tolerance(self):
+        with tempfile.TemporaryDirectory(prefix='hdr_smoke_lut_compare_') as tmpdir:
+            legacy_out = os.path.join(tmpdir, 'legacy.png')
+            lut_out = os.path.join(tmpdir, 'lut.png')
+
+            legacy_filter = FFMPEG_FILTER_LEGACY_NO_LUT.format(
+                gamma=1.0, tonemapper='reinhard', width='iw', height='ih')
+            lut_filter = FFMPEG_CONVERT_FILTER.format(
+                gamma=1.0, tonemapper='reinhard', lut_path=get_lut_filter_path())
+
+            for filter_str, out_path in ((legacy_filter, legacy_out), (lut_filter, lut_out)):
+                cmd = [
+                    FFMPEG_EXECUTABLE, '-y', '-loglevel', 'error',
+                    '-i', HDR10_10BIT_VIDEO, '-vf', filter_str,
+                    '-vframes', '1', out_path,
+                ]
+                result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                self.assertEqual(
+                    result.returncode, 0,
+                    msg=f"ffmpeg failed for {out_path}:\n{result.stderr.decode('utf-8', 'replace')[-2000:]}"
+                )
+
+            legacy_img = Image.open(legacy_out).convert("RGB")
+            lut_img = Image.open(lut_out).convert("RGB")
+            self.assertEqual(legacy_img.size, lut_img.size)
+
+            max_diff = 0
+            w, h = legacy_img.size
+            # Sample a grid rather than every pixel -- fast, and any gross
+            # LUT error will show up across many sample points, not just one.
+            for x in range(0, w, max(1, w // 20)):
+                for y in range(0, h, max(1, h // 20)):
+                    a = legacy_img.getpixel((x, y))
+                    b = lut_img.getpixel((x, y))
+                    diff = max(abs(ac - bc) for ac, bc in zip(a, b))
+                    max_diff = max(max_diff, diff)
+
+            self.assertLessEqual(
+                max_diff, self._TOLERANCE,
+                f"LUT chain differs from legacy zscale chain by up to {max_diff}/255 "
+                f"(tolerance {self._TOLERANCE}) -- check the LUT generator math."
+            )
 
 
 @unittest.skipUnless(_LIBPLACEBO_OK, "Vulkan/libplacebo not available on this machine")

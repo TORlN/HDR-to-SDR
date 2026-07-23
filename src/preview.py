@@ -608,8 +608,13 @@ class _HDRPreviewMixin:
         prewarmed entries become unreachable (or reachable under the wrong
         key) from the real lookup path. extract_frames_with_gpu_conversion_batch
         (the GPU-only-tonemapper batch path) has no lut_enabled parameter of
-        its own and always produces lut_enabled=True content; that pre-existing
-        gap is unchanged here.
+        its own and always produces lut_enabled=True content, regardless of
+        the toggle's actual state -- so for GPU-only tonemappers the result
+        is always stored under the lut_enabled=True key (see
+        stored_lut_enabled below), never under the raw toggle value. This
+        turns a toggle-off prewarm into a clean cache MISS on the real
+        (lut_enabled=False) lookup instead of a poisoned HIT that would
+        silently serve always-on LUT content as if it were LUT-off content.
         """
         if generation != self._preview_generation:
             return
@@ -626,10 +631,14 @@ class _HDRPreviewMixin:
                 converted = batch_fn(
                     video_path, positions, 1.0, tonemapper,
                     PREVIEW_SIZE[0], PREVIEW_SIZE[1], lut_enabled=lut_enabled)
+            # GPU-only tonemappers always produce lut_enabled=True content
+            # (see docstring above) -- store it under that key regardless of
+            # the toggle's actual state.
+            stored_lut_enabled = True if is_gpu_only else lut_enabled
             for t, img in zip(positions, converted):
                 self._cache_store(
                     self._preview_cache_converted,
-                    (video_path, round(t, 3), tonemapper, lut_enabled), img)
+                    (video_path, round(t, 3), tonemapper, stored_lut_enabled), img)
         except Exception:
             logging.exception('preview batch converted pre-warm failed')
 
@@ -649,6 +658,13 @@ class _HDRPreviewMixin:
             self._preview_cache_original = {}
             self._preview_cache_converted = {}
 
+        # _prewarm_batch_converted always stores GPU-only-tonemapper content
+        # under the lut_enabled=True key (see its docstring) -- check the
+        # cache against that same effective key here, or this gate would
+        # perpetually treat already-warmed GPU-only positions as missing
+        # whenever the toggle is off and keep resubmitting redundant work.
+        converted_lut_key = True if is_gpu_only_tonemapper(tonemapper) else lut_enabled
+
         positions: list[float] = []
         for index in range(1, self.total_frames + 1):
             if index == self.current_frame_index:
@@ -656,7 +672,7 @@ class _HDRPreviewMixin:
             t = (index / (self.total_frames + 1)) * duration
             t_key = round(t, 3)
             if ((video_path, t_key) not in self._preview_cache_original or
-                    (video_path, t_key, tonemapper, lut_enabled) not in self._preview_cache_converted):
+                    (video_path, t_key, tonemapper, converted_lut_key) not in self._preview_cache_converted):
                 positions.append(t)
 
         if not positions:

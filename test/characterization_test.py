@@ -750,6 +750,29 @@ class TestGpuOnlyTonemapperPreviewDispatch(unittest.TestCase):
         mock_cpu_batch.assert_not_called()
         self.assertIn(('v.mkv', 10.0, 'spline', True), gui._preview_cache_converted)
 
+    @patch('src.preview.extract_frames_with_gpu_conversion_batch', return_value=['g0'])
+    @patch('src.preview.extract_frames_with_conversion_batch')
+    def test_batch_prewarm_for_spline_always_stores_under_lut_enabled_true(
+            self, mock_cpu_batch, mock_gpu_batch):
+        """extract_frames_with_gpu_conversion_batch has no lut_enabled
+        parameter and always produces lut_enabled=True content, regardless
+        of the caller's toggle state -- so even when the prewarm is invoked
+        with lut_enabled=False (toggle off), the content it produced must
+        still be stored under the True key, never the False key. Storing it
+        under False would let a real lut_enabled=False lookup hit this
+        always-on content as if it were genuinely LUT-off (see
+        test_gpu_only_prewarm_does_not_poison_lut_off_lookup in
+        preview_test.py for the end-to-end poisoning scenario this guards
+        against)."""
+        gui = _bare_gui()
+        gui._preview_generation = 1
+        gui._preview_cache_converted = {}
+        gui._prewarm_batch_converted('v.mkv', [10.0], 'spline', generation=1, lut_enabled=False)
+        mock_gpu_batch.assert_called_once()
+        mock_cpu_batch.assert_not_called()
+        self.assertIn(('v.mkv', 10.0, 'spline', True), gui._preview_cache_converted)
+        self.assertNotIn(('v.mkv', 10.0, 'spline', False), gui._preview_cache_converted)
+
     @patch('src.preview.extract_frames_with_gpu_conversion_batch')
     @patch('src.preview.extract_frames_with_conversion_batch', return_value=['c0'])
     def test_batch_prewarm_still_uses_cpu_path_for_hable(

@@ -88,6 +88,59 @@ class TestPreviewLutToggle(unittest.TestCase):
 
         mock_extract_conv.assert_not_called()
 
+    @patch('preview.extract_frame_with_gpu_conversion')
+    @patch('preview.extract_frames_with_gpu_conversion_batch')
+    @patch('preview.extract_frame')
+    def test_gpu_only_prewarm_does_not_poison_lut_off_lookup(
+            self, mock_extract_frame, mock_gpu_batch, mock_gpu_single):
+        """extract_frames_with_gpu_conversion_batch (the GPU-only-tonemapper
+        batch path) has no lut_enabled parameter and always produces
+        lut_enabled=True content. If the toggle is OFF when prewarm runs,
+        that always-on content must NOT be servable as a cache hit by a real
+        lookup for lut_enabled=False -- it must be a clean miss that falls
+        through to a genuine single-frame GPU extraction honoring
+        lut_enabled=False. Before the fix, the prewarm stored its always-True
+        content under the caller's (False) key, so the real lookup would hit
+        the cache and silently serve wrong (LUT-on) content.
+        """
+        gui = _FakeGui()
+        gui._preview_generation = 1
+        gui._preview_cache_original = {}
+        gui._preview_cache_converted = {}
+        mock_extract_frame.return_value = Image.open(__import__('io').BytesIO(_VALID_PNG))
+        mock_gpu_batch.return_value = [Image.open(__import__('io').BytesIO(_VALID_PNG))]
+        mock_gpu_single.return_value = Image.open(__import__('io').BytesIO(_VALID_PNG))
+
+        # Prewarm runs while the toggle is OFF.
+        gui._prewarm_batch_converted('v.mp4', [1.0], 'bt.2390', 1, lut_enabled=False)
+        # The real lookup, also for lut_enabled=False, must not reuse the
+        # always-True prewarmed content -- it must call the real single-frame
+        # GPU extractor to get genuinely LUT-off content.
+        gui._extract_preview_images('v.mp4', 1.0, 'bt.2390', lut_enabled=False)
+
+        mock_gpu_single.assert_called_once()
+        self.assertFalse(mock_gpu_single.call_args.kwargs['lut_enabled'])
+
+    @patch('preview.extract_frame_with_gpu_conversion')
+    @patch('preview.extract_frames_with_gpu_conversion_batch')
+    @patch('preview.extract_frame')
+    def test_gpu_only_prewarm_still_hits_cache_when_toggle_on(
+            self, mock_extract_frame, mock_gpu_batch, mock_gpu_single):
+        """Regression guard: the toggle-ON (default) case must still be a
+        genuine cache hit -- prewarm speedup must not regress for the
+        default state while fixing the toggle-off poisoning case above."""
+        gui = _FakeGui()
+        gui._preview_generation = 1
+        gui._preview_cache_original = {}
+        gui._preview_cache_converted = {}
+        mock_extract_frame.return_value = Image.open(__import__('io').BytesIO(_VALID_PNG))
+        mock_gpu_batch.return_value = [Image.open(__import__('io').BytesIO(_VALID_PNG))]
+
+        gui._prewarm_batch_converted('v.mp4', [1.0], 'bt.2390', 1, lut_enabled=True)
+        gui._extract_preview_images('v.mp4', 1.0, 'bt.2390', lut_enabled=True)
+
+        mock_gpu_single.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -122,6 +122,54 @@ def get_executable_path(filename):
         logging.error(f"Error finding {filename}: {str(e)}")
         raise
 
+
+def get_resource_path(relative_path: str) -> str:
+    """Resolve the absolute path to a bundled data file (not an executable --
+    no .exe suffix handling, no system-PATH fallback; a bundled asset that
+    isn't found next to the app is a broken install, not something to search
+    for elsewhere). Mirrors get_executable_path's base_path resolution."""
+    if getattr(sys, 'frozen', False):
+        base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    else:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.normpath(os.path.join(base_path, relative_path))
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Required bundled file not found: {relative_path} (looked at {path})")
+    return path
+
+
+def _escape_path_for_filter(path: str) -> str:
+    """Escape an absolute Windows path for embedding as a value inside an
+    ffmpeg -vf filtergraph string (e.g. lut3d=file=..., libplacebo's lut=...).
+
+    Confirmed empirically against the bundled ffmpeg build: a raw path
+    breaks the parser at the drive-letter colon ("No option name near
+    '/Users/...'"), and neither a bare colon nor a single '\\:' fixes it --
+    the parser needs the colon escaped as '\\\\:' (two literal backslashes
+    then the colon), with all '\\' elsewhere converted to '/'.
+    """
+    forward = path.replace(os.sep, '/')
+    return forward.replace(':', '\\\\:', 1)
+
+
+_LUT_FILTER_PATH = None
+
+
+def get_lut_filter_path() -> str:
+    """Resolve and cache the bundled Rec.2020->Rec.709 LUT's path, pre-escaped
+    for direct embedding in FFMPEG_FILTER / FFMPEG_CONVERT_FILTER /
+    build_libplacebo_filter's lut3d=file=... / lut=... values.
+
+    Raises FileNotFoundError if the bundled .cube file is missing --  a
+    missing bundled asset means the install itself is broken, and this must
+    surface as a hard, obvious failure rather than silently degrading."""
+    global _LUT_FILTER_PATH
+    if _LUT_FILTER_PATH is not None:
+        return _LUT_FILTER_PATH
+    raw_path = get_resource_path(os.path.join('luts', 'rec2020_to_rec709.cube'))
+    _LUT_FILTER_PATH = _escape_path_for_filter(raw_path)
+    return _LUT_FILTER_PATH
+
 def verify_ffmpeg_files():
     """Verify that ffmpeg files exist and are accessible"""
     global FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE

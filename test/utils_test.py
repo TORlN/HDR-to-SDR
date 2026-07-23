@@ -1564,5 +1564,52 @@ class TestExtractFramesWithGpuConversionBatch(unittest.TestCase):
         mock_single.assert_not_called()
 
 
+class TestLutPathResolution(unittest.TestCase):
+    """get_lut_filter_path resolves and escapes the bundled LUT path for
+    direct embedding in an ffmpeg -vf filtergraph string."""
+
+    def setUp(self):
+        import src.utils as _u
+        self._u = _u
+        _u._LUT_FILTER_PATH = None
+        self.addCleanup(setattr, _u, '_LUT_FILTER_PATH', None)
+
+    def test_get_resource_path_raises_when_missing(self):
+        from src.utils import get_resource_path
+        with self.assertRaises(FileNotFoundError):
+            get_resource_path('does_not_exist_at_all.cube')
+
+    def test_get_resource_path_finds_real_lut_file(self):
+        from src.utils import get_resource_path
+        path = get_resource_path(os.path.join('luts', 'rec2020_to_rec709.cube'))
+        self.assertTrue(os.path.exists(path))
+
+    def test_escape_path_for_filter_uses_forward_slashes(self):
+        from src.utils import _escape_path_for_filter
+        escaped = _escape_path_for_filter(r'C:\Users\Bob\lut.cube')
+        self.assertNotIn('\\U', escaped)  # no stray backslash before non-colon chars
+        self.assertIn('/Users/Bob/lut.cube', escaped)
+
+    def test_escape_path_for_filter_double_escapes_drive_colon(self):
+        """Confirmed empirically: ffmpeg's -vf parser needs the drive-letter
+        colon escaped as \\\\: (two literal backslashes + colon) -- a single
+        backslash or bare colon both fail to parse."""
+        from src.utils import _escape_path_for_filter
+        escaped = _escape_path_for_filter(r'C:\Users\Bob\lut.cube')
+        self.assertEqual(escaped, 'C\\\\:/Users/Bob/lut.cube')
+
+    def test_get_lut_filter_path_is_cached(self):
+        from src.utils import get_lut_filter_path
+        first = get_lut_filter_path()
+        second = get_lut_filter_path()
+        self.assertIs(first, second)
+
+    def test_get_lut_filter_path_contains_escaped_absolute_path(self):
+        from src.utils import get_lut_filter_path
+        path = get_lut_filter_path()
+        self.assertIn('rec2020_to_rec709.cube', path)
+        self.assertNotIn('\\', path.replace('\\\\:', ''))  # only the escaped colon may contain backslashes
+
+
 if __name__ == '__main__':
     unittest.main()

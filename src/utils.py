@@ -178,8 +178,13 @@ def _escape_path_for_filter(path: str) -> str:
     '/Users/...'"), and neither a bare colon nor a single '\\:' fixes it --
     the parser needs the colon escaped as '\\\\:' (two literal backslashes
     then the colon), with all '\\' elsewhere converted to '/'.
+
+    Always targets literal '\\' rather than os.sep: the input is always a
+    Windows path (this app only ships on Windows), but the test suite also
+    runs on Linux CI, where os.sep is '/' and would leave the backslashes
+    untouched.
     """
-    forward = path.replace(os.sep, '/')
+    forward = path.replace('\\', '/')
     return forward.replace(':', '\\\\:', 1)
 
 

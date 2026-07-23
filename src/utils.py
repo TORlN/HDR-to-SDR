@@ -26,15 +26,23 @@ TONEMAP = ["Reinhard", "Mobius", "Hable", "BT.2390", "Spline"]
 # colorspace to bt709 (a metadata-only fix, no further pixel changes --
 # confirmed the retag is necessary, not redundant, by comparing ffprobe
 # output with and without it).
+#
+# interp=tetrahedral: the gamut correction has a hard per-channel clamp at
+# the BT.709 boundary (a real kink, not a smooth curve -- matches zscale's
+# own p=bt709 clamping behavior). lut3d's default trilinear interpolation
+# rounds off that kink; tetrahedral interpolation (the standard, more
+# accurate mode used by professional color tools) measurably reduces the
+# resulting error -- confirmed via real-ffmpeg pixel comparison against
+# zscale's own conversion on real HDR10 content.
 FFMPEG_FILTER = (
     'zscale=t=linear:npl=100,tonemap={tonemapper},zscale=t=bt709:m=bt709:r=tv,'
-    'lut3d=file={lut_path},setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709,'
+    'lut3d=file={lut_path}:interp=tetrahedral,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709,'
     'eq=gamma={gamma},scale={width}:{height}:force_original_aspect_ratio=decrease'
 )
 
 FFMPEG_CONVERT_FILTER = (
     'zscale=t=linear:npl=100,tonemap={tonemapper},zscale=t=bt709:m=bt709:r=tv,'
-    'lut3d=file={lut_path},setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709,'
+    'lut3d=file={lut_path}:interp=tetrahedral,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709,'
     'eq=gamma={gamma}'
 )
 

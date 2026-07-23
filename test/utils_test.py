@@ -261,7 +261,7 @@ class TestExtractFrameWithConversion(unittest.TestCase):
             expected_vf = (
                 'zscale=t=linear:npl=100,tonemap=reinhard,'
                 'zscale=t=bt709:m=bt709:r=tv,'
-                'lut3d=file=FAKE_LUT_PATH,'
+                'lut3d=file=FAKE_LUT_PATH:interp=tetrahedral,'
                 'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709,'
                 'eq=gamma=2.2,'
                 'scale=iw:ih:force_original_aspect_ratio=decrease'

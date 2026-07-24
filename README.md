@@ -1,6 +1,21 @@
+# HDR to SDR Converter
+
+![Tests](https://github.com/TORlN/HDR-to-SDR/actions/workflows/python-tests.yml/badge.svg)
+![Coverage floor](https://img.shields.io/badge/coverage-90%25%20floor-brightgreen)
+![Release](https://img.shields.io/github/v/release/TORlN/HDR-to-SDR)
+![License](https://img.shields.io/github/license/TORlN/HDR-to-SDR)
+
 This is a desktop GUI application to convert HDR videos to SDR using FFmpeg. The application lets you select an input video (or drag and drop one), live-preview the tonemapped result frame by frame, fine-tune the conversion, and convert single files or a whole queue while monitoring progress.
 
 The [latest release](https://github.com/TORlN/HDR-to-SDR/releases) is free to download with no account required. **Pro is now available**, purchase a license key at [hdrtosdr.com/#pricing](https://hdrtosdr.com/#pricing) to unlock the additional features listed below. More Pro features are actively in development and will be rolled out in upcoming releases.
+
+## Under the Hood
+
+- **GPU/CPU dual pipeline**: tonemapping runs on the GPU via libplacebo (Vulkan) when available, falling back to a pure-CPU ffmpeg filter chain — GPU tonemapping roughly halves conversion time on capable hardware.
+- **Real color science**: gamut conversion runs through a generated BT.2020→BT.709 3D LUT (tetrahedral interpolation) instead of approximate gamma math, on both the CPU and GPU paths.
+- **Dolby Vision (profile 5) RPU handling**, automatic hardware encoder detection (NVENC / AMF / QSV) with CPU fallback, and a licensing system built on HMAC-signed, hardware-locked offline license tokens.
+- **Tested and typed**: 13 test modules run against Python 3.10–3.13 (headless, via Xvfb, to exercise the real Tkinter GUI) on every push, gated by a 90% coverage floor and a zero-error `pyright` pass on `src/`.
+- **Signed, installable releases**: PyInstaller build + Inno Setup installer, code-signed via Azure Trusted Signing, with an in-app auto-updater.
 
 ## Features
 

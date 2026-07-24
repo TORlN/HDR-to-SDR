@@ -12,7 +12,7 @@ import urllib.error
 import urllib.request
 from typing import Callable
 
-APP_VERSION = "3.1.4"
+APP_VERSION = "3.1.5"
 _GITHUB_API = "https://api.github.com/repos/TORlN/HDR-to-SDR/releases/latest"
 _ASSET_NAME = "HDR_to_SDR_Setup.exe"
 RELEASES_URL = "https://github.com/TORlN/HDR-to-SDR/releases"

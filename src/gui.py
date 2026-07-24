@@ -443,9 +443,11 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         info_button_lut_export.grid(row=0, column=1)
         tooltip_text_lut_export = (
             "Applies precise BT.2020→BT.709 color correction on GPU exports.\n"
-            "Uncheck for ~2-3x faster GPU exports using libplacebo's own, slightly\n"
-            "less accurate color conversion instead. No effect on CPU exports,\n"
-            "which always apply accurate color correction."
+            "Uncheck for ~2-3x faster GPU exports using libplacebo's own gamut\n"
+            "conversion instead; the difference is usually invisible on real\n"
+            "footage (it only shows on strongly saturated colors, e.g. neon\n"
+            "signs). No effect on CPU exports, which always apply accurate\n"
+            "color correction."
         )
         info_button_lut_export.bind(
             '<Enter>', lambda e: self.show_tooltip(e, tooltip_text_lut_export))

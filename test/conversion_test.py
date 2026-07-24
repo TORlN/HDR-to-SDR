@@ -1771,7 +1771,8 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
 
     # ── Video: RPU-aware tonemapping per DoVi profile ───────────────────────
 
-    def test_dovi_profile5_uses_rpu_aware_libplacebo_even_on_cpu(self):
+    @patch('src.conversion.messagebox.showinfo')
+    def test_dovi_profile5_uses_rpu_aware_libplacebo_even_on_cpu(self, mock_info):
         """Profile 5 (IPTPQc2) has no HDR10-compatible base layer — the zscale
         chain would render wrong colors. When libplacebo is available it must
         be used (it applies the DoVi RPU) even with the GPU toggle off."""
@@ -1808,16 +1809,45 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         warning_text = mock_warn.call_args[0][1].lower()
         self.assertIn('dolby vision', warning_text)
 
+    @patch('src.conversion.messagebox.showinfo')
     @patch('src.conversion.messagebox.showwarning')
-    def test_dovi_profile5_with_libplacebo_does_not_warn(self, mock_warn):
+    def test_dovi_profile5_with_libplacebo_does_not_warn(self, mock_warn, mock_info):
         """When libplacebo IS available, the RPU is correctly applied --
-        no warning should fire."""
+        no warning should fire (an info notice fires instead; see
+        test_dovi_profile5_override_notifies_when_gpu_toggle_off)."""
         manager = ConversionManager()
         with patch('src.conversion.vulkan_libplacebo_available', return_value=True):
             manager.construct_ffmpeg_command(
                 'in.mkv', 'out.mkv', 1.0, self._dovi_props(profile=5), False,
                 tonemapper='reinhard', licensed=True)
         mock_warn.assert_not_called()
+
+    @patch('src.conversion.messagebox.showinfo')
+    def test_dovi_profile5_override_notifies_when_gpu_toggle_off(self, mock_info):
+        """The RPU override silently ignores the "Enable GPU Acceleration"
+        checkbox -- without a notice, a user who left it unchecked (expecting
+        pure CPU conversion) has no way to know GPU tonemapping ran anyway."""
+        manager = ConversionManager()
+        with patch('src.conversion.vulkan_libplacebo_available', return_value=True):
+            manager.construct_ffmpeg_command(
+                'in.mkv', 'out.mkv', 1.0, self._dovi_props(profile=5), False,
+                tonemapper='reinhard', licensed=True)
+        mock_info.assert_called_once()
+        info_text = mock_info.call_args[0][1].lower()
+        self.assertIn('dolby vision', info_text)
+        self.assertIn('gpu acceleration', info_text)
+
+    @patch('src.conversion.messagebox.showinfo')
+    def test_dovi_profile5_no_override_notice_when_gpu_toggle_already_on(self, mock_info):
+        """use_gpu=True means libplacebo runs because the user asked for GPU
+        acceleration, not because of the profile-5 override -- nothing
+        surprising happened, so no notice should fire."""
+        manager = ConversionManager()
+        with patch('src.conversion.vulkan_libplacebo_available', return_value=True):
+            manager.construct_ffmpeg_command(
+                'in.mkv', 'out.mkv', 1.0, self._dovi_props(profile=5), True,
+                tonemapper='reinhard', licensed=True)
+        mock_info.assert_not_called()
 
     def test_dovi_profile8_keeps_standard_hdr10_cpu_chain(self):
         """Profiles 7/8 carry an HDR10-compatible base layer, so the existing

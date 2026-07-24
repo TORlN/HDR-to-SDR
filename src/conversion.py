@@ -192,6 +192,18 @@ class ConversionManager:
                 "base layer and requires GPU tonemapping to render correctly, "
                 "which isn't available on this system. The output colors may "
                 "look wrong (green/purple cast).")
+        elif dovi_needs_rpu and not use_gpu:
+            # use_gpu is False here, so without this notice the override is
+            # silent -- a user who unchecked "Enable GPU Acceleration"
+            # expecting a pure-CPU run has no way to know GPU tonemapping ran
+            # anyway (only the tonemap step; encoding still follows the
+            # encoder dispatch below, so it stays on the CPU encoder).
+            messagebox.showinfo(
+                "Dolby Vision Profile 5",
+                "This Dolby Vision (profile 5) source has no HDR10-compatible "
+                "base layer, so GPU tonemapping is being used to render its "
+                "colors correctly even though \"Enable GPU Acceleration\" is "
+                "unchecked. Encoding itself still runs on the CPU.")
 
         # GPU acceleration setup — dispatch on whichever encoder was detected
         active_encoder = None

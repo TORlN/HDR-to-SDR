@@ -561,7 +561,8 @@ class TestPreviewPool(unittest.TestCase):
         for idx in range(2, 6):
             t = round((idx / 6) * duration, 3)
             orig[('v.mkv', t)] = MagicMock()
-            conv[('v.mkv', t, 'reinhard', True)] = MagicMock()
+            # Cache key's 5th element is use_gpu -- False here (no gpu_accel_var, CPU-capable tonemapper).
+            conv[('v.mkv', t, 'reinhard', True, False)] = MagicMock()
         gui._preview_cache_original = orig
         gui._preview_cache_converted = conv
         gui._preview_pool = MagicMock()
@@ -618,8 +619,9 @@ class TestPreviewPool(unittest.TestCase):
 
         gui._prewarm_batch_converted('v.mkv', [10.0], 'mobius', generation=1)
 
-        self.assertIn(('v.mkv', 10.0, 'mobius', True), gui._preview_cache_converted)
-        self.assertIs(gui._preview_cache_converted[('v.mkv', 10.0, 'mobius', True)], img)
+        # Cache key's 5th element is use_gpu -- False here (no gpu_accel_var, CPU-capable tonemapper).
+        self.assertIn(('v.mkv', 10.0, 'mobius', True, False), gui._preview_cache_converted)
+        self.assertIs(gui._preview_cache_converted[('v.mkv', 10.0, 'mobius', True, False)], img)
 
     @patch('src.preview.extract_frames_with_conversion_batch')
     def test_batch_converted_bails_when_stale(self, mock_batch):
@@ -718,30 +720,27 @@ class TestGpuOnlyTonemapperPreviewDispatch(unittest.TestCase):
         gui._prewarm_batch_converted('v.mkv', [10.0], 'spline', generation=1)
         mock_gpu_batch.assert_called_once()
         mock_cpu_batch.assert_not_called()
-        self.assertIn(('v.mkv', 10.0, 'spline', True), gui._preview_cache_converted)
+        # Cache key's 5th element is use_gpu -- True here since 'spline' is GPU-only.
+        self.assertIn(('v.mkv', 10.0, 'spline', True, True), gui._preview_cache_converted)
 
     @patch('src.preview.extract_frames_with_gpu_conversion_batch', return_value=['g0'])
     @patch('src.preview.extract_frames_with_conversion_batch')
-    def test_batch_prewarm_for_spline_always_stores_under_lut_enabled_true(
+    def test_batch_prewarm_for_spline_honors_lut_enabled_false(
             self, mock_cpu_batch, mock_gpu_batch):
-        """extract_frames_with_gpu_conversion_batch has no lut_enabled
-        parameter and always produces lut_enabled=True content, regardless
-        of the caller's toggle state -- so even when the prewarm is invoked
-        with lut_enabled=False (toggle off), the content it produced must
-        still be stored under the True key, never the False key. Storing it
-        under False would let a real lut_enabled=False lookup hit this
-        always-on content as if it were genuinely LUT-off (see
-        test_gpu_only_prewarm_does_not_poison_lut_off_lookup in
-        preview_test.py for the end-to-end poisoning scenario this guards
-        against)."""
+        """extract_frames_with_gpu_conversion_batch threads lut_enabled
+        through to every extract_frame_with_gpu_conversion call, so a
+        toggle-off prewarm genuinely produces toggle-off content and must be
+        stored under the False key -- there's no more always-True content to
+        guard against (see test_gpu_only_prewarm_hits_cache_when_toggle_off_too
+        in preview_test.py for the end-to-end behavior this now allows)."""
         gui = _bare_gui()
         gui._preview_generation = 1
         gui._preview_cache_converted = {}
         gui._prewarm_batch_converted('v.mkv', [10.0], 'spline', generation=1, lut_enabled=False)
-        mock_gpu_batch.assert_called_once()
+        mock_gpu_batch.assert_called_once_with('v.mkv', [10.0], 1.0, 'spline', 3840, 2160, lut_enabled=False)
         mock_cpu_batch.assert_not_called()
-        self.assertIn(('v.mkv', 10.0, 'spline', True), gui._preview_cache_converted)
-        self.assertNotIn(('v.mkv', 10.0, 'spline', False), gui._preview_cache_converted)
+        self.assertIn(('v.mkv', 10.0, 'spline', False, True), gui._preview_cache_converted)
+        self.assertNotIn(('v.mkv', 10.0, 'spline', True, True), gui._preview_cache_converted)
 
     @patch('src.preview.extract_frames_with_gpu_conversion_batch')
     @patch('src.preview.extract_frames_with_conversion_batch', return_value=['c0'])
@@ -1742,6 +1741,11 @@ class TestBatchProcessing(unittest.TestCase):
     def test_start_batch_passes_through_lut_choice_for_gpu_only_tonemapper(self, _isfile, mock_cm):
         gui = self._gui()
         gui.tonemap_var.get.return_value = 'BT.2390'
+        # A GPU-only tonemapper is only reachable with GPU accel on (the real
+        # UI forces it back to Mobius otherwise) -- _effective_lut_enabled now
+        # forces the LUT on whenever GPU accel is off, so this must be True to
+        # actually exercise the toggle-forwarding behavior under test.
+        gui.gpu_accel_var.get.return_value = True
         gui.lut_export_var.get.return_value = False
         gui.batch_items = [self._item('a')]
         gui.start_batch()
@@ -2430,6 +2434,11 @@ class TestConvertVideoBranches(unittest.TestCase):
             self, _isfile, _exists, mock_mb, mock_cm):
         gui = self._gui()
         gui.tonemap_var.get.return_value = 'BT.2390'
+        # A GPU-only tonemapper is only reachable with GPU accel on (the real
+        # UI forces it back to Mobius otherwise) -- _effective_lut_enabled now
+        # forces the LUT on whenever GPU accel is off, so this must be True to
+        # actually exercise the toggle-forwarding behavior under test.
+        gui.gpu_accel_var.get.return_value = True
         gui.lut_export_var.get.return_value = False
         gui.drop_target_registered = False
         gui.cancel_button = MagicMock()

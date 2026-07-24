@@ -93,17 +93,19 @@ class TestPreviewLutToggle(unittest.TestCase):
     @patch('preview.extract_frame_with_gpu_conversion')
     @patch('preview.extract_frames_with_gpu_conversion_batch')
     @patch('preview.extract_frame')
-    def test_gpu_only_prewarm_does_not_poison_lut_off_lookup(
+    def test_gpu_only_prewarm_hits_cache_when_toggle_off_too(
             self, mock_extract_frame, mock_gpu_batch, mock_gpu_single):
-        """extract_frames_with_gpu_conversion_batch (the GPU-only-tonemapper
-        batch path) has no lut_enabled parameter and always produces
-        lut_enabled=True content. If the toggle is OFF when prewarm runs,
-        that always-on content must NOT be servable as a cache hit by a real
-        lookup for lut_enabled=False -- it must be a clean miss that falls
-        through to a genuine single-frame GPU extraction honoring
-        lut_enabled=False. Before the fix, the prewarm stored its always-True
-        content under the caller's (False) key, so the real lookup would hit
-        the cache and silently serve wrong (LUT-on) content.
+        """extract_frames_with_gpu_conversion_batch now threads lut_enabled
+        through to every extract_frame_with_gpu_conversion call, so a
+        toggle-off prewarm produces genuinely toggle-off content -- it's a
+        legitimate cache HIT for the matching real lookup, not a poisoned one.
+        (Previously the batch fn ignored lut_enabled entirely and always
+        produced True content, which forced a workaround: storing prewarmed
+        GPU-only-tonemapper content under the True key regardless of the
+        caller's request, so a False lookup fell through to a real miss
+        instead of silently serving wrong content. That workaround is gone
+        now that the root cause -- the batch fn silently ignoring
+        lut_enabled -- is fixed.)
         """
         gui = _FakeGui()
         gui._preview_generation = 1
@@ -113,15 +115,12 @@ class TestPreviewLutToggle(unittest.TestCase):
         mock_gpu_batch.return_value = [Image.open(__import__('io').BytesIO(_VALID_PNG))]
         mock_gpu_single.return_value = Image.open(__import__('io').BytesIO(_VALID_PNG))
 
-        # Prewarm runs while the toggle is OFF.
         gui._prewarm_batch_converted('v.mp4', [1.0], 'bt.2390', 1, lut_enabled=False)
-        # The real lookup, also for lut_enabled=False, must not reuse the
-        # always-True prewarmed content -- it must call the real single-frame
-        # GPU extractor to get genuinely LUT-off content.
         gui._extract_preview_images('v.mp4', 1.0, 'bt.2390', lut_enabled=False)
 
-        mock_gpu_single.assert_called_once()
-        self.assertFalse(mock_gpu_single.call_args.kwargs['lut_enabled'])
+        mock_gpu_single.assert_not_called()
+        mock_gpu_batch.assert_called_once_with(
+            'v.mp4', [1.0], 1.0, 'bt.2390', 3840, 2160, lut_enabled=False)
 
     @patch('preview.extract_frame_with_gpu_conversion')
     @patch('preview.extract_frames_with_gpu_conversion_batch')
@@ -142,6 +141,110 @@ class TestPreviewLutToggle(unittest.TestCase):
         gui._extract_preview_images('v.mp4', 1.0, 'bt.2390', lut_enabled=True)
 
         mock_gpu_single.assert_not_called()
+
+
+class TestPreviewUsesGpuTonemapWhenActive(unittest.TestCase):
+    """Preview must route CPU-capable tonemappers (Reinhard/Mobius/Hable)
+    through the real GPU/libplacebo path whenever GPU acceleration is
+    actually active -- matching what real export will do -- not just the
+    GPU-only tonemappers (BT.2390/Spline).
+
+    Before this fix, preview always used the CPU zscale tonemap for these
+    three regardless of the GPU accel toggle: only the LUT stage differed
+    between "Accurate GPU Color" on/off, so toggling it appeared to prove the
+    CPU-only tonemappers rendered identically on GPU -- it never actually
+    exercised the GPU tonemap algorithm at all.
+    """
+
+    def _gui(self, gpu_accel: bool):
+        gui = _FakeGui()
+        gui.gpu_accel_var = MagicMock()
+        gui.gpu_accel_var.get.return_value = gpu_accel
+        return gui
+
+    @patch('preview.vulkan_libplacebo_available', return_value=True)
+    @patch('preview.extract_frame_with_gpu_conversion')
+    @patch('preview.extract_frame_with_conversion')
+    @patch('preview.extract_frame')
+    def test_cpu_capable_tonemapper_uses_gpu_extraction_when_gpu_active(
+            self, mock_extract_frame, mock_cpu_conv, mock_gpu_conv, _mock_probe):
+        gui = self._gui(gpu_accel=True)
+        mock_extract_frame.return_value = Image.open(__import__('io').BytesIO(_VALID_PNG))
+        mock_gpu_conv.return_value = Image.open(__import__('io').BytesIO(_VALID_PNG))
+
+        gui._extract_preview_images('v.mp4', 1.0, 'reinhard', lut_enabled=True)
+
+        mock_gpu_conv.assert_called_once()
+        mock_cpu_conv.assert_not_called()
+
+    @patch('preview.vulkan_libplacebo_available', return_value=True)
+    @patch('preview.extract_frame_with_gpu_conversion')
+    @patch('preview.extract_frame_with_conversion')
+    @patch('preview.extract_frame')
+    def test_cpu_capable_tonemapper_uses_cpu_extraction_when_gpu_off(
+            self, mock_extract_frame, mock_cpu_conv, mock_gpu_conv, _mock_probe):
+        gui = self._gui(gpu_accel=False)
+        mock_extract_frame.return_value = Image.open(__import__('io').BytesIO(_VALID_PNG))
+        mock_cpu_conv.return_value = Image.open(__import__('io').BytesIO(_VALID_PNG))
+
+        gui._extract_preview_images('v.mp4', 1.0, 'reinhard', lut_enabled=True)
+
+        mock_cpu_conv.assert_called_once()
+        mock_gpu_conv.assert_not_called()
+
+    @patch('preview.vulkan_libplacebo_available', return_value=False)
+    @patch('preview.extract_frame_with_gpu_conversion')
+    @patch('preview.extract_frame_with_conversion')
+    @patch('preview.extract_frame')
+    def test_cpu_capable_tonemapper_falls_back_to_cpu_when_libplacebo_unavailable(
+            self, mock_extract_frame, mock_cpu_conv, mock_gpu_conv, _mock_probe):
+        """GPU toggle on but this machine can't actually run libplacebo --
+        must fall back to CPU extraction, matching what real export does
+        (construct_ffmpeg_command's use_libplacebo is also gated on the probe)."""
+        gui = self._gui(gpu_accel=True)
+        mock_extract_frame.return_value = Image.open(__import__('io').BytesIO(_VALID_PNG))
+        mock_cpu_conv.return_value = Image.open(__import__('io').BytesIO(_VALID_PNG))
+
+        gui._extract_preview_images('v.mp4', 1.0, 'reinhard', lut_enabled=True)
+
+        mock_cpu_conv.assert_called_once()
+        mock_gpu_conv.assert_not_called()
+
+    @patch('preview.vulkan_libplacebo_available', return_value=False)
+    @patch('preview.extract_frame_with_gpu_conversion')
+    @patch('preview.extract_frame')
+    def test_gpu_only_tonemapper_still_uses_gpu_extraction_regardless_of_toggle(
+            self, mock_extract_frame, mock_gpu_conv, _mock_probe):
+        """BT.2390/Spline have no CPU implementation at all -- unconditional,
+        regardless of the GPU accel toggle or the libplacebo probe result."""
+        gui = self._gui(gpu_accel=False)
+        mock_extract_frame.return_value = Image.open(__import__('io').BytesIO(_VALID_PNG))
+        mock_gpu_conv.return_value = Image.open(__import__('io').BytesIO(_VALID_PNG))
+
+        gui._extract_preview_images('v.mp4', 1.0, 'bt.2390', lut_enabled=True)
+
+        mock_gpu_conv.assert_called_once()
+
+    @patch('preview.vulkan_libplacebo_available', return_value=True)
+    @patch('preview.extract_frame_with_gpu_conversion')
+    @patch('preview.extract_frame_with_conversion')
+    @patch('preview.extract_frame')
+    def test_toggling_gpu_accel_invalidates_cache_for_same_tonemapper(
+            self, mock_extract_frame, mock_cpu_conv, mock_gpu_conv, _mock_probe):
+        """The same tonemapper name renders differently via CPU zscale vs GPU
+        libplacebo -- toggling 'Use GPU' must not silently reuse the other
+        path's cached frame."""
+        mock_extract_frame.return_value = Image.open(__import__('io').BytesIO(_VALID_PNG))
+        mock_gpu_conv.return_value = Image.open(__import__('io').BytesIO(_VALID_PNG))
+        mock_cpu_conv.return_value = Image.open(__import__('io').BytesIO(_VALID_PNG))
+
+        gui = self._gui(gpu_accel=True)
+        gui._extract_preview_images('v.mp4', 1.0, 'reinhard', lut_enabled=True)
+        gui.gpu_accel_var.get.return_value = False
+        gui._extract_preview_images('v.mp4', 1.0, 'reinhard', lut_enabled=True)
+
+        mock_gpu_conv.assert_called_once()
+        mock_cpu_conv.assert_called_once()
 
 
 class TestDisplayFramesReadsLutExportVar(unittest.TestCase):
@@ -213,6 +316,36 @@ class TestEffectiveLutEnabled(unittest.TestCase):
     def test_missing_lut_export_var_defaults_true(self):
         gui = _FakeGui()
         self.assertTrue(gui._effective_lut_enabled())
+
+    def _gui_with_gpu(self, lut_enabled: bool, gpu_accel: bool):
+        gui = self._gui(lut_enabled=lut_enabled)
+        gui.gpu_accel_var = MagicMock()
+        gui.gpu_accel_var.get.return_value = gpu_accel
+        return gui
+
+    def test_forces_true_when_gpu_off_regardless_of_stale_checkbox(self):
+        """construct_ffmpeg_command's CPU branch never reads lut_enabled --
+        real CPU export always applies the LUT. _apply_lut_export_availability
+        only greys the checkbox out when GPU accel is off, it never resets
+        lut_export_var, so a value left False from an earlier GPU session
+        would otherwise make CPU preview show the no-LUT legacy filter while
+        real CPU export always includes the LUT. Force True whenever GPU
+        accel is off to match what export will actually do."""
+        gui = self._gui_with_gpu(lut_enabled=False, gpu_accel=False)
+        self.assertTrue(gui._effective_lut_enabled())
+
+    def test_honors_checkbox_when_gpu_on(self):
+        gui = self._gui_with_gpu(lut_enabled=False, gpu_accel=True)
+        self.assertFalse(gui._effective_lut_enabled())
+        gui2 = self._gui_with_gpu(lut_enabled=True, gpu_accel=True)
+        self.assertTrue(gui2._effective_lut_enabled())
+
+    def test_missing_gpu_accel_var_falls_back_to_checkbox(self):
+        """Bare test doubles that don't set gpu_accel_var (e.g. existing
+        callers of _gui() above) must keep today's behavior -- no gpu_accel_var
+        means don't second-guess the checkbox."""
+        gui = self._gui(lut_enabled=False)
+        self.assertFalse(gui._effective_lut_enabled())
 
 
 if __name__ == '__main__':

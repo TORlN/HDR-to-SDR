@@ -567,8 +567,10 @@ class TestBuildLibplaceboFilter(unittest.TestCase):
         self.assertNotIn('hwmap=reverse=1:derive_device=cuda', f)
 
     def test_cpu_input_gamma_1_downloads_without_eq(self):
-        """gamma=1.0 on plain Vulkan path: download is still needed for NVENC, but skip the no-op eq."""
-        f = build_libplacebo_filter(1.0, 'reinhard', cuda_input=False)
+        """gamma=1.0 on plain Vulkan path: download is still needed for NVENC,
+        but skip the no-op eq. lut_enabled=False isolates this from the
+        LUT-on download format (see TestBuildLibplaceboFilter's rgba tests)."""
+        f = build_libplacebo_filter(1.0, 'reinhard', cuda_input=False, lut_enabled=False)
         self.assertIn('hwdownload,format=nv12', f)
         self.assertNotIn('eq=gamma=1.0', f)
         self.assertNotIn('eq=gamma=1', f)
@@ -610,6 +612,25 @@ class TestBuildLibplaceboFilter(unittest.TestCase):
         self.assertNotIn('lut3d=', f)
         self.assertNotIn('setparams=', f)
         self.assertIn('color_primaries=bt709:color_trc=bt709', f)
+
+    def test_lut_enabled_downloads_as_rgba_to_avoid_hidden_swscale(self):
+        """lut3d (CPU) only accepts RGB-family pixel formats, not nv12 --
+        feeding it nv12 makes ffmpeg silently auto-insert an nv12->rgb24
+        swscale conversion before lut3d (confirmed via -loglevel verbose
+        trace: 'auto-inserting filter auto_scale ... fmt:nv12 -> fmt:rgb24').
+        Downloading directly as rgba skips that hidden conversion --
+        measured ~5% faster over 300 synthetic 4K frames."""
+        f = build_libplacebo_filter(1.0, 'reinhard')
+        self.assertIn('format=rgba', f)
+        self.assertIn('hwdownload,format=rgba,lut3d=', f)
+        self.assertNotIn('format=nv12', f)
+
+    def test_lut_disabled_still_downloads_as_nv12(self):
+        """No LUT stage means no RGB-family intermediate is needed -- nv12
+        feeds the encoder directly, same as before the LUT feature existed."""
+        f = build_libplacebo_filter(1.0, 'reinhard', lut_enabled=False)
+        self.assertIn('hwdownload,format=nv12', f)
+        self.assertNotIn('rgba', f)
 
 
 class TestVulkanCudaInteropProbe(unittest.TestCase):

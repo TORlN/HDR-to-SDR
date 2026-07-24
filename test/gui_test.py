@@ -133,6 +133,11 @@ class TestHDRConverterGUI(TestCase):
         self.gui.input_path_var = MagicMock(get=MagicMock(return_value='test_input.mp4'))
         self.gui.gamma_var = MagicMock(get=MagicMock(return_value=2.2))
         self.gui.tonemap_var = MagicMock(get=MagicMock(return_value='Mobius'))  # Add tonemapper mock
+        # setUp's shared bool-var mock defaults .get() to a truthy MagicMock,
+        # which would otherwise make _gpu_tonemap_active() think GPU accel is
+        # on and route 'mobius' through the (unmocked, here) GPU extractor --
+        # this test wants the CPU path, matching gpu_accel's real False default.
+        self.gui.gpu_accel_var = MagicMock(get=MagicMock(return_value=False))
 
         # Setup GUI elements
         self.gui.original_image_label = MagicMock()

@@ -20,6 +20,7 @@ from utils import (
     extract_frames_with_conversion_batch,
     extract_frames_with_gpu_conversion_batch,
     is_gpu_only_tonemapper,
+    vulkan_libplacebo_available,
 )
 
 # ── Module-level constants ─────────────────────────────────────────────────────
@@ -87,7 +88,8 @@ class _HDRPreviewMixin:
         _preview_pool: ThreadPoolExecutor
         _preview_thread: Future | None
         _preview_cache_original: dict[tuple[str, float], Image.Image]
-        _preview_cache_converted: dict[tuple[str, float, str, bool], Image.Image]
+        _preview_cache_converted: dict[tuple[str, float, str, bool, bool], Image.Image]
+        gpu_accel_var: tk.BooleanVar
         _cache_lock: threading.Lock
         current_frame_index: int
         total_frames: int
@@ -520,9 +522,52 @@ class _HDRPreviewMixin:
         getattr-guarded: lut_export_var is set in HDRConverterGUI.__init__,
         but bare test doubles (object.__new__) may not have it -- default to
         the same True the real BooleanVar always starts at.
+
+        When GPU acceleration is off, the checkbox's raw state is forced to
+        True regardless of what it's actually set to: construct_ffmpeg_command's
+        CPU branch never reads lut_enabled at all (CPU export always applies
+        the LUT), but gui.py's _apply_lut_export_availability only greys the
+        checkbox out when GPU is off -- it never resets lut_export_var. Left
+        unchecked from an earlier GPU session, the stale False would otherwise
+        make this CPU-routed preview show the no-LUT legacy filter while real
+        CPU export always includes the LUT.
         """
         lut_export_var = getattr(self, 'lut_export_var', None)
-        return lut_export_var.get() if lut_export_var is not None else True
+        if lut_export_var is None:
+            return True
+        gpu_accel_var = getattr(self, 'gpu_accel_var', None)
+        if gpu_accel_var is not None and not gpu_accel_var.get():
+            return True
+        return lut_export_var.get()
+
+    def _gpu_tonemap_active(self) -> bool:
+        """True when a real export would run GPU (libplacebo) tonemapping --
+        mirrors gui.py's _apply_tonemap_choices ``gpu_active`` formula, so
+        preview extraction picks the same path for every tonemapper (not just
+        the GPU-only ones) that real export will actually use.
+
+        Before this, preview always ran the CPU zscale tonemap for
+        Reinhard/Mobius/Hable regardless of the GPU accel toggle -- only the
+        LUT stage differed between "Accurate GPU Color" on/off, so toggling
+        it never actually exercised libplacebo's own tonemap algorithm, which
+        can render visibly differently from zscale's for the same named
+        curve.
+
+        getattr-guarded like _effective_lut_enabled: bare test doubles may
+        not set gpu_accel_var.
+        """
+        gpu_accel_var = getattr(self, 'gpu_accel_var', None)
+        if gpu_accel_var is None or not gpu_accel_var.get():
+            return False
+        return vulkan_libplacebo_available()
+
+    def _use_gpu_extraction(self, tonemapper: str) -> bool:
+        """Whether preview should extract this tonemapper's converted frame via
+        the GPU (libplacebo) path rather than CPU zscale. Unconditional for
+        GPU-only tonemappers (BT.2390/Spline have no CPU implementation at
+        all); otherwise follows _gpu_tonemap_active so CPU-capable
+        tonemappers match real export's choice too."""
+        return is_gpu_only_tonemapper(tonemapper) or self._gpu_tonemap_active()
 
     def _preview_in_cache(self, video_path: str) -> bool:
         """Return True if both frames for the current state are already cached."""
@@ -535,9 +580,10 @@ class _HDRPreviewMixin:
         time_key = round(time_position, 3)
         tonemapper = self.tonemap_var.get().lower()
         lut_enabled = self._effective_lut_enabled()
+        use_gpu = self._use_gpu_extraction(tonemapper)
         return (
             (video_path, time_key) in self._preview_cache_original
-            and (video_path, time_key, tonemapper, lut_enabled) in self._preview_cache_converted
+            and (video_path, time_key, tonemapper, lut_enabled, use_gpu) in self._preview_cache_converted
         )
 
     # ── Frame extraction ───────────────────────────────────────────────────────
@@ -587,11 +633,12 @@ class _HDRPreviewMixin:
                                      width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1])
             self._cache_store(self._preview_cache_original, original_key, original)
 
-        converted_key = (video_path, time_key, tonemapper, lut_enabled)
+        use_gpu = self._use_gpu_extraction(tonemapper)
+        converted_key = (video_path, time_key, tonemapper, lut_enabled, use_gpu)
         converted = self._preview_cache_converted.get(converted_key)
         if converted is None:
             extract_fn = (extract_frame_with_gpu_conversion
-                          if is_gpu_only_tonemapper(tonemapper)
+                          if use_gpu
                           else extract_frame_with_conversion)
             converted = extract_fn(
                 video_path, gamma=1.0,
@@ -622,41 +669,30 @@ class _HDRPreviewMixin:
         lut_enabled: bool = True,
     ) -> None:
         """Tonemap-convert all frames for the given positions in one ffmpeg pass
-        (or, for GPU-only tonemappers, N looped GPU passes -- see
+        (or, for the GPU path, N looped GPU passes -- see
         extract_frames_with_gpu_conversion_batch).
 
-        lut_enabled: must match _extract_preview_images's real lookup key
-        exactly, or prewarmed entries become unreachable (or reachable under
-        the wrong key) from the real lookup path. extract_frames_with_gpu_conversion_batch
-        (the GPU-only-tonemapper batch path) has no lut_enabled parameter of
-        its own and always produces lut_enabled=True content, regardless of
-        the toggle's actual state -- so for GPU-only tonemappers the result
-        is always stored under the lut_enabled=True key (see
-        stored_lut_enabled below), never under the raw toggle value. This
-        turns a toggle-off prewarm into a clean cache MISS on the real
-        (lut_enabled=False) lookup instead of a poisoned HIT that would
-        silently serve always-on LUT content as if it were LUT-off content.
+        lut_enabled and the GPU/CPU choice (_use_gpu_extraction) must match
+        _extract_preview_images's real lookup key exactly, or prewarmed
+        entries become unreachable (or reachable under the wrong key) from
+        the real lookup path.
         """
         if generation != self._preview_generation:
             return
         try:
-            is_gpu_only = is_gpu_only_tonemapper(tonemapper)
-            if is_gpu_only:
+            use_gpu = self._use_gpu_extraction(tonemapper)
+            if use_gpu:
                 converted = extract_frames_with_gpu_conversion_batch(
                     video_path, positions, 1.0, tonemapper,
-                    PREVIEW_SIZE[0], PREVIEW_SIZE[1])
+                    PREVIEW_SIZE[0], PREVIEW_SIZE[1], lut_enabled=lut_enabled)
             else:
                 converted = extract_frames_with_conversion_batch(
                     video_path, positions, 1.0, tonemapper,
                     PREVIEW_SIZE[0], PREVIEW_SIZE[1], lut_enabled=lut_enabled)
-            # GPU-only tonemappers always produce lut_enabled=True content
-            # (see docstring above) -- store it under that key regardless of
-            # the toggle's actual state.
-            stored_lut_enabled = True if is_gpu_only else lut_enabled
             for t, img in zip(positions, converted):
                 self._cache_store(
                     self._preview_cache_converted,
-                    (video_path, round(t, 3), tonemapper, stored_lut_enabled), img)
+                    (video_path, round(t, 3), tonemapper, lut_enabled, use_gpu), img)
         except Exception:
             logging.exception('preview batch converted pre-warm failed')
 
@@ -676,12 +712,7 @@ class _HDRPreviewMixin:
             self._preview_cache_original = {}
             self._preview_cache_converted = {}
 
-        # _prewarm_batch_converted always stores GPU-only-tonemapper content
-        # under the lut_enabled=True key (see its docstring) -- check the
-        # cache against that same effective key here, or this gate would
-        # perpetually treat already-warmed GPU-only positions as missing
-        # whenever the toggle is off and keep resubmitting redundant work.
-        converted_lut_key = True if is_gpu_only_tonemapper(tonemapper) else lut_enabled
+        use_gpu = self._use_gpu_extraction(tonemapper)
 
         positions: list[float] = []
         for index in range(1, self.total_frames + 1):
@@ -690,7 +721,7 @@ class _HDRPreviewMixin:
             t = (index / (self.total_frames + 1)) * duration
             t_key = round(t, 3)
             if ((video_path, t_key) not in self._preview_cache_original or
-                    (video_path, t_key, tonemapper, converted_lut_key) not in self._preview_cache_converted):
+                    (video_path, t_key, tonemapper, lut_enabled, use_gpu) not in self._preview_cache_converted):
                 positions.append(t)
 
         if not positions:

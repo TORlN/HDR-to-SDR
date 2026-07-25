@@ -46,12 +46,12 @@ FFMPEG_CONVERT_FILTER = (
     'eq=gamma={gamma}'
 )
 
-# TEMPORARY -- today's zscale-only gamut correction (no LUT). Used only by
-# the preview pane's dev-verification toggle (see
-# docs/superpowers/specs/2026-07-22-lut-color-pipeline-design.md) when LUT
-# preview is switched off, so the two can be compared side by side before
-# the old path is trusted and deleted. Removed in Task 9 of the LUT
-# implementation plan, together with the toggle -- never used by real export.
+# Zscale-only gamut correction (no LUT). Used by the CPU preview path when
+# the user has the permanent "Accurate GPU Color" setting (lut_export_var)
+# switched off -- see _effective_lut_enabled in preview.py. Never used by
+# real export: CPU export always applies the LUT regardless of this setting
+# (see construct_ffmpeg_command in conversion.py), and the GPU/libplacebo
+# export path builds its own filter string rather than referencing this one.
 FFMPEG_FILTER_LEGACY_NO_LUT = (
     'zscale=t=linear:npl=100,tonemap={tonemapper},zscale=t=bt709:m=bt709:r=tv:p=bt709,'
     'eq=gamma={gamma},scale={width}:{height}:force_original_aspect_ratio=decrease'

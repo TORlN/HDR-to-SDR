@@ -18,17 +18,16 @@ This application bundles unmodified `ffmpeg.exe` and `ffprobe.exe` binaries.
 
 ### Written offer for source code
 
-The complete corresponding source code for the bundled FFmpeg build is available:
-
-1. Attached to the corresponding release at
-   https://github.com/TORlN/HDR-to-SDR/releases as an FFmpeg source archive, and
-2. From the upstream repository at revision `c6bb22dea0`:
-   `git clone https://github.com/FFmpeg/FFmpeg && git checkout c6bb22dea0`
-
-For a period of three years from the date of distribution, we will provide a
-complete machine-readable copy of the corresponding source code on request, for
-no more than the cost of physically performing the distribution. Contact:
+Under GNU General Public License version 2, section 3(b), we provide a written
+offer to supply the complete corresponding source code on request. For a period
+of three years from the date of distribution, we will provide a complete
+machine-readable copy of the corresponding source code, for no more than the
+cost of physically performing the distribution. Contact:
 https://github.com/TORlN/HDR-to-SDR/issues
+
+For convenience, the FFmpeg source code is also available from the upstream
+repository at revision `c6bb22dea0`:
+`git clone https://github.com/FFmpeg/FFmpeg && git checkout c6bb22dea0`
 
 ## x264
 

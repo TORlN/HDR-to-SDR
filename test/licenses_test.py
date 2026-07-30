@@ -33,6 +33,13 @@ class TestThirdPartyNotices(unittest.TestCase):
         text = open(self.notices_path, encoding='utf-8').read()
         self.assertRegex(text, r'(?i)source', msg='GPLv2 §3 requires a source offer')
 
+    def test_notices_do_not_claim_false_attached_source(self):
+        """The notice must not claim FFmpeg source is attached to releases if it isn't.
+        GPLv2 §3 compliance depends on an accurate written offer, not false claims."""
+        text = open(self.notices_path, encoding='utf-8').read()
+        self.assertNotRegex(text, r'Attached to the corresponding release',
+                           msg='notices must not falsely claim source is attached to releases')
+
 
 class TestLicenseFiles(unittest.TestCase):
     def test_license_texts_present(self):

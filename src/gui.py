@@ -1,3 +1,4 @@
+import importlib
 import os
 import sys
 import tkinter as tk
@@ -25,29 +26,133 @@ from preview import (
     _PREVIEW_HEIGHT_RESERVE, _MIN_SIZE_MARGIN, _PREVIEW_POOL_WORKERS,
     _INITIAL_WIDTH_STRETCH, _HDRPreviewMixin,
 )
-from batch import _BatchMixin
+# Imported as a module object, not `from pro.batch import _BatchMixin`. As in
+# src/licensing.py and src/dialogs.py: a `from`-import of an unresolved
+# module leaves pyright treating the unresolved import *declaration* as
+# authoritative for this name -- it wins over the perfectly good `class`
+# in the `else` branch below, so `class HDRConverterGUI(_BatchMixin, ...)`
+# would fail to type-check even though the free stub is defined right here.
+# Going through `importlib.import_module` sidesteps that: there is no
+# unresolved `from` target for pyright to bind this name to, so the
+# free-edition class below is what's in effect whenever `pro/` is absent
+# (i.e. in CI, and in every Community Edition build).
+try:
+    _pro_batch = importlib.import_module('pro.batch')
+except ImportError:  # Community Edition — no Pro backend in this build.
+    _pro_batch = None
+
+if _pro_batch is not None:
+    _BatchMixin = _pro_batch._BatchMixin
+else:
+    class _BatchMixin:  # type: ignore[no-redef]
+        """Community Edition: Batch Queue is a Pro feature and is absent.
+
+        Every user-facing batch action (add/remove/clear/apply-to-all,
+        selecting a queue row, starting/reviewing a batch run) is reachable
+        only through a widget this build permanently disables or hides
+        (add_files_button etc. via _apply_license_state) or a call site
+        gated by `if self._licensed:` -- _licensed can never be True without
+        pro/, so none of that behavior is ever actually reached. This class
+        defines none of it. test/gui_free_edition_test.py verifies that
+        rather than assuming it.
+
+        Every method below is a no-op stub, not a missing symbol -- for two
+        independent reasons:
+
+        1. Runtime: gui.py builds every batch widget's `command=`/`bind()`
+           target as a bare attribute lookup at construction time (e.g.
+           `command=self.browse_batch_files`), which Python evaluates
+           immediately regardless of whether the widget is ever clickable,
+           and a few call sites (convert_video, handle_file_drop,
+           _write_back_current_settings) reach into the queue unconditionally
+           for every file, licensed or not -- so these names must exist even
+           where their bodies never actually run.
+        2. Static: `_pro_batch = importlib.import_module('pro.batch')`
+           resolves to `Any` for pyright, so `class HDRConverterGUI
+           (_BatchMixin, ...)` can only see ONE concrete shape for
+           `_BatchMixin` -- this class's -- regardless of which branch runs
+           at import time. Every batch method gui.py's own body calls via
+           `self.<name>(...)` therefore has to exist here too, or pyright
+           reports it as unknown even in a normal (pro/ present) checkout.
+
+        _batch_item_for_current_input and _parse_drop_paths are the only two
+        that need real, working, non-Pro-secret bodies rather than an
+        inert stub -- see each one's own docstring.
+        """
+
+        def browse_batch_files(self) -> None:
+            pass  # Add Files stays disabled without a license; never invoked.
+
+        def remove_selected_batch_item(self) -> None:
+            pass  # Remove stays disabled without a license; never invoked.
+
+        def clear_batch_queue(self) -> None:
+            pass  # Clear stays disabled without a license; never invoked.
+
+        def apply_settings_to_all_batch_items(self) -> None:
+            pass  # Apply to All stays disabled without a license; never invoked.
+
+        def _cancel_batch_conflict_review(self) -> None:
+            pass  # Cancel Review never becomes visible without a license.
+
+        def on_batch_item_select(self, event: object = None) -> None:
+            pass  # batch_listbox stays permanently empty without a license.
+
+        def _on_batch_listbox_click(self, event: object) -> None:
+            pass  # batch_listbox stays permanently empty without a license.
+
+        def add_batch_files(self, paths: object) -> None:
+            pass  # handle_file_drop/select_file only call this when _licensed.
+
+        def start_batch(self) -> bool:
+            return False  # convert_video only calls this when batch_items is non-empty.
+
+        def _refresh_batch_list(self) -> None:
+            pass  # Only reached from a branch that requires a real queue item.
+
+        def _batch_item_for_current_input(self) -> None:
+            """No queue ever exists in this build, so no file is ever
+            "the current queue item" -- called unconditionally by
+            _write_back_current_settings/_load_input_file for every file."""
+            return None
+
+        @staticmethod
+        def _parse_drop_paths(data: str) -> list:  # type: ignore[type-arg]
+            """Split a tkdnd drop payload into individual file paths.
+
+            Pure string parsing with no licensing logic -- duplicated here
+            (rather than left Pro-only) because handle_file_drop calls this
+            for every drop, single-file included, before it ever checks
+            self._licensed. Identical to the Pro implementation in
+            pro/batch.py; kept in sync manually since there is nothing to
+            import it from in this build."""
+            import re
+            tokens = re.findall(r'\{[^}]*\}|\S+', data or '')
+            return [t.strip('{}') for t in tokens if t.strip('{}')]
 
 # Register the split-out modules under their src.* names so that
-# patch('src.dialogs.X'), patch('src.preview.X'), patch('src.batch.X')
-# target the same module objects that the code actually runs in.
-# Without this, Python would load a second copy under each dotted name.
+# patch('src.dialogs.X'), patch('src.preview.X') target the same module
+# objects that the code actually runs in. Without this, Python would load a
+# second copy under each dotted name. batch.py is no longer one of these: it
+# now lives at pro.batch (or is absent), which already has its own natural
+# dotted identity as a real subpackage import -- there is no bare top-level
+# 'batch' module to alias anymore.
 import sys as _sys
 _sys.modules.update({
     'src.dialogs': _sys.modules['dialogs'],
     'src.preview': _sys.modules['preview'],
-    'src.batch':   _sys.modules['batch'],
 })
-# mock.patch() looks up 'src.batch' via getattr(sys.modules['src'], 'batch')
-# before falling back to sys.modules — and that fallback is a no-op when the
-# key is already present, so it never links the attribute. Set it directly so
-# patch() finds it on the first getattr, both when running under the 'src'
-# package (tests) and when 'src' isn't imported at all (production, gui.py
-# loaded as a bare top-level module).
+# mock.patch() looks up 'src.dialogs'/'src.preview' via
+# getattr(sys.modules['src'], 'dialogs'/'preview') before falling back to
+# sys.modules — and that fallback is a no-op when the key is already
+# present, so it never links the attribute. Set it directly so patch() finds
+# it on the first getattr, both when running under the 'src' package (tests)
+# and when 'src' isn't imported at all (production, gui.py loaded as a bare
+# top-level module).
 if 'src' in _sys.modules:
     _src_pkg = _sys.modules['src']
     setattr(_src_pkg, 'dialogs', _sys.modules['dialogs'])
     setattr(_src_pkg, 'preview', _sys.modules['preview'])
-    setattr(_src_pkg, 'batch', _sys.modules['batch'])
     del _src_pkg
 del _sys
 

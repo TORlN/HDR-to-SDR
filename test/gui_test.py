@@ -454,65 +454,6 @@ class TestWindowIcon(unittest.TestCase):
         gui.on_close()
 
 
-class TestBatchCancel(TestCase):
-    """Cancelling mid-batch must stop the queue, not advance to the next file."""
-
-    def setUp(self):
-        self.mock_root = MagicMock()
-        patches = {
-            'string_var': patch('src.gui.tk.StringVar', return_value=MagicMock(
-                spec=tk.StringVar, get=MagicMock(return_value=''), set=MagicMock())),
-            'double_var': patch('src.gui.tk.DoubleVar', return_value=MagicMock(spec=tk.DoubleVar)),
-            'bool_var':   patch('src.gui.tk.BooleanVar', return_value=MagicMock(spec=tk.BooleanVar)),
-            'int_var':    patch('src.gui.tk.IntVar', return_value=MagicMock(
-                spec=tk.IntVar, get=MagicMock(return_value=23), set=MagicMock())),
-        }
-        self.patches = patches
-        self.mocks = {name: p.start() for name, p in patches.items()}
-        self.gui = HDRConverterGUI(self.mock_root, licensed=True)
-        self.addCleanup(self._teardown)
-
-    def _teardown(self):
-        for p in self.patches.values():
-            try:
-                p.stop()
-            except RuntimeError:
-                pass
-        self.gui.on_close()
-
-    @patch('src.batch.conversion_manager')
-    def test_cancel_does_not_advance_queue(self, mock_cm):
-        """_on_batch_item_complete must not call _start_next_batch_item when cancelled."""
-        mock_cm.cancelled = True
-        self.gui.batch_items = [
-            {'input': '/a.mkv', 'output': '/a_sdr.mkv', 'format': 'MKV', 'status': 'Converting'},
-            {'input': '/b.mkv', 'output': '/b_sdr.mkv', 'format': 'MKV', 'status': 'Pending'},
-        ]
-        self.gui._current_batch_item = self.gui.batch_items[0]
-
-        with patch.object(self.gui, '_start_next_batch_item') as mock_next:
-            self.gui._on_batch_item_complete(success=False)
-
-        mock_next.assert_not_called()
-        self.assertEqual(self.gui.batch_items[0]['status'], 'Failed')
-
-    @patch('src.batch.conversion_manager')
-    def test_not_cancelled_still_advances_queue(self, mock_cm):
-        """Normal completion (not cancelled) must still call _start_next_batch_item."""
-        mock_cm.cancelled = False
-        self.gui.batch_items = [
-            {'input': '/a.mkv', 'output': '/a_sdr.mkv', 'format': 'MKV', 'status': 'Converting'},
-            {'input': '/b.mkv', 'output': '/b_sdr.mkv', 'format': 'MKV', 'status': 'Pending'},
-        ]
-        self.gui._current_batch_item = self.gui.batch_items[0]
-
-        with patch.object(self.gui, '_start_next_batch_item') as mock_next:
-            self.gui._on_batch_item_complete(success=True)
-
-        mock_next.assert_called_once()
-        self.assertEqual(self.gui.batch_items[0]['status'], 'Done')
-
-
 class TestShowTooltip(TestCase):
     """show_tooltip must not call bbox('insert') — that raises TclError on ttk.Label."""
 

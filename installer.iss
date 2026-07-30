@@ -40,11 +40,16 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 ; Recursively bundle the entire onedir distribution
 Source: ".\dist\HDR_to_SDR_Converter\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; GPL compliance: the bundled ffmpeg is GPLv2+, so its license text and our
+; third-party notices must ship with the application.
+Source: ".\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: ".\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
 Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
 Name: "{commondesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
+Name: "{group}\Third-Party Licenses"; Filename: "{app}\THIRD_PARTY_NOTICES.md"
 
 [Run]
 Filename: "{app}\{#AppExeName}"; \

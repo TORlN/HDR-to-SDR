@@ -40,6 +40,13 @@ class TestThirdPartyNotices(unittest.TestCase):
         self.assertNotRegex(text, r'Attached to the corresponding release',
                            msg='notices must not falsely claim source is attached to releases')
 
+    def test_notices_written_offer_includes_email_contact(self):
+        """GPLv2 §3(b) offer must be reachable by any third party without requiring
+        an account or special access. Email is accessible to anyone."""
+        text = open(self.notices_path, encoding='utf-8').read()
+        self.assertRegex(text, r'hdrtosdr\.dev@outlook\.com',
+                         msg='written offer must include email contact for GPLv2 §3 compliance')
+
 
 class TestLicenseFiles(unittest.TestCase):
     def test_license_texts_present(self):

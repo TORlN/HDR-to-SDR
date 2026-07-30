@@ -20,7 +20,11 @@ DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 AllowNoIcons=yes
 OutputDir=.\installer_output
+#ifdef FREE_BUILD
+OutputBaseFilename=HDR_to_SDR_Setup_FREE
+#else
 OutputBaseFilename=HDR_to_SDR_Setup
+#endif
 SetupIconFile=.\logo\icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes

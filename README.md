@@ -53,21 +53,26 @@ More Pro features are on the way. Follow this repo or check [hdrtosdr.com](https
 
 ## Network activity & privacy
 
-This application makes **exactly two** kinds of outbound request, both of which
-you can verify in this repository's source:
+This application makes outbound requests only for updates and (in Pro builds) license
+validation. Both calls are made directly from your machine to the respective APIs:
 
 | Endpoint | Purpose | When | Source |
 |---|---|---|---|
 | `api.github.com` | Checks whether a newer release exists, and downloads the installer if you accept | On startup, and when you click Update | `src/updater.py` |
-| `api.lemonsqueezy.com` | Validates a Pro license key | On activation, and at most once every 30 days afterwards | `src/licensing.py` |
+| `api.lemonsqueezy.com` | Validates a Pro license key; the implementation is in a private module | On Pro activation, and at most once every 30 days afterwards | Private (not in public repo) |
 
-There is **no analytics, no telemetry, no crash reporting, and no usage
-tracking** of any kind. No analytics module has ever existed in this codebase.
-Nothing about your files, your machine, or your activity is transmitted
-anywhere. Video conversion is entirely local — `ffmpeg` runs on your machine and
-never uploads anything.
+**There is no analytics, no telemetry, no crash reporting, and no usage tracking** of
+any kind. No analytics module has ever existed in this codebase. Video conversion
+is entirely local — `ffmpeg` runs on your machine and never uploads anything.
 
-The Community Edition makes only the `api.github.com` update check.
+**On Pro license activation and validation only:** A derived hardware fingerprint
+(SHA-256 hash of MAC address, hostname, CPU architecture, and OS family) is sent
+to Lemon Squeezy to node-lock the license to your machine. This fingerprint is
+used to verify that a given license key is activated on this machine only. The
+Community Edition makes no calls to Lemon Squeezy.
+
+The Community Edition makes only the `api.github.com` update check. Video files
+are never uploaded, and your files' contents never leave your machine.
 
 ## Licensing
 

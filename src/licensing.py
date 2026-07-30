@@ -11,6 +11,7 @@ such an installer without an explicit typed confirmation.
 """
 from __future__ import annotations
 
+import importlib
 from typing import Callable, Optional
 
 from license_errors import (
@@ -31,14 +32,27 @@ __all__ = [
     'deactivate_license',
 ]
 
+# Imported as a module object, not `from pro.licensing import (...)`. A
+# `from`-import of an unresolved module leaves pyright treating the
+# unresolved import *declaration* as authoritative for these names -- it
+# wins over the perfectly good `def`s in the `except` block below, so every
+# consumer's `from licensing import activate_license` would fail to
+# type-check even though the free stub is defined right here. Going through
+# `importlib.import_module` sidesteps that: there is no unresolved `from`
+# target for pyright to bind these names to, so the free-edition `def`s
+# below are what consumers see whenever `pro/` is absent (i.e. in CI, and in
+# every Community Edition build).
 try:
-    from pro.licensing import (  # type: ignore[import-not-found]
-        activate_license,
-        check_license,
-        check_license_nonblocking,
-        deactivate_license,
-    )
+    _pro = importlib.import_module('pro.licensing')
 except ImportError:  # Community Edition — no Pro backend in this build.
+    _pro = None
+
+if _pro is not None:
+    activate_license = _pro.activate_license
+    check_license = _pro.check_license
+    check_license_nonblocking = _pro.check_license_nonblocking
+    deactivate_license = _pro.deactivate_license
+else:
 
     def check_license() -> bool:
         """Always False: this build contains no licensing backend."""

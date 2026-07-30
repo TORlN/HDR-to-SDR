@@ -180,6 +180,20 @@ def load_license_token() -> Optional[dict]:  # type: ignore[type-arg]
     return payload
 
 
+# ── License check guard ────────────────────────────────────────────────────────
+
+def _dev_unlock_active() -> bool:
+    """True when the HDRSDR_DEV_UNLOCK developer backdoor should be honored.
+
+    Deliberately inert in a frozen (PyInstaller) build: PyInstaller sets
+    sys.frozen on the bundled interpreter, so a shipped installer ignores the
+    variable entirely and an end user cannot unlock the paid product with one
+    environment variable.
+    """
+    return (not getattr(sys, 'frozen', False)
+            and os.environ.get('HDRSDR_DEV_UNLOCK') == '1')
+
+
 # ── Lemon Squeezy API layer ────────────────────────────────────────────────────
 
 def _ls_post(endpoint: str, body: dict) -> dict:  # type: ignore[type-arg]
@@ -333,9 +347,7 @@ def check_license_nonblocking(on_change: Optional[Callable[[bool], None]] = None
     on_change(new_result) is invoked from that background thread so the
     caller can react (e.g. re-apply license-gated UI state).
     """
-    # Never honored in a packaged build -- PyInstaller sets sys.frozen, and a
-    # shipping installer must not be unlockable with one environment variable.
-    if not getattr(sys, 'frozen', False) and os.environ.get('HDRSDR_DEV_UNLOCK') == '1':
+    if _dev_unlock_active():
         return True
 
     with _lock:
@@ -367,9 +379,7 @@ def check_license() -> bool:
     timestamp.  Only returns False when the key has been explicitly
     revoked/invalidated by the server (not merely unreachable).
     """
-    # Never honored in a packaged build -- PyInstaller sets sys.frozen, and a
-    # shipping installer must not be unlockable with one environment variable.
-    if not getattr(sys, 'frozen', False) and os.environ.get('HDRSDR_DEV_UNLOCK') == '1':
+    if _dev_unlock_active():
         return True
 
     with _lock:

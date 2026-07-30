@@ -35,7 +35,7 @@ import urllib.request
 import uuid
 from typing import Callable, Optional
 
-from src.license_errors import (
+from license_errors import (
     DeviceLimitError,
     InvalidKeyError,
     LicenseError,

@@ -18,8 +18,8 @@ class TestExceptionIdentity(unittest.TestCase):
     """
 
     def test_facade_reexports_identical_classes(self):
-        import src.license_errors as errors
-        import src.licensing as lic
+        import license_errors as errors
+        import licensing as lic
         for name in ('LicenseError', 'InvalidKeyError',
                      'DeviceLimitError', 'NetworkError'):
             self.assertIs(
@@ -27,7 +27,7 @@ class TestExceptionIdentity(unittest.TestCase):
                 msg=f'licensing.{name} is not license_errors.{name}')
 
     def test_hierarchy_preserved(self):
-        import src.license_errors as errors
+        import license_errors as errors
         self.assertTrue(issubclass(errors.InvalidKeyError, errors.LicenseError))
         self.assertTrue(issubclass(errors.DeviceLimitError, errors.LicenseError))
         self.assertTrue(issubclass(errors.NetworkError, errors.LicenseError))

@@ -35,6 +35,12 @@ import urllib.request
 import uuid
 from typing import Callable, Optional
 
+from src.license_errors import (
+    DeviceLimitError,
+    InvalidKeyError,
+    LicenseError,
+    NetworkError,
+)
 from settings import SETTINGS_DIR
 
 logger = logging.getLogger(__name__)
@@ -51,24 +57,6 @@ _API_TIMEOUT = 10
 _REFRESH_COOLDOWN = 30 * 24 * 3600  # re-validate against LS every 30 days
 
 _lock = threading.Lock()
-
-
-# ── Exceptions ─────────────────────────────────────────────────────────────────
-
-class LicenseError(Exception):
-    """Base class for all licensing errors."""
-
-
-class InvalidKeyError(LicenseError):
-    """The license key is not recognised or has been revoked."""
-
-
-class DeviceLimitError(LicenseError):
-    """This license key has reached its maximum number of activated devices."""
-
-
-class NetworkError(LicenseError):
-    """The licensing server could not be reached."""
 
 
 # ── Hardware fingerprint ───────────────────────────────────────────────────────

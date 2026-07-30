@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import platform
+import sys
 import threading
 import time
 import urllib.error
@@ -332,7 +333,9 @@ def check_license_nonblocking(on_change: Optional[Callable[[bool], None]] = None
     on_change(new_result) is invoked from that background thread so the
     caller can react (e.g. re-apply license-gated UI state).
     """
-    if os.environ.get('HDRSDR_DEV_UNLOCK') == '1':
+    # Never honored in a packaged build -- PyInstaller sets sys.frozen, and a
+    # shipping installer must not be unlockable with one environment variable.
+    if not getattr(sys, 'frozen', False) and os.environ.get('HDRSDR_DEV_UNLOCK') == '1':
         return True
 
     with _lock:
@@ -364,7 +367,9 @@ def check_license() -> bool:
     timestamp.  Only returns False when the key has been explicitly
     revoked/invalidated by the server (not merely unreachable).
     """
-    if os.environ.get('HDRSDR_DEV_UNLOCK') == '1':
+    # Never honored in a packaged build -- PyInstaller sets sys.frozen, and a
+    # shipping installer must not be unlockable with one environment variable.
+    if not getattr(sys, 'frozen', False) and os.environ.get('HDRSDR_DEV_UNLOCK') == '1':
         return True
 
     with _lock:

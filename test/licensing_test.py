@@ -543,5 +543,42 @@ class TestLoadLicenseTokenEdgeCases(unittest.TestCase):
                 self.assertIsNone(load_license_token())
 
 
+class TestDevUnlockGuard(unittest.TestCase):
+    """HDRSDR_DEV_UNLOCK must work in a source checkout but never in a build.
+
+    PyInstaller sets sys.frozen on the bundled interpreter. Without this guard
+    any end user can unlock every Pro feature with one environment variable.
+    """
+
+    def setUp(self):
+        # No token on disk, so an unguarded env var is the *only* thing that
+        # could make these return True.
+        self._patcher = patch('src.licensing.load_license_token', return_value=None)
+        self._patcher.start()
+        self.addCleanup(self._patcher.stop)
+
+    def test_dev_unlock_ignored_when_frozen(self):
+        from src import licensing
+        with patch.dict(os.environ, {'HDRSDR_DEV_UNLOCK': '1'}), \
+                patch.object(sys, 'frozen', True, create=True):
+            self.assertFalse(licensing.check_license())
+            self.assertFalse(licensing.check_license_nonblocking())
+
+    def test_dev_unlock_honored_when_not_frozen(self):
+        from src import licensing
+        # Ensure sys.frozen is absent, mirroring a plain source checkout.
+        with patch.dict(os.environ, {'HDRSDR_DEV_UNLOCK': '1'}):
+            had_frozen = hasattr(sys, 'frozen')
+            if had_frozen:
+                self.skipTest('running under a frozen interpreter')
+            self.assertTrue(licensing.check_license())
+            self.assertTrue(licensing.check_license_nonblocking())
+
+    def test_no_unlock_without_env_var(self):
+        from src import licensing
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(licensing.check_license())
+
+
 if __name__ == '__main__':
     unittest.main()

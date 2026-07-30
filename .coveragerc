@@ -9,5 +9,9 @@ show_missing = True
 fail_under = 90
 # main.pyw is the TkinterDnD + mainloop bootstrap: it can only run under a real
 # display with the packaged app, so it is intentionally not unit-tested.
+# src/pro/ is a separate private git repository with its own 198-test suite covering
+# it thoroughly (98%); omitting it here ensures public coverage measures only public code,
+# making local and CI measurements consistent (both ~97% when src/pro/ is omitted).
 omit =
     src/main.pyw
+    src/pro/*

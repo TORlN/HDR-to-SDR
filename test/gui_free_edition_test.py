@@ -16,6 +16,22 @@ sys.path.insert(0, _ROOT)
 sys.path.insert(0, _SRC)
 
 
+def _tk_available() -> bool:
+    """Probe whether Tk can be initialized (requires a display or xvfb)."""
+    try:
+        from tkinterdnd2 import TkinterDnD
+        root = TkinterDnD.Tk()
+        root.withdraw()
+        root.destroy()
+        return True
+    except Exception:
+        return False
+
+
+_TK_OK = _tk_available()
+_SKIP = "no Tk display available (need a desktop session or xvfb)"
+
+
 def _load_gui_without_pro():
     """Load a throwaway copy of gui.py with `pro.batch` forced unimportable.
 
@@ -132,6 +148,7 @@ class TestFreeEditionGui(unittest.TestCase):
         self.assertIs(mixin.start_batch(), False,
                        msg='fallback start_batch must never actually start a batch')
 
+    @unittest.skipUnless(_TK_OK, _SKIP)
     def test_gui_constructs_unlicensed(self):
         """The real construction path, with no pro/ present."""
         gui = _load_gui_without_pro()
@@ -142,6 +159,7 @@ class TestFreeEditionGui(unittest.TestCase):
         app = gui.HDRConverterGUI(root, licensed=False)
         self.assertFalse(app._licensed)
 
+    @unittest.skipUnless(_TK_OK, _SKIP)
     def test_rebuild_interactable_elements_excludes_premium(self):
         gui = _load_gui_without_pro()
         from tkinterdnd2 import TkinterDnD
@@ -152,6 +170,7 @@ class TestFreeEditionGui(unittest.TestCase):
         self.assertNotIn(app.quality_slider, app.interactable_elements)
         self.assertIn(app.browse_button, app.interactable_elements)
 
+    @unittest.skipUnless(_TK_OK, _SKIP)
     def test_single_file_drop_still_works_without_pro(self):
         """Batch (multi-file) drops are Pro, but a single-file drop is a
         core, license-agnostic feature -- handle_file_drop parses the drop
@@ -167,6 +186,7 @@ class TestFreeEditionGui(unittest.TestCase):
             app.handle_file_drop(type('E', (), {'data': 'C:/v/a.mp4'})())
         mock_load.assert_called_once_with('C:/v/a.mp4')
 
+    @unittest.skipUnless(_TK_OK, _SKIP)
     def test_editing_a_control_does_not_crash_without_pro(self):
         """_write_back_current_settings runs on every control-change handler
         (gamma, format, output path, ...) for every file, licensed or not --

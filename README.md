@@ -58,7 +58,7 @@ validation. Both calls are made directly from your machine to the respective API
 
 | Endpoint | Purpose | When | Source |
 |---|---|---|---|
-| `api.github.com` | Checks whether a newer release exists, and downloads the installer if you accept | On startup, and when you click Update | `src/updater.py` |
+| `api.github.com` | Checks whether a newer release exists, and downloads the installer if you accept. The actual installer download is a redirect to GitHub's asset CDN (`objects.githubusercontent.com`), not `api.github.com` itself | On startup, and when you click Update | `src/updater.py` |
 | `api.lemonsqueezy.com` | Validates a Pro license key; the implementation is in a private module | On Pro activation, and at most once every 30 days afterwards | Private (not in public repo) |
 
 **There is no analytics, no telemetry, no crash reporting, and no usage tracking** of

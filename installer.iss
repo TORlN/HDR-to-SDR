@@ -48,6 +48,10 @@ Source: ".\dist\HDR_to_SDR_Converter\*"; DestDir: "{app}"; Flags: ignoreversion 
 ; third-party notices must ship with the application.
 Source: ".\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: ".\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
+; THIRD_PARTY_NOTICES.md points readers at LICENSE and TRADEMARK.md -- ship
+; both so those pointers resolve in an installed app, not just in the repo.
+Source: ".\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: ".\TRADEMARK.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"

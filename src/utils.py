@@ -77,6 +77,21 @@ def is_gpu_only_tonemapper(tonemapper: str) -> bool:
 # between the two.
 VIDEO_FILE_FILTER = ("All Video Files", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v")
 
+
+def parse_drop_paths(data: str) -> list:  # type: ignore[type-arg]
+    """Split a tkdnd drop payload into individual file paths.
+
+    Pure string parsing with no licensing logic. Shared by gui.py's Community
+    Edition _BatchMixin fallback (handle_file_drop calls this for every drop,
+    single-file included, before it ever checks self._licensed) and Pro's
+    real _BatchMixin in pro/batch.py -- living here, in a public leaf module
+    both sides already import, means there is exactly one implementation
+    instead of two that have to be kept in sync by hand across a git repo
+    boundary.
+    """
+    tokens = re.findall(r'\{[^}]*\}|\S+', data or '')
+    return [t.strip('{}') for t in tokens if t.strip('{}')]
+
 # Flags that create the Vulkan device libplacebo runs on. Prepended to the ffmpeg
 # command (before -i) when the GPU tonemap path is active (CPU decode fallback).
 VULKAN_DEVICE_ARGS = ['-init_hw_device', 'vulkan=vk:0', '-filter_hw_device', 'vk']

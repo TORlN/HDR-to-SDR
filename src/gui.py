@@ -10,7 +10,7 @@ from dark_theme import apply_dark_theme
 from conversion import conversion_manager
 from utils import (get_video_properties, get_maxcll, TONEMAP, clear_maxfall_cache,
                    is_gpu_only_tonemapper, vulkan_libplacebo_available,
-                   VIDEO_FILE_FILTER)
+                   VIDEO_FILE_FILTER, parse_drop_paths as _shared_parse_drop_paths)
 from settings import load_settings, save_settings
 from licensing import InvalidKeyError, DeviceLimitError, NetworkError, LicenseError
 from PIL import Image, ImageTk
@@ -116,19 +116,13 @@ else:
             _write_back_current_settings/_load_input_file for every file."""
             return None
 
-        @staticmethod
-        def _parse_drop_paths(data: str) -> list:  # type: ignore[type-arg]
-            """Split a tkdnd drop payload into individual file paths.
-
-            Pure string parsing with no licensing logic -- duplicated here
-            (rather than left Pro-only) because handle_file_drop calls this
-            for every drop, single-file included, before it ever checks
-            self._licensed. Identical to the Pro implementation in
-            pro/batch.py; kept in sync manually since there is nothing to
-            import it from in this build."""
-            import re
-            tokens = re.findall(r'\{[^}]*\}|\S+', data or '')
-            return [t.strip('{}') for t in tokens if t.strip('{}')]
+        # Real implementation lives in utils.parse_drop_paths (a public leaf
+        # module both this fallback and pro/batch.py's real _BatchMixin
+        # import), not duplicated here -- see that function's docstring.
+        # handle_file_drop calls this for every drop, single-file included,
+        # before it ever checks self._licensed, so it must exist as a real,
+        # working, non-Pro-secret body rather than an inert stub.
+        _parse_drop_paths = staticmethod(_shared_parse_drop_paths)
 
 # Register the split-out modules under their src.* names so that
 # patch('src.dialogs.X'), patch('src.preview.X') target the same module
@@ -173,7 +167,7 @@ def _clamp(value: _Number, lo: _Number, hi: _Number) -> _Number:
 class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
     """Main application window for the HDR to SDR Converter."""
 
-    _licensed: bool = True  # class-level default for bare instances that bypass __init__
+    _licensed: bool = False  # class-level default for bare instances that bypass __init__
 
     # Output containers the user can pick.
     _OUTPUT_FORMATS = ['MP4', 'MKV', 'MOV']

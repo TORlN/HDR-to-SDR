@@ -117,3 +117,8 @@ class TestNetworkDisclosure(unittest.TestCase):
                     'src/licensing.py' not in line or 'pro' in line or 'closed' in line.lower() or 'private' in line.lower(),
                     msg=f'Lemonsqueezy row at line {i+1} should not cite src/licensing.py alone (it\'s just a façade)'
                 )
+        self.assertTrue(
+            found_lemonsqueezy_row,
+            msg='Network activity table has no api.lemonsqueezy.com row -- the row this '
+                'test is supposed to be checking is missing entirely'
+        )

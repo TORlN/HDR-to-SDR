@@ -1171,6 +1171,7 @@ class TestBatchQueue(unittest.TestCase):
 
     def test_multi_file_drop_adds_to_batch(self):
         gui = _bare_gui()
+        gui._licensed = True  # multi-file drop routes to the batch queue only when licensed
         gui.drop_target_registered = True
         gui.add_batch_files = MagicMock()
         event = MagicMock()

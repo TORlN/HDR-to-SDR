@@ -10,7 +10,7 @@ This application bundles unmodified `ffmpeg.exe` and `ffprobe.exe` binaries.
 - **Version:** `N-125146-gc6bb22dea0` (FFmpeg git revision `c6bb22dea0`)
 - **License:** GNU General Public License, **version 2 or later** (GPLv2+).
   This build is configured with `--enable-gpl --enable-libx264 --enable-libx265`,
-  which makes the combined work GPL-licensed. It is **not** configured with
+  which makes the resulting FFmpeg binaries GPL-licensed. It is **not** configured with
   `--enable-version3` or `--enable-nonfree`.
 - **Full license text:** `licenses/COPYING.GPLv2` and `licenses/ffmpeg-LICENSE.md`
 - **Project:** https://ffmpeg.org

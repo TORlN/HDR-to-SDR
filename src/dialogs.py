@@ -1,6 +1,7 @@
 """Modal dialogs: license activation and auto-update prompt."""
 from __future__ import annotations
 
+import importlib
 import os
 import shutil
 import tempfile
@@ -8,14 +9,6 @@ import threading
 import tkinter as tk
 import webbrowser
 from tkinter import ttk
-
-from licensing import (
-    activate_license,
-    InvalidKeyError,
-    DeviceLimitError,
-    NetworkError,
-    LicenseError,
-)
 
 from dialog_theme import (
     _ACCENT,
@@ -29,103 +22,64 @@ from dialog_theme import (
     _center_over_master,
 )
 
+# Imported as a module object, not `from pro.license_dialog import (...)`. As
+# in src/licensing.py: a `from`-import of an unresolved module leaves pyright
+# treating the unresolved import *declaration* as authoritative for these
+# names -- it wins over the perfectly good `class`/`def`s in the `except`
+# block below, so every consumer's `from dialogs import _LicenseDialog` (and
+# gui.py's second-hop `from dialogs import _LicenseDialog, ...`) would fail
+# to type-check even though the free stub is defined right here. Going
+# through `importlib.import_module` sidesteps that: there is no unresolved
+# `from` target for pyright to bind these names to, so the free-edition
+# definitions below are what consumers see whenever `pro/` is absent (i.e.
+# in CI, and in every Community Edition build).
+try:
+    _pro_license_dialog = importlib.import_module('pro.license_dialog')
+except ImportError:  # Community Edition — no Pro backend in this build.
+    _pro_license_dialog = None
 
-class _LicenseDialog(tk.Toplevel):
-    """Dark-themed modal for entering a Pro license key."""
+if _pro_license_dialog is not None:
+    _LicenseDialog = _pro_license_dialog._LicenseDialog
+    activate_license = _pro_license_dialog.activate_license
+else:
+    from licensing import activate_license  # the façade's raising stub
 
-    def __init__(self, master: tk.Misc) -> None:
-        super().__init__(master)
-        self.configure(bg=_BG)
-        self.title('Activate HDR to SDR Converter')
-        self.resizable(False, False)
-        self.protocol('WM_DELETE_WINDOW', self._on_close)
-        self._activated = False
-        self._build_ui()
-        _center_over_master(self, master, min_w=460, min_h=220)
+    class _LicenseDialog(tk.Toplevel):
+        """Free-edition stand-in: explains Pro is absent and links to the store.
 
-    def _build_ui(self) -> None:
-        tk.Label(self, text='Activate HDR to SDR Converter',
-                 bg=_BG, fg=_FG, font=_FONT_BOLD).pack(pady=(28, 4))
-        tk.Label(self, text='Enter your license key to unlock Pro features.',
-                 bg=_BG, fg='#aaaaaa', font=_FONT_SM).pack(pady=(0, 4))
-        link = tk.Label(self, text="Don't have a key? Get Pro at hdrtosdr.com",
-                        bg=_BG, fg=_ACCENT, font=_FONT_SM, cursor='hand2')
-        link.pack(pady=(0, 10))
-        link.bind('<Button-1>', lambda _: webbrowser.open('https://hdrtosdr.com/#pricing'))
-        self._key_var = tk.StringVar()
-        self._entry = tk.Entry(self, textvariable=self._key_var, width=44,
-                         bg=_ENTRY_BG, fg=_FG, insertbackground=_FG,
-                         relief='flat', font=_FONT)
-        self._entry.pack(padx=32, ipady=7)
-        self._entry.focus_set()
-        self._entry.bind('<Return>', lambda _: self._submit())
-        self._status_var = tk.StringVar()
-        tk.Label(self, textvariable=self._status_var,
-                 bg=_BG, fg=_ERROR_FG, font=_FONT_SM).pack(pady=(6, 0))
-        self._activate_btn = tk.Button(
-            self, text='Activate', command=self._submit,
-            bg=_ACCENT, fg=_FG,
-            activebackground='#005fa3', activeforeground=_FG,
-            relief='flat', padx=20, pady=7,
-            font=_FONT, cursor='hand2')
-        self._activate_btn.pack(pady=14)
-        link = tk.Label(self, text='Need to free up a machine slot? Manage activations →',
-                        bg=_BG, fg='#888888', font=_FONT_SM, cursor='hand2')
-        link.pack()
-        link.bind('<Button-1>', lambda _: self._open_manage_url())
-        link.bind('<Enter>', lambda _: link.config(fg='#aaaaaa'))
-        link.bind('<Leave>', lambda _: link.config(fg='#888888'))
+        gui._open_license_dialog constructs this, waits on it, and reads
+        .activated -- so this must be a real Toplevel exposing that property,
+        not a no-op. It has no key entry field because this build cannot
+        activate anything.
+        """
 
-    def _open_manage_url(self) -> None:
-        webbrowser.open('https://app.lemonsqueezy.com/my-orders')
+        def __init__(self, master: tk.Misc) -> None:
+            super().__init__(master)
+            self.configure(bg=_BG)
+            self.title('HDR to SDR Converter — Pro')
+            self.resizable(False, False)
+            self.protocol('WM_DELETE_WINDOW', self.destroy)
+            tk.Label(self, text='Pro features', bg=_BG, fg=_FG,
+                     font=_FONT_BOLD).pack(pady=(26, 6))
+            tk.Label(self,
+                     text='This is the Community Edition, which cannot activate\n'
+                          'a license. Get the full version to unlock Pro.',
+                     bg=_BG, fg='#aaaaaa', font=_FONT_SM,
+                     justify='center').pack(pady=(0, 12))
+            link = tk.Label(self, text='Get Pro at hdrtosdr.com',
+                            bg=_BG, fg=_ACCENT, font=_FONT_SM, cursor='hand2')
+            link.pack(pady=(0, 6))
+            link.bind('<Button-1>',
+                      lambda _: webbrowser.open('https://hdrtosdr.com/#pricing'))
+            tk.Button(self, text='Close', command=self.destroy,
+                      bg='#3a3a3a', fg=_FG, activebackground='#4a4a4a',
+                      activeforeground=_FG, relief='flat', padx=18, pady=7,
+                      font=_FONT, cursor='hand2').pack(pady=(8, 16))
+            _center_over_master(self, master, min_w=400, min_h=210)
 
-    def _submit(self) -> None:
-        key = self._key_var.get().strip()
-        if not key:
-            self._status_var.set('Please enter your license key.')
-            return
-        self._status_var.set('Validating…')
-        self._entry.config(state='disabled')
-        self._activate_btn.config(state='disabled')
-
-        # activate_license is a blocking HTTP round-trip -- running it
-        # directly on the Tk main thread would freeze the whole UI for the
-        # duration of the request/timeout. Run it on a worker thread and
-        # marshal the result back via self.after, matching _UpdateDialog's
-        # existing download pattern.
-        def _worker() -> None:
-            try:
-                activate_license(key)
-            except LicenseError as exc:
-                self.after(0, lambda e=exc: self._on_activation_error(e))
-            else:
-                self.after(0, self._on_activation_success)
-
-        threading.Thread(target=_worker, daemon=True).start()
-
-    def _on_activation_success(self) -> None:
-        self._activated = True
-        self.destroy()
-
-    def _on_activation_error(self, exc: LicenseError) -> None:
-        self._entry.config(state='normal')
-        self._activate_btn.config(state='normal')
-        if isinstance(exc, InvalidKeyError):
-            self._status_var.set('Invalid license key — please check and try again.')
-        elif isinstance(exc, DeviceLimitError):
-            self._status_var.set('Device limit reached. Deactivate another machine first.')
-        elif isinstance(exc, NetworkError):
-            self._status_var.set('Cannot reach license server. Check your connection.')
-        else:
-            self._status_var.set(str(exc))
-
-    def _on_close(self) -> None:
-        self._activated = False
-        self.destroy()
-
-    @property
-    def activated(self) -> bool:
-        return self._activated
+        @property
+        def activated(self) -> bool:
+            return False
 
 
 class _UpdateDialog(tk.Toplevel):

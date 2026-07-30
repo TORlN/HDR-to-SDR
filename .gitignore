@@ -63,6 +63,10 @@ old_icon.png
 src/_secrets.py
 signing/
 
+# Private Pro repo — nested independent git repo, never tracked here.
+# See docs/superpowers/specs/2026-07-30-pro-private-repo-split-design.md
+src/pro/
+
 # Committed smoke-test video fixtures (small, deliberately un-ignored so CI can
 # exercise the real ffmpeg pipeline against them; must come after every *.mp4/
 # *.mkv rule above so the negation isn't re-shadowed).

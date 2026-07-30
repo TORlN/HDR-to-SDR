@@ -51,11 +51,35 @@ All free features, plus:
 
 More Pro features are on the way. Follow this repo or check [hdrtosdr.com](https://hdrtosdr.com) for updates.
 
+## Network activity & privacy
+
+This application makes **exactly two** kinds of outbound request, both of which
+you can verify in this repository's source:
+
+| Endpoint | Purpose | When | Source |
+|---|---|---|---|
+| `api.github.com` | Checks whether a newer release exists, and downloads the installer if you accept | On startup, and when you click Update | `src/updater.py` |
+| `api.lemonsqueezy.com` | Validates a Pro license key | On activation, and at most once every 30 days afterwards | `src/licensing.py` |
+
+There is **no analytics, no telemetry, no crash reporting, and no usage
+tracking** of any kind. No analytics module has ever existed in this codebase.
+Nothing about your files, your machine, or your activity is transmitted
+anywhere. Video conversion is entirely local — `ffmpeg` runs on your machine and
+never uploads anything.
+
+The Community Edition makes only the `api.github.com` update check.
+
 ## Licensing
 
 Pro licenses are sold through [Lemon Squeezy](https://hdrtosdr.com/#pricing) and are **node-locked** to the machine they are activated on. Activation requires an internet connection the first time a key is entered on a new device. After activation, the app works offline indefinitely. It re-validates against the server at most once every 30 days. If the server is unreachable at that point, the local token is trusted so paid users are never blocked by network failures.
 
 The license token is stored in `%APPDATA%\HDR-to-SDR\license.dat` as an HMAC-signed, hardware-bound file. Copying the file to another machine will not work; the HMAC is keyed to the machine's hardware fingerprint.
+
+### Forking
+
+This code is MIT-licensed and you are welcome to fork it. The application name
+and logo are not part of that grant — please rename your fork, use your own
+icon, and generate a fresh installer `AppId`. See `TRADEMARK.md`.
 
 ## Requirements
 

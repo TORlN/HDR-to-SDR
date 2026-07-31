@@ -1337,6 +1337,20 @@ class TestPreviewPerformance(unittest.TestCase):
     """Snappiness: gamma changes avoid ffmpeg; extraction targets preview size;
     duration is probed once per file."""
 
+    def setUp(self) -> None:
+        # display_frames submits _prewarm_batch_originals/_converted to its own
+        # thread pool, and those call the batch extractors -- real ffmpeg, on a
+        # background thread that outlived the test that started it (spawns
+        # appeared after the runner had already printed OK). Mocking only
+        # _extract_preview_images misses them entirely: the prewarm path is
+        # separate from the on-demand one.
+        for name in ('extract_frames_batch',
+                     'extract_frames_with_conversion_batch',
+                     'extract_frames_with_gpu_conversion_batch'):
+            patcher = patch(f'src.preview.{name}', return_value=[])
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def test_gamma_change_reuses_cached_base_without_reextracting(self):
         gui = _bare_gui()
         gui.display_image_var = MagicMock()
@@ -1406,6 +1420,10 @@ class TestPreviewPerformance(unittest.TestCase):
             gui._preview_thread.result(timeout=5)
             gui.display_frames('in.mp4')
             gui._preview_thread.result(timeout=5)
+            # Drain the prewarm tasks while the mocks are still installed --
+            # _preview_thread only covers the on-demand worker, not the two
+            # prewarm jobs queued alongside it.
+            gui._preview_pool.shutdown(wait=True)
 
         # Second preview of the same file reuses the cached duration.
         self.assertEqual(mock_props.call_count, 1)

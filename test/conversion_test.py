@@ -1843,7 +1843,12 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         acceleration, not because of the profile-5 override -- nothing
         surprising happened, so no notice should fire."""
         manager = ConversionManager()
-        with patch('src.conversion.vulkan_libplacebo_available', return_value=True):
+        # Alone among these tests this one passes use_gpu=True, which sends
+        # construct_ffmpeg_command through is_gpu_available() -> real
+        # `ffmpeg -encoders` plus `nvidia-smi`. That made it the slowest
+        # non-smoke test in the suite (1.7s) and its result machine-dependent.
+        with patch('src.conversion.vulkan_libplacebo_available', return_value=True), \
+                patch.object(manager, 'detect_gpu_encoder', return_value='h264_nvenc'):
             manager.construct_ffmpeg_command(
                 'in.mkv', 'out.mkv', 1.0, self._dovi_props(profile=5), True,
                 tonemapper='reinhard', licensed=True)

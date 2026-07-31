@@ -42,6 +42,12 @@ class TestHDRConverterGUI(TestCase):
             # quality_var is an IntVar; mock it too (the dark theme no longer
             # creates a hidden default root that used to satisfy real Var creation).
             'int_var': patch('src.gui.tk.IntVar', return_value=self.mock_progress_var),
+            # Any path that loads a file runs _update_info_label, which shells
+            # out to ffprobe. The fixture paths ('test_input.mp4') do not
+            # exist, so a real probe could only ever return None after paying
+            # for a process spawn.
+            'props': patch('src.gui.get_video_properties', return_value=None),
+            'maxcll': patch('src.gui.get_maxcll', return_value=None),
         }
 
         # Combine all patches

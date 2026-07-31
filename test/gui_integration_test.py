@@ -27,6 +27,16 @@ from src.conversion import conversion_manager
 from src.utils import TONEMAP
 from src.settings import DEFAULTS
 
+# Imported by path rather than as `from . import` so the guards are available
+# under every discovery invocation: `unittest discover -s ./test` (what the
+# VS Code Testing extension issues) loads these modules as top-level names with
+# no package, so a relative import would fail outright.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _no_external import (  # noqa: E402
+    drain_after_timers, no_real_dialogs, no_real_subprocess,
+    pending_after_scripts,
+)
+
 
 # One Tk instance shared across the entire module.  Creating and destroying a
 # Tk() per test causes Tcl to deinit/reinit its library on each cycle, which
@@ -71,11 +81,22 @@ class _GuiTestBase(unittest.TestCase):
         self._save_patch = patch('src.gui.save_settings')
         self._load_patch.start()
         self._save_patch.start()
+        # Every file-loading path runs _update_info_label, which shells out to
+        # ffprobe via get_video_properties/get_maxcll. The fixture files are
+        # names like 'movie.mp4' that do not exist, so a real probe can only
+        # ever fail -- it returned None after spawning a process per test.
+        # Returning None directly is the same answer without the spawn; tests
+        # that need real metadata patch these themselves and override this.
+        self._props_patch = patch('src.gui.get_video_properties', return_value=None)
+        self._maxcll_patch = patch('src.gui.get_maxcll', return_value=None)
+        self._props_patch.start()
+        self._maxcll_patch.start()
         # Reuse the module-level Tk — never destroy it between tests.
         # Destroying and recreating Tk forces Tcl to deinit/reinit, which is
         # unreliable on broken system Tcl installs.  Instead, destroy only the
         # child widgets so HDRConverterGUI can build a fresh tree on the same root.
         self.root = _probe_root
+        drain_after_timers(self.root)
         for w in self.root.winfo_children():
             w.destroy()
         self.gui = HDRConverterGUI(self.root, licensed=True)
@@ -83,6 +104,8 @@ class _GuiTestBase(unittest.TestCase):
     def tearDown(self):
         self._load_patch.stop()
         self._save_patch.stop()
+        self._props_patch.stop()
+        self._maxcll_patch.stop()
 
 
 class TestConstruction(_GuiTestBase):
@@ -709,6 +732,7 @@ class TestUnlicensedState(_LicensingBase):
     @classmethod
     def setUpClass(cls) -> None:
         cls._start_patches()
+        drain_after_timers(_probe_root)
         for w in _probe_root.winfo_children():
             w.destroy()
         cls._class_gui = HDRConverterGUI(_probe_root, licensed=False)
@@ -778,6 +802,7 @@ class TestLicensedState(_LicensingBase):
     @classmethod
     def setUpClass(cls) -> None:
         cls._start_patches()
+        drain_after_timers(_probe_root)
         for w in _probe_root.winfo_children():
             w.destroy()
         cls._class_gui = HDRConverterGUI(_probe_root, licensed=True)
@@ -859,6 +884,7 @@ class TestLicenseTransition(unittest.TestCase):
         self._save_patch = patch('src.gui.save_settings')
         self._load_patch.start()
         self._save_patch.start()
+        drain_after_timers(_probe_root)
         for w in _probe_root.winfo_children():
             w.destroy()
 
@@ -915,6 +941,7 @@ class TestBitDepthToggle(unittest.TestCase):
         self._save_patch = patch('src.gui.save_settings')
         self._load_patch.start()
         self._save_patch.start()
+        drain_after_timers(_probe_root)
         for w in _probe_root.winfo_children():
             w.destroy()
 
@@ -1092,6 +1119,7 @@ class TestDropToQueue(unittest.TestCase):
         self._save_patch = patch('src.gui.save_settings')
         self._load_patch.start()
         self._save_patch.start()
+        drain_after_timers(_probe_root)
         for w in _probe_root.winfo_children():
             w.destroy()
 
@@ -1154,6 +1182,7 @@ class TestUpdateDialog(unittest.TestCase):
     """Tests for the _UpdateDialog Toplevel's changelog link."""
 
     def setUp(self) -> None:
+        drain_after_timers(_probe_root)
         for w in _probe_root.winfo_children():
             w.destroy()
 
@@ -1311,6 +1340,54 @@ class TestFeedbackLink(_GuiTestBase):
         with patch('src.gui.webbrowser') as mock_wb:
             self.gui._open_issues_page()
         mock_wb.open.assert_called_once_with('https://github.com/TORlN/HDR-to-SDR/issues')
+
+
+class TestFixturesDoNotEscapeTheirMocks(_GuiTestBase):
+    """Guards on the suite itself: no test may reach ffprobe or the network.
+
+    Both escapes were real and both were invisible, because the production code
+    swallows the resulting errors -- the suite stayed green while shelling out
+    to ffprobe on every file-select test and opening 40+ TLS connections to
+    GitHub per run. Offline, those connections turn into DNS timeouts.
+
+    These deliberately use the shared _GuiTestBase fixture and add no mocks of
+    their own, so they fail if that fixture ever stops covering the seams.
+    """
+
+    def test_fixture_setup_drains_the_auto_update_timer(self):
+        """HDRConverterGUI.__init__ arms root.after(3000, _start_update_check),
+        whose worker fetches the releases feed over HTTPS. The timer outlives
+        the test that armed it, so without draining it fires inside whichever
+        *later* test first pumps this shared root -- which is why the real
+        network hits landed on the update-dialog tests that carefully mock
+        download_installer, and why stale '_start_update_check' Tcl scripts
+        were erroring against destroyed widgets."""
+        # setUp already built a GUI, which armed the timer.
+        self.assertTrue(
+            [s for s in pending_after_scripts(self.root)
+             if '_start_update_check' in s],
+            'construction is expected to arm the update timer; if it no longer '
+            'does, this guard tests nothing and should be removed')
+
+        drain_after_timers(self.root)  # what every GUI fixture setUp now does
+
+        self.assertEqual(
+            [s for s in pending_after_scripts(self.root)
+             if '_start_update_check' in s], [],
+            'a drained event queue must not leave the update check armed')
+
+    def test_select_file_does_not_spawn_ffprobe(self):
+        with no_real_subprocess('select_file'), no_real_dialogs('select_file'), \
+                patch('src.gui.filedialog.askopenfilename', return_value='movie.mp4'), \
+                patch.object(self.gui, 'update_frame_preview'):
+            self.gui.select_file()
+
+    def test_handle_file_drop_does_not_spawn_ffprobe(self):
+        event = types.SimpleNamespace(data='{C:/videos/clip.mkv}')
+        with no_real_subprocess('handle_file_drop'), \
+                no_real_dialogs('handle_file_drop'), \
+                patch.object(self.gui, 'update_frame_preview'):
+            self.gui.handle_file_drop(event)
 
 
 if __name__ == '__main__':

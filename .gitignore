@@ -74,3 +74,4 @@ src/pro/
 !test/smoke_test_videos/*.mkv
 docs/
 .superpowers/
+HDR to SDR.code-workspace

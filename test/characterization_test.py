@@ -495,6 +495,36 @@ class TestPreviewPool(unittest.TestCase):
         expected = max(1, (os.cpu_count() or 1) // 4)
         self.assertEqual(_PREVIEW_POOL_WORKERS, expected)
 
+    def test_lazy_pool_is_built_at_the_hardware_scaled_width(self):
+        """The constant existing is not the same as it being used.
+
+        display_frames builds the pool lazily for instances that did not go
+        through HDRConverterGUI.__init__. Asserting only the formula (above)
+        would still pass if this call site were changed to a fixed
+        max_workers, silently dropping the hardware scaling on every machine
+        with more than 4 cores.
+        """
+        from src.preview import _PREVIEW_POOL_WORKERS
+        gui = _bare_gui()
+        gui.root = MagicMock()
+        gui.current_frame_index = 1
+        gui.total_frames = 5
+        gui.original_image = None
+        gui.last_time_position = None
+        gui.tonemap_var = MagicMock()
+        gui.tonemap_var.get.return_value = 'Reinhard'
+        gui._extract_preview_images = MagicMock(return_value=('o', 'c'))
+        gui._render_preview_images = MagicMock()
+        gui._prewarm_other_frames = MagicMock()
+
+        with patch('src.preview.ThreadPoolExecutor') as mock_pool, \
+                patch('src.preview.get_video_properties',
+                      return_value={'duration': 10.0}):
+            gui.display_frames('in.mp4')
+
+        self.assertEqual(mock_pool.call_args.kwargs.get('max_workers'),
+                         _PREVIEW_POOL_WORKERS)
+
     # ── display_frames uses the pool ────────────────────────────────────────
 
     def test_display_frames_returns_preview_future(self):

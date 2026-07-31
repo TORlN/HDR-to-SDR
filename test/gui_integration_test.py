@@ -1376,6 +1376,22 @@ class TestFixturesDoNotEscapeTheirMocks(_GuiTestBase):
              if '_start_update_check' in s], [],
             'a drained event queue must not leave the update check armed')
 
+    def test_preview_pool_is_built_at_the_hardware_scaled_width(self):
+        """The preview pool must stay hardware-scaled (max(1, cpu_count // 4)),
+        introduced in d7274a6 to replace a single daemon thread.
+
+        Observed on the real, fully-constructed GUI rather than by re-deriving
+        the formula: characterization_test asserts the *constant* is correct,
+        which would still pass if this call site were changed to a fixed
+        max_workers. _max_workers is private but stable across CPython
+        versions, and it is the only way to read back an executor's width.
+        """
+        from src.gui import _PREVIEW_POOL_WORKERS
+        self.assertEqual(self.gui._preview_pool._max_workers,
+                         _PREVIEW_POOL_WORKERS)
+        self.assertEqual(_PREVIEW_POOL_WORKERS,
+                         max(1, (os.cpu_count() or 1) // 4))
+
     def test_select_file_does_not_spawn_ffprobe(self):
         with no_real_subprocess('select_file'), no_real_dialogs('select_file'), \
                 patch('src.gui.filedialog.askopenfilename', return_value='movie.mp4'), \

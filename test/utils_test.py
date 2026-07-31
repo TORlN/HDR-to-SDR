@@ -716,6 +716,32 @@ class TestVulkanLibplaceboProbe(unittest.TestCase):
         vulkan_libplacebo_available()
         mock_run.assert_called_once()  # probed once, then cached
 
+    @patch('src.utils.FFMPEG_EXECUTABLE', 'ffmpeg')
+    @patch('src.utils.subprocess.run')
+    def test_probe_is_bounded_by_a_timeout(self, mock_run):
+        """This probe runs synchronously inside create_widgets, i.e. between
+        main.pyw's root.withdraw() and root.deiconify(). It initializes a
+        Vulkan device, so it is at the mercy of the customer's GPU driver --
+        and an unbounded subprocess.run there means a wedged driver hangs the
+        app at startup with no window and no error, which is precisely the
+        failure mode the v1-token deadlock produced."""
+        mock_run.return_value = MagicMock(returncode=0)
+        vulkan_libplacebo_available()
+        self.assertIsNotNone(
+            mock_run.call_args.kwargs.get('timeout'),
+            'the startup Vulkan probe must not be able to block forever')
+
+    @patch('src.utils.FFMPEG_EXECUTABLE', 'ffmpeg')
+    @patch('src.utils.subprocess.run',
+           side_effect=subprocess.TimeoutExpired(cmd='ffmpeg', timeout=1))
+    def test_false_when_probe_times_out(self, _run):
+        """TimeoutExpired subclasses SubprocessError, NOT OSError, so the
+        existing except clause does not catch it. Adding a timeout without
+        widening that clause would convert a startup hang into an uncaught
+        exception on the same pre-window path -- no better. Falling back to
+        the CPU tonemap path is the correct answer to 'GPU probe inconclusive'."""
+        self.assertFalse(vulkan_libplacebo_available())
+
 
 # ---------------------------------------------------------------------------
 # Issue #1 — Concurrency: _MAXFALL_CACHE must be guarded by a lock

@@ -532,12 +532,23 @@ def reset_cuda_interop_probe():
     global _cuda_interop_available
     _cuda_interop_available = None
 
+# Ceiling for the startup GPU probe below. It runs inside create_widgets --
+# i.e. between main.pyw's root.withdraw() and root.deiconify() -- so an
+# unbounded wait there is a startup hang with no window and no error. Measured
+# at ~1s on a healthy machine; 20s leaves a wide margin for a cold driver or
+# first-run shader compilation while still bounding a wedged one. Erring
+# generous on purpose: a premature timeout silently costs that customer GPU
+# tonemapping, so a false negative is worse than a slow true positive.
+_GPU_PROBE_TIMEOUT = 20
+
+
 def vulkan_libplacebo_available():
     """Return True if this ffmpeg can tonemap on the GPU via Vulkan + libplacebo.
 
     Probes once and caches the result. The probe runs the real filter chain on a
     tiny synthetic frame, so a success genuinely proves the path works on this
-    machine; on any failure we fall back to the CPU tonemap path.
+    machine; on any failure -- including an inconclusive one -- we fall back to
+    the CPU tonemap path.
     """
     global _libplacebo_available
     if _libplacebo_available is not None:
@@ -560,8 +571,18 @@ def vulkan_libplacebo_available():
         result = subprocess.run(
             cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             startupinfo=startupinfo, creationflags=creationflags,
+            timeout=_GPU_PROBE_TIMEOUT,
         )
         _libplacebo_available = (result.returncode == 0)
+    except subprocess.TimeoutExpired:
+        # Listed separately because TimeoutExpired subclasses SubprocessError,
+        # not OSError -- the clause below does not catch it, and letting it
+        # escape would turn a startup hang into an uncaught exception on the
+        # same pre-window path.
+        logging.warning(
+            f"libplacebo probe exceeded {_GPU_PROBE_TIMEOUT}s; assuming "
+            f"unavailable and falling back to CPU tonemapping")
+        _libplacebo_available = False
     except (FileNotFoundError, OSError) as e:
         logging.debug(f"libplacebo probe failed to run: {e}")
         _libplacebo_available = False

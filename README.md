@@ -14,7 +14,7 @@ The [latest release](https://github.com/TORlN/HDR-to-SDR/releases) is free to do
 - **GPU/CPU dual pipeline**: tonemapping runs on the GPU via libplacebo (Vulkan) when available, falling back to a pure-CPU ffmpeg filter chain — GPU tonemapping roughly halves conversion time on capable hardware.
 - **Real color science**: gamut conversion runs through a generated BT.2020→BT.709 3D LUT (tetrahedral interpolation) instead of approximate gamma math, on both the CPU and GPU paths.
 - **Dolby Vision (profile 5) RPU handling**, automatic hardware encoder detection (NVENC / AMF / QSV) with CPU fallback, and a licensing system built on HMAC-signed, hardware-locked offline license tokens.
-- **Tested and typed**: 13 test modules run against Python 3.10–3.13 (headless, via Xvfb, to exercise the real Tkinter GUI) on every push, gated by a 90% coverage floor and a zero-error `pyright` pass on `src/`.
+- **Tested and typed**: 19 test modules run against Python 3.10–3.13 (headless, via Xvfb, to exercise the real Tkinter GUI) on every push, gated by a 90% coverage floor and a zero-error `pyright` pass on `src/`.
 - **Signed, installable releases**: PyInstaller build + Inno Setup installer, code-signed via Azure Trusted Signing, with an in-app auto-updater.
 
 ## Features
@@ -78,7 +78,9 @@ are never uploaded, and your files' contents never leave your machine.
 
 Pro licenses are sold through [Lemon Squeezy](https://hdrtosdr.com/#pricing) and are **node-locked** to the machine they are activated on. Activation requires an internet connection the first time a key is entered on a new device. After activation, the app works offline indefinitely. It re-validates against the server at most once every 30 days. If the server is unreachable at that point, the local token is trusted so paid users are never blocked by network failures.
 
-The license token is stored in `%APPDATA%\HDR-to-SDR\license.dat` as an HMAC-signed, hardware-bound file. Copying the file to another machine will not work; the HMAC is keyed to the machine's hardware fingerprint.
+The license token is stored in `%APPDATA%\HDR-to-SDR\license.dat` as an HMAC-signed, hardware-bound file. Copying the file to another machine will not work: the signing key is derived from a build-time secret combined with the machine's hardware fingerprint, so a token can be verified only by a genuine build running on the machine it was issued to.
+
+**Upgrading from 3.1.x or earlier:** tokens issued before 3.2.0 were signed without that secret, so they cannot be trusted offline and are re-validated online once, then rewritten in the new format. In practice this means the first launch after updating needs an internet connection; if you launch offline on that one run, the app will ask you to activate. Reconnect and relaunch and it will pick the license back up, without consuming an extra activation. After that, offline use is indefinite as described above.
 
 ### Forking
 
@@ -100,3 +102,5 @@ icon, and generate a fresh installer `AppId`. See `TRADEMARK.md`.
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+Released builds bundle FFmpeg, which is distributed separately under the GNU GPL v2 or later, along with x264 and x265. Their license texts, and a written offer for the corresponding source, are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the [`licenses/`](licenses/) folder. The MIT grant above covers this project's own code, not the bundled third-party binaries.

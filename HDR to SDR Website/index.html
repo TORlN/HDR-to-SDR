@@ -802,8 +802,9 @@
           </div>
           <h3 style="font-size:17px;font-weight:700;margin-bottom:14px;">Real 3D LUT Color Pipeline</h3>
           <ul class="check-list" style="margin:0;">
-            <li><span class="tick">✓</span> <strong>Free:</strong> Rec.2020 &rarr; Rec.709 normalization moves
-              onto an actual .cube LUT stage, the foundation custom LUT support builds on in v4.0.</li>
+            <li><span class="tick">✓</span> <strong>Free:</strong> Rec.2020 &rarr; Rec.709 normalization now
+              runs through a real .cube LUT stage on both the CPU and GPU paths. This is built out across the
+              3.2 series as the foundation preset and custom LUT support lands on in v4.0.</li>
           </ul>
         </div>
 
@@ -813,7 +814,7 @@
 
       <div class="grid grid-cols-1 sm:grid-cols-2" style="gap:20px;">
 
-        <!-- Custom LUT Import -->
+        <!-- Preset & Custom LUTs -->
         <div class="feature-card">
           <div class="feature-icon" style="background:rgba(91,156,246,0.10);border:1px solid rgba(91,156,246,0.22);">
             <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#5b9cf6" stroke-width="1.7"
@@ -822,8 +823,10 @@
               <path d="M11 11L19 6.5M11 11L3 6.5M11 11V20" />
             </svg>
           </div>
-          <h3 style="font-size:17px;font-weight:700;margin-bottom:14px;">Creative 3D LUT Injection (.cube)</h3>
+          <h3 style="font-size:17px;font-weight:700;margin-bottom:14px;">Preset &amp; Custom 3D LUTs (.cube)</h3>
           <ul class="check-list" style="margin:0;">
+            <li><span class="tick">✓</span> <strong>Free:</strong> A library of built-in preset looks you can
+              apply on top of the conversion, previewed live.</li>
             <li class="pro"><span class="tick">✓</span> <strong>Pro:</strong> Import any custom .cube file,
               creative grades or camera-specific profiles, directly into the live preview and processing
               chain.</li>

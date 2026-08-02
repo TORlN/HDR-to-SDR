@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 import os
 import subprocess
 import threading
 import webbrowser
 import re
 import logging
+from dataclasses import dataclass, replace
+from typing import Any, Callable
 from tkinter import messagebox, ttk
 from utils import (get_video_properties, FFMPEG_CONVERT_FILTER,
                    FFMPEG_EXECUTABLE,
@@ -13,6 +17,43 @@ from utils import (get_video_properties, FFMPEG_CONVERT_FILTER,
                    get_lut_filter_path,
                    _startupinfo as _utils_startupinfo)
 import platform
+
+
+@dataclass(frozen=True)
+class ConversionRequest:
+    """Everything about *what* to encode: no Tk, no callbacks, no I/O.
+
+    Frozen so a derived variant can only be made with dataclasses.replace --
+    the GPU->CPU retry depends on deriving its request from the original
+    rather than reassembling one, which is how settings used to get dropped.
+    """
+    input_path: str
+    output_path: str
+    gamma: float
+    use_gpu: bool
+    open_after_conversion: bool
+    tonemapper: str = 'reinhard'
+    quality: int = 23
+    quality_mode: str = 'cq'
+    bit_depth: int = 8
+    licensed: bool = False
+    lut_enabled: bool = True
+
+
+@dataclass(frozen=True, eq=False)
+class ConversionUI:
+    """Every GUI handle this module needs, in one place.
+
+    eq=False because it holds live Tk widgets, for which field-wise equality
+    is meaningless -- and because a generated __hash__ would raise on the
+    interactable_elements list.
+    """
+    gui_instance: Any
+    progress_var: Any
+    interactable_elements: list[Any]
+    cancel_button: Any
+    on_complete: Callable[[bool], None] | None = None
+
 
 class ConversionManager:
     def __init__(self):

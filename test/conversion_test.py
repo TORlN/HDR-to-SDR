@@ -13,6 +13,82 @@ from tkinter import ttk
 from PIL import Image
 from src.utils import FFMPEG_CONVERT_FILTER, get_lut_filter_path
 from src.utils import FFMPEG_EXECUTABLE  # Import FFMPEG_EXECUTABLE
+from dataclasses import FrozenInstanceError, replace
+from src.conversion import ConversionRequest, ConversionUI
+
+
+def _req(**overrides) -> ConversionRequest:
+    """A ConversionRequest with test defaults; override only what matters.
+
+    Module-level so every test class in this file shares one definition -- and
+    so adding a field later is a one-line change instead of 70.
+    """
+    base = dict(input_path='in.mp4', output_path='out.mkv', gamma=1.0,
+                use_gpu=False, open_after_conversion=False)
+    base.update(overrides)
+    return ConversionRequest(**base)
+
+
+def _ui(**overrides) -> ConversionUI:
+    """A ConversionUI wired to mocks; override only what the test asserts on."""
+    base = dict(gui_instance=MagicMock(), progress_var=MagicMock(),
+                interactable_elements=[], cancel_button=MagicMock())
+    base.update(overrides)
+    return ConversionUI(**base)
+
+
+class TestConversionRequest(unittest.TestCase):
+    """The request is an immutable snapshot of what to encode."""
+
+    def test_defaults_match_start_conversion_defaults(self):
+        """Defaults must mirror start_conversion's, or building a request
+        from a partial call would silently change encoder behavior."""
+        r = _req()
+        self.assertEqual(r.tonemapper, 'reinhard')
+        self.assertEqual(r.quality, 23)
+        self.assertEqual(r.quality_mode, 'cq')
+        self.assertEqual(r.bit_depth, 8)
+        self.assertIs(r.licensed, False)
+        self.assertIs(r.lut_enabled, True)
+
+    def test_request_is_frozen(self):
+        r = _req()
+        with self.assertRaises(FrozenInstanceError):
+            r.use_gpu = True  # type: ignore[misc]
+
+    def test_replace_changes_only_the_named_field(self):
+        """The GPU->CPU retry derives its request this way; any field it
+        silently dropped would re-encode with the wrong settings."""
+        r = _req(use_gpu=True, quality=30000, quality_mode='bitrate',
+                 bit_depth=10, licensed=True, lut_enabled=False,
+                 tonemapper='hable', open_after_conversion=True)
+        cpu = replace(r, use_gpu=False)
+        self.assertIs(cpu.use_gpu, False)
+        for field in ('input_path', 'output_path', 'gamma', 'tonemapper',
+                      'quality', 'quality_mode', 'bit_depth', 'licensed',
+                      'lut_enabled', 'open_after_conversion'):
+            self.assertEqual(getattr(cpu, field), getattr(r, field),
+                             msg=f'replace() dropped {field}')
+
+
+class TestConversionUI(unittest.TestCase):
+
+    def test_on_complete_defaults_to_none(self):
+        """on_complete is None in single-file mode; batch mode supplies it.
+        _start reads this to decide whether guards may show a dialog."""
+        self.assertIsNone(_ui().on_complete)
+
+    def test_ui_is_frozen(self):
+        ui = _ui()
+        with self.assertRaises(FrozenInstanceError):
+            ui.cancel_button = MagicMock()  # type: ignore[misc]
+
+    def test_ui_holds_a_mutable_element_list_without_hashing(self):
+        """eq=False keeps ConversionUI from generating a __hash__ that would
+        raise on the interactable_elements list."""
+        ui = _ui(interactable_elements=[MagicMock(), MagicMock()])
+        self.assertEqual(len(ui.interactable_elements), 2)
+
 
 class TestConversionManager(unittest.TestCase):
 

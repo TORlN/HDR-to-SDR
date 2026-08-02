@@ -63,11 +63,15 @@ class ConversionManager:
         self._request: ConversionRequest | None = None
         self._ui: ConversionUI | None = None
 
-    def start_conversion(self, input_path, output_path, gamma, use_gpu,
-                         progress_var, interactable_elements, gui_instance,
-                         open_after_conversion, cancel_button, tonemapper='reinhard',
-                         quality=23, quality_mode='cq', on_complete=None, bit_depth=8,
-                         licensed=False, lut_enabled=True):
+    def start_conversion(self, input_path: str, output_path: str, gamma: float,
+                         use_gpu: bool, progress_var: Any,
+                         interactable_elements: list[Any], gui_instance: Any,
+                         open_after_conversion: bool, cancel_button: Any,
+                         tonemapper: str = 'reinhard', quality: int = 23,
+                         quality_mode: str = 'cq',
+                         on_complete: Callable[[bool], None] | None = None,
+                         bit_depth: int = 8, licensed: bool = False,
+                         lut_enabled: bool = True) -> bool:
         """Public entry point. Frozen signature -- src/pro/batch.py calls this.
 
         Assembles the request/UI pair and hands off to _start, which is also
@@ -177,7 +181,7 @@ class ConversionManager:
         return True
 
     @staticmethod
-    def _reject(message, show_dialog):
+    def _reject(message: str, show_dialog: bool) -> None:
         """Log a guard rejection; only pop a blocking dialog in interactive
         (single-file) mode. A batch run has no human watching for it, so a
         modal here would stall the whole queue until someone clicks it --
@@ -187,7 +191,8 @@ class ConversionManager:
         else:
             logging.error(f"Conversion rejected: {message}")
 
-    def verify_paths(self, input_path, output_path, show_dialog=True):
+    def verify_paths(self, input_path: str, output_path: str,
+                     show_dialog: bool = True) -> bool:
         if not input_path or not output_path:
             self._reject(
                 "Please select both an input file and specify an output file.", show_dialog)
@@ -201,11 +206,11 @@ class ConversionManager:
             return False
         return True
 
-    def disable_ui(self, elements):
+    def disable_ui(self, elements: list[Any]) -> None:
         for element in elements:
             element.config(state="disabled")
 
-    def enable_ui(self, elements):
+    def enable_ui(self, elements: list[Any]) -> None:
         for element in elements:
             # A ttk.Combobox re-enabled to 'normal' becomes freely typeable,
             # not just clickable -- these are only ever built 'readonly', so
@@ -480,7 +485,8 @@ class ConversionManager:
     # .mp4/.mov it can never carry a higher-bit-depth stream, regardless of encoder.
     _HIGH_BIT_DEPTH_INCOMPATIBLE_EXTS = {'m4v'}
 
-    def validate_bit_depth_output(self, output_path, bit_depth):
+    def validate_bit_depth_output(self, output_path: str,
+                                  bit_depth: int) -> str | None:
         """Return a user-facing error string if *bit_depth* can't be honored for
         this output container, else None. Callers must check this before
         constructing/launching ffmpeg so an invalid combination is caught with
@@ -506,7 +512,9 @@ class ConversionManager:
     _TEXT_SUBTITLES = {'subrip', 'srt', 'ass', 'ssa', 'text', 'mov_text', 'webvtt'}
     _MP4_FAMILY = {'mp4', 'm4v', 'mov'}
 
-    def _container_stream_args(self, output_path, properties):
+    def _container_stream_args(
+        self, output_path: str, properties: dict[str, Any]
+    ) -> tuple[list[str], list[str], list[str]]:
         """Decide subtitle mapping and audio/subtitle codecs for the output container.
 
         Prefer lossless stream copy. For MP4-family containers, which can't copy
@@ -539,7 +547,7 @@ class ConversionManager:
 
         return (subtitle_map_args, audio_codec_args, subtitle_codec_args)
 
-    def start_ffmpeg_process(self, cmd):
+    def start_ffmpeg_process(self, cmd: list[str]) -> subprocess.Popen[str]:
         """Start the FFmpeg process without showing a console window."""
         startupinfo, creationflags = _utils_startupinfo()
 
@@ -631,7 +639,7 @@ class ConversionManager:
             if ui.on_complete is not None:
                 ui.on_complete(False)
 
-    def parse_time(self, time_str):
+    def parse_time(self, time_str: str) -> float:
         hours, minutes, seconds = map(float, time_str.split(':'))
         return hours * 3600 + minutes * 60 + seconds
 
@@ -693,7 +701,7 @@ class ConversionManager:
             if hasattr(ui.gui_instance, 'register_drop_target'):
                 ui.gui_instance.register_drop_target()
 
-    def _nvidia_present(self):
+    def _nvidia_present(self) -> bool:
         """Return True if nvidia-smi reports a usable NVIDIA GPU."""
         try:
             si, flags = _utils_startupinfo()
@@ -708,7 +716,7 @@ class ConversionManager:
         except (FileNotFoundError, OSError):
             return False
 
-    def _list_encoders(self):
+    def _list_encoders(self) -> str:
         """Return lowercase stdout of 'ffmpeg -encoders', or '' on failure."""
         try:
             si, flags = _utils_startupinfo()
@@ -725,7 +733,7 @@ class ConversionManager:
         except (FileNotFoundError, OSError):
             return ''
 
-    def detect_gpu_encoder(self):
+    def detect_gpu_encoder(self) -> str | None:
         """Detect best available H.264 GPU encoder; sets and returns self._gpu_encoder.
 
         Priority: NVENC (requires confirmed NVIDIA GPU) > AMF > QSV > None.
@@ -745,7 +753,7 @@ class ConversionManager:
         logging.debug(f"Detected GPU encoder: {self._gpu_encoder}")
         return self._gpu_encoder
 
-    def is_gpu_acceleration_available(self):
+    def is_gpu_acceleration_available(self) -> bool:
         """True if any GPU acceleration is usable: a hardware H.264 encoder
         (nvenc/amf/qsv) and/or GPU tonemapping via libplacebo. Either one alone
         makes the GPU toggle worthwhile -- a machine with Vulkan/libplacebo but

@@ -254,7 +254,9 @@ class TestMonitorProgress(unittest.TestCase):
         proc.stderr = iter(['cuda failure'])
         proc.returncode = 1
         manager.process = proc
-        manager.start_conversion = MagicMock()
+        # The retry re-enters _start directly (not the public start_conversion);
+        # asserting on start_conversion here would pass regardless of behavior.
+        manager._start = MagicMock()
         manager.handle_completion = MagicMock()
 
         gui = self._gui()
@@ -265,7 +267,7 @@ class TestMonitorProgress(unittest.TestCase):
             90.0,
         )
 
-        manager.start_conversion.assert_not_called()
+        manager._start.assert_not_called()
         manager.handle_completion.assert_called_once()
 
 

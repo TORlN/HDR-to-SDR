@@ -4,6 +4,7 @@ import subprocess  # Added import
 import multiprocessing  # Added import
 import ctypes  # Added import for SW_HIDE
 import threading  # Added import for threading
+import inspect
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 import unittest
 from unittest.mock import patch, MagicMock, ANY  # Import ANY
@@ -13,7 +14,7 @@ from tkinter import ttk
 from PIL import Image
 from src.utils import FFMPEG_CONVERT_FILTER, get_lut_filter_path
 from src.utils import FFMPEG_EXECUTABLE  # Import FFMPEG_EXECUTABLE
-from dataclasses import FrozenInstanceError, replace
+from dataclasses import FrozenInstanceError, replace, fields
 from src.conversion import ConversionRequest, ConversionUI
 
 
@@ -42,14 +43,26 @@ class TestConversionRequest(unittest.TestCase):
 
     def test_defaults_match_start_conversion_defaults(self):
         """Defaults must mirror start_conversion's, or building a request
-        from a partial call would silently change encoder behavior."""
-        r = _req()
-        self.assertEqual(r.tonemapper, 'reinhard')
-        self.assertEqual(r.quality, 23)
-        self.assertEqual(r.quality_mode, 'cq')
-        self.assertEqual(r.bit_depth, 8)
-        self.assertIs(r.licensed, False)
-        self.assertIs(r.lut_enabled, True)
+        from a partial call would silently change encoder behavior.
+
+        Reads start_conversion's real signature via inspect rather than
+        hard-coding the literals here: ~70 call sites in this file build
+        requests through _req(), which relies on ConversionRequest's
+        dataclass defaults, not on start_conversion's. If the two ever
+        diverged (a default changed on one but not the other), a
+        hard-coded copy of the values would stay green and the divergence
+        would be invisible everywhere else in the suite.
+        """
+        sig = inspect.signature(ConversionManager.start_conversion)
+        request_defaults = {f.name: f.default for f in fields(ConversionRequest)}
+        for name in ('tonemapper', 'quality', 'quality_mode', 'bit_depth',
+                     'licensed', 'lut_enabled'):
+            start_default = sig.parameters[name].default
+            self.assertEqual(
+                start_default, request_defaults[name],
+                msg=(f"start_conversion's default for {name!r} "
+                     f"({start_default!r}) no longer matches "
+                     f"ConversionRequest's ({request_defaults[name]!r})"))
 
     def test_request_is_frozen(self):
         r = _req()
@@ -2147,14 +2160,14 @@ class TestRetryUsesTheRequest(unittest.TestCase):
         encoding. Previously it re-read input_path_var/output_path_var, so a
         path edited mid-conversion silently redirected the retry."""
         m = ConversionManager()
-        m._request = _req(input_path='original_in.mkv',
-                          output_path='original_out.mp4', use_gpu=True)
+        request = _req(input_path='original_in.mkv',
+                       output_path='original_out.mp4', use_gpu=True)
         ui = _ui()
         ui.gui_instance.input_path_var.get.return_value = 'CHANGED_in.mkv'
         ui.gui_instance.output_path_var.get.return_value = 'CHANGED_out.mp4'
         with patch.object(m, '_start') as mock_start, \
              patch('src.conversion.messagebox.showwarning'):
-            m._retry_with_cpu(ui)
+            m._retry_with_cpu(request, ui)
         sent = mock_start.call_args.args[0]
         self.assertEqual(sent.input_path, 'original_in.mkv')
         self.assertEqual(sent.output_path, 'original_out.mp4')
@@ -2162,12 +2175,12 @@ class TestRetryUsesTheRequest(unittest.TestCase):
     def test_cpu_retry_forces_cpu_but_keeps_every_other_setting(self):
         """Replaces the old tests that poked manager._licensed / _quality."""
         m = ConversionManager()
-        m._request = _req(use_gpu=True, quality=30000, quality_mode='bitrate',
-                          bit_depth=10, licensed=True, lut_enabled=False,
-                          tonemapper='hable')
+        request = _req(use_gpu=True, quality=30000, quality_mode='bitrate',
+                       bit_depth=10, licensed=True, lut_enabled=False,
+                       tonemapper='hable')
         with patch.object(m, '_start') as mock_start, \
              patch('src.conversion.messagebox.showwarning'):
-            m._retry_with_cpu(_ui())
+            m._retry_with_cpu(request, _ui())
         sent = mock_start.call_args.args[0]
         self.assertIs(sent.use_gpu, False)
         self.assertEqual(sent.quality, 30000)
@@ -2181,22 +2194,48 @@ class TestRetryUsesTheRequest(unittest.TestCase):
         """A GPU-only tonemapper has no CPU path; without this the batch item
         is stuck at 'Converting' forever."""
         m = ConversionManager()
-        m._request = _req(use_gpu=True, tonemapper='bt.2390')
+        request = _req(use_gpu=True, tonemapper='bt.2390')
         cb = MagicMock()
         with patch.object(m, '_start', side_effect=ValueError('needs GPU')), \
              patch('src.conversion.messagebox'):
-            m._retry_with_cpu(_ui(on_complete=cb))
+            m._retry_with_cpu(request, _ui(on_complete=cb))
         cb.assert_called_once_with(False)
 
     def test_cpu_retry_writes_back_gpu_accel_off(self):
         """gpu_accel_var.set(False) alone doesn't fire the checkbutton's
         command= callback, so the batch item would keep a stale gpu_accel=True."""
         m = ConversionManager()
-        m._request = _req(use_gpu=True)
+        request = _req(use_gpu=True)
         ui = _ui()
         with patch.object(m, '_start'), patch('src.conversion.messagebox.showwarning'):
-            m._retry_with_cpu(ui)
+            m._retry_with_cpu(request, ui)
         ui.gui_instance._write_back_current_settings.assert_called_once()
+
+    def test_cpu_retry_uses_the_request_it_was_handed_not_self_request(self):
+        """FINDING 1 regression pin: monitor_progress hands _retry_with_cpu a
+        per-run snapshot. If _retry_with_cpu ever went back to reading
+        self._request instead, a cancel-then-immediately-start-another-file
+        race would let the retry silently re-encode the WRONG (currently
+        running) conversion's request -- two ffmpeg processes writing the
+        same '-y' output path. self._request is set to a different request
+        than the one handed to _retry_with_cpu to prove the handed one wins."""
+        m = ConversionManager()
+        handed_request = _req(input_path='handed_in.mkv',
+                              output_path='handed_out.mp4', use_gpu=True,
+                              tonemapper='hable')
+        # Simulates conversion B already having started and overwritten
+        # self._request by the time A's retry callback runs.
+        m._request = _req(input_path='other_in.mkv',
+                          output_path='other_out.mp4', use_gpu=True,
+                          tonemapper='mobius')
+        ui = _ui()
+        with patch.object(m, '_start') as mock_start, \
+             patch('src.conversion.messagebox.showwarning'):
+            m._retry_with_cpu(handed_request, ui)
+        sent = mock_start.call_args.args[0]
+        self.assertEqual(sent.input_path, 'handed_in.mkv')
+        self.assertEqual(sent.output_path, 'handed_out.mp4')
+        self.assertEqual(sent.tonemapper, 'hable')
 
 
 class TestNoLooseStateRemains(unittest.TestCase):

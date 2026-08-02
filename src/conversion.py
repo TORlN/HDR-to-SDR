@@ -133,14 +133,8 @@ class ConversionManager:
         self.cancelled = False
 
         input_path = request.input_path
-        output_path = request.output_path
-        gui_instance = ui.gui_instance
         interactable_elements = ui.interactable_elements
         cancel_button = ui.cancel_button
-        progress_var = ui.progress_var
-        open_after_conversion = request.open_after_conversion
-        gamma = request.gamma
-        tonemapper = request.tonemapper
 
         properties = get_video_properties(input_path)
         if properties is None:
@@ -160,7 +154,7 @@ class ConversionManager:
         cancel_button.grid()
 
         try:
-            cmd = self.construct_ffmpeg_command(self._request, properties)
+            cmd = self.construct_ffmpeg_command(request, properties)
         except Exception:
             # The UI was already disabled and the cancel button gridded above,
             # but self.process hasn't been assigned yet -- Cancel would be a
@@ -175,7 +169,7 @@ class ConversionManager:
 
         thread = threading.Thread(
             target=self.monitor_progress,
-            args=(self._request, self._ui, properties['duration']))
+            args=(request, ui, properties['duration']))
         thread.daemon = True
         thread.start()
         return True
@@ -607,18 +601,20 @@ class ConversionManager:
                 logging.warning("GPU acceleration failed. Retrying with CPU encoding.")
                 # The retry touches Tk (gpu checkbox, dialog, UI state) and must run
                 # on the main thread, not this worker thread.
-                ui.gui_instance.root.after(0, lambda: self._retry_with_cpu(ui))
+                ui.gui_instance.root.after(0, lambda: self._retry_with_cpu(request, ui))
             else:
                 self.handle_completion(request, ui, error_messages, returncode)
 
-    def _retry_with_cpu(self, ui: ConversionUI) -> None:
+    def _retry_with_cpu(self, request: ConversionRequest, ui: ConversionUI) -> None:
         """Restart the conversion on the CPU after a GPU failure. Main thread.
 
         The retry derives its request from the original with replace() rather
         than re-reading the GUI: a path edited mid-conversion used to redirect
-        the retry to a different file.
+        the retry to a different file. *request* is the snapshot monitor_progress
+        was handed for this run, not self._request -- self._request can already
+        belong to a different, later-started conversion by the time this
+        after(0) callback fires (e.g. cancel + immediately start another file).
         """
-        assert self._request is not None, '_retry_with_cpu before a conversion started'
         ui.gui_instance.gpu_accel_var.set(False)
         # A raw Variable.set() doesn't fire the checkbox's command= callback
         # (check_gpu_acceleration), which is normally what persists a GPU
@@ -629,13 +625,17 @@ class ConversionManager:
         messagebox.showwarning("GPU Acceleration Failed",
                                "GPU acceleration failed. Switching to CPU encoding.")
         try:
-            self._start(replace(self._request, use_gpu=False), ui)
+            self._start(replace(request, use_gpu=False), ui)
         except Exception as e:
             # E.g. a GPU-only tonemapper (BT.2390/Spline) with no CPU
-            # implementation: _start already restored UI state and re-raised.
-            # Nothing else in this call path calls on_complete -- without this
-            # the batch item would be stuck at 'Converting' forever.
-            logging.error(f"CPU retry failed to start ({self._request.tonemapper}): {e}")
+            # implementation, raised from construct_ffmpeg_command -- _start
+            # restores UI state before re-raising in that case. But _start can
+            # also raise from start_ffmpeg_process (e.g. a missing ffmpeg
+            # binary), which sits outside that try/except and leaves the UI
+            # disabled. Either way, nothing else in this call path calls
+            # on_complete -- without this the batch item would be stuck at
+            # 'Converting' forever.
+            logging.error(f"CPU retry failed to start ({request.tonemapper}): {e}")
             if ui.on_complete is not None:
                 ui.on_complete(False)
 

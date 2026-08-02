@@ -71,6 +71,27 @@ class TestConversionRequest(unittest.TestCase):
                              msg=f'replace() dropped {field}')
 
 
+class TestConstructTakesRequest(unittest.TestCase):
+
+    _PROPS = {'width': 1920, 'height': 1080, 'bit_rate': 4000000,
+              'frame_rate': 30.0, 'audio_codec': 'aac',
+              'audio_bit_rate': 128000, 'subtitle_streams': []}
+
+    def test_construct_reads_settings_off_the_request(self):
+        """One request in, a complete argv out -- no loose parameters."""
+        m = ConversionManager()
+        req = ConversionRequest(
+            input_path='in.mkv', output_path='out.mp4', gamma=2.2,
+            use_gpu=False, open_after_conversion=False,
+            tonemapper='hable', quality=18, bit_depth=10)
+        with patch('src.conversion.vulkan_libplacebo_available', return_value=False):
+            cmd = m.construct_ffmpeg_command(req, self._PROPS)
+        self.assertIn('libx264', cmd)
+        self.assertIn('yuv420p10le', cmd)
+        self.assertIn('18', cmd)
+        self.assertIn('hable', ' '.join(cmd))
+
+
 class TestConversionUI(unittest.TestCase):
 
     def test_on_complete_defaults_to_none(self):
@@ -460,7 +481,8 @@ class TestConversionManager(unittest.TestCase):
             "duration": 120.0
         }
         cmd = manager.construct_ffmpeg_command(
-            'input.mp4', 'output.mkv', 2.2, properties, use_gpu=True
+            _req(input_path='input.mp4', output_path='output.mkv', gamma=2.2,
+                 use_gpu=True), properties
         )
         self.assertIn('-hwaccel', cmd)
         self.assertIn('cuda', cmd)
@@ -481,8 +503,8 @@ class TestConversionManager(unittest.TestCase):
 
         expected_filter = FFMPEG_CONVERT_FILTER.format(
             gamma=gamma, tonemapper=tonemapper, lut_path=get_lut_filter_path())
-        cmd = manager.construct_ffmpeg_command('input.mp4', 'output.mkv', gamma, properties,
-                                               use_gpu=False, tonemapper=tonemapper)
+        cmd = manager.construct_ffmpeg_command(
+            _req(input_path='input.mp4', output_path='output.mkv', gamma=gamma), properties)
         expected_cmd = [
             FFMPEG_EXECUTABLE, '-loglevel', 'info',
             '-i', os.path.normpath('input.mp4'),
@@ -517,8 +539,7 @@ class TestConversionManager(unittest.TestCase):
             "duration": 120.0, "audio_codec": "aac", "audio_bit_rate": 128000,
             "subtitle_streams": [],
         }
-        cmd = manager.construct_ffmpeg_command('in.mp4', 'out.mkv', 2.2, props,
-                                               True, tonemapper='reinhard')
+        cmd = manager.construct_ffmpeg_command(_req(gamma=2.2, use_gpu=True), props)
         mock_warn.assert_called_once()
         self.assertIn('libx264', cmd)
         self.assertNotIn('h264_nvenc', cmd)
@@ -535,8 +556,7 @@ class TestConversionManager(unittest.TestCase):
             "duration": 120.0, "audio_codec": "aac", "audio_bit_rate": 128000,
             "subtitle_streams": [],
         }
-        cmd = manager.construct_ffmpeg_command('in.mp4', 'out.mkv', 2.2, props,
-                                               True, tonemapper='reinhard')
+        cmd = manager.construct_ffmpeg_command(_req(gamma=2.2, use_gpu=True), props)
         mock_warn.assert_called_once()
         self.assertIn('libx264', cmd)
         self.assertNotIn('h264_qsv', cmd)
@@ -553,8 +573,7 @@ class TestConversionManager(unittest.TestCase):
             "duration": 120.0, "audio_codec": "aac", "audio_bit_rate": 128000,
             "subtitle_streams": [],
         }
-        cmd = manager.construct_ffmpeg_command('in.mp4', 'out.mkv', 2.2, props,
-                                               True, tonemapper='reinhard')
+        cmd = manager.construct_ffmpeg_command(_req(gamma=2.2, use_gpu=True), props)
         mock_warn.assert_called_once()
         self.assertIn('libx264', cmd)
         self.assertNotIn('h264_amf', cmd)
@@ -570,8 +589,7 @@ class TestConversionManager(unittest.TestCase):
             "duration": 120.0, "audio_codec": "aac", "audio_bit_rate": 128000,
             "subtitle_streams": [],
         }
-        cmd = manager.construct_ffmpeg_command('in.mp4', 'out.mkv', 2.2, props,
-                                               True, tonemapper='reinhard')
+        cmd = manager.construct_ffmpeg_command(_req(gamma=2.2, use_gpu=True), props)
         mock_warn.assert_called_once()
         self.assertIn('libx264', cmd)
         self.assertNotIn('h264_unknown_gpu', cmd)
@@ -585,30 +603,27 @@ class TestConversionManager(unittest.TestCase):
     def test_quality_sets_crf_for_cpu(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            'in.mp4', 'out.mkv', 2.2, self._QUALITY_PROPS, False,
-            tonemapper='reinhard', quality=19)
+            _req(gamma=2.2, quality=19), self._QUALITY_PROPS)
         self.assertEqual(cmd[cmd.index('-crf') + 1], '19')
 
     def test_quality_default_is_23(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            'in.mp4', 'out.mkv', 2.2, self._QUALITY_PROPS, False, tonemapper='reinhard')
+            _req(gamma=2.2), self._QUALITY_PROPS)
         self.assertEqual(cmd[cmd.index('-crf') + 1], '23')
 
     def test_quality_sets_cq_for_nvenc(self):
         manager = ConversionManager()
         manager._gpu_encoder = 'h264_nvenc'
         cmd = manager.construct_ffmpeg_command(
-            'in.mp4', 'out.mkv', 2.2, self._QUALITY_PROPS, True,
-            tonemapper='reinhard', quality=18)
+            _req(gamma=2.2, use_gpu=True, quality=18), self._QUALITY_PROPS)
         self.assertEqual(cmd[cmd.index('-cq') + 1], '18')
 
     def test_quality_sets_global_quality_for_qsv(self):
         manager = ConversionManager()
         manager._gpu_encoder = 'h264_qsv'
         cmd = manager.construct_ffmpeg_command(
-            'in.mp4', 'out.mkv', 2.2, self._QUALITY_PROPS, True,
-            tonemapper='reinhard', quality=27)
+            _req(gamma=2.2, use_gpu=True, quality=27), self._QUALITY_PROPS)
         self.assertEqual(cmd[cmd.index('-global_quality') + 1], '27')
 
     @patch('src.conversion.platform.system', return_value='Windows')
@@ -616,8 +631,7 @@ class TestConversionManager(unittest.TestCase):
         manager = ConversionManager()
         manager._gpu_encoder = 'h264_amf'
         cmd = manager.construct_ffmpeg_command(
-            'in.mp4', 'out.mkv', 2.2, self._QUALITY_PROPS, True,
-            tonemapper='reinhard', quality=22)
+            _req(gamma=2.2, use_gpu=True, quality=22), self._QUALITY_PROPS)
         self.assertIn('h264_amf', cmd)
         self.assertEqual(cmd[cmd.index('-qp_i') + 1], '22')
         self.assertEqual(cmd[cmd.index('-qp_p') + 1], '22')
@@ -888,9 +902,7 @@ class TestGpuEncoderCommandConstruction(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = encoder
         return m.construct_ffmpeg_command(
-            'in.mp4', 'out.mkv', 1.0, props or self._BASE_PROPS,
-            use_gpu=True, tonemapper='reinhard'
-        )
+            _req(use_gpu=True), props or self._BASE_PROPS)
 
     def test_amf_encoder_used_and_no_hwaccel(self):
         cmd = self._cmd('h264_amf')
@@ -908,10 +920,7 @@ class TestGpuEncoderCommandConstruction(unittest.TestCase):
     def test_nvenc_encoder_used_with_cuda_hwaccel(self):
         m = ConversionManager()
         m._gpu_encoder = 'h264_nvenc'
-        cmd = m.construct_ffmpeg_command(
-            'in.mp4', 'out.mkv', 1.0, self._BASE_PROPS,
-            use_gpu=True, tonemapper='reinhard'
-        )
+        cmd = m.construct_ffmpeg_command(_req(use_gpu=True), self._BASE_PROPS)
         self.assertIn('h264_nvenc', cmd)
         self.assertIn('cuda', cmd)
         self.assertIn('-hwaccel', cmd)
@@ -942,9 +951,7 @@ class TestGpuEncoderCommandConstruction(unittest.TestCase):
         # _gpu_encoder starts None (fresh __init__, settings loaded with gpu_accel=True)
         self.assertIsNone(m._gpu_encoder)
         with patch.object(m, 'detect_gpu_encoder', return_value='h264_nvenc') as mock_detect:
-            cmd = m.construct_ffmpeg_command(
-                'in.mp4', 'out.mkv', 1.0, self._BASE_PROPS,
-                use_gpu=True, tonemapper='reinhard')
+            cmd = m.construct_ffmpeg_command(_req(use_gpu=True), self._BASE_PROPS)
         mock_detect.assert_called_once()
         self.assertIn('h264_nvenc', cmd)
 
@@ -976,32 +983,27 @@ class TestBitDepthPixelFormat(unittest.TestCase):
 
     def test_eight_bit_appends_yuv420p(self):
         manager = ConversionManager()
-        cmd = manager.construct_ffmpeg_command(
-            'in.mp4', 'out.mkv', 2.2, self._PROPS, False,
-            tonemapper='reinhard', bit_depth=8)
+        cmd = manager.construct_ffmpeg_command(_req(gamma=2.2), self._PROPS)
         self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p')
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'libx264')
 
     def test_ten_bit_appends_yuv420p10le_and_keeps_libx264(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            'in.mp4', 'out.mkv', 2.2, self._PROPS, False,
-            tonemapper='reinhard', bit_depth=10)
+            _req(gamma=2.2, bit_depth=10), self._PROPS)
         self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p10le')
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'libx264')
 
     def test_bit_depth_defaults_to_eight(self):
         """Omitting bit_depth entirely must not change the existing 8-bit behavior."""
         manager = ConversionManager()
-        cmd = manager.construct_ffmpeg_command(
-            'in.mp4', 'out.mkv', 2.2, self._PROPS, False, tonemapper='reinhard')
+        cmd = manager.construct_ffmpeg_command(_req(gamma=2.2), self._PROPS)
         self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p')
 
     def test_twelve_bit_switches_to_libx265_and_yuv420p12le(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            'in.mp4', 'out.mkv', 2.2, self._PROPS, False,
-            tonemapper='reinhard', bit_depth=12)
+            _req(gamma=2.2, bit_depth=12), self._PROPS)
         self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p12le')
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'libx265')
 
@@ -1011,8 +1013,7 @@ class TestBitDepthPixelFormat(unittest.TestCase):
         veryfast/film'). It must never leak onto the libx265 path."""
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            'in.mp4', 'out.mkv', 2.2, self._PROPS, False,
-            tonemapper='reinhard', bit_depth=12)
+            _req(gamma=2.2, bit_depth=12), self._PROPS)
         self.assertNotIn('-tune', cmd)
 
     def test_twelve_bit_forces_cpu_even_when_gpu_requested(self):
@@ -1022,8 +1023,7 @@ class TestBitDepthPixelFormat(unittest.TestCase):
         manager = ConversionManager()
         manager._gpu_encoder = 'h264_nvenc'
         cmd = manager.construct_ffmpeg_command(
-            'in.mp4', 'out.mkv', 2.2, self._PROPS, use_gpu=True,
-            tonemapper='reinhard', bit_depth=12)
+            _req(gamma=2.2, use_gpu=True, bit_depth=12), self._PROPS)
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'libx265')
         self.assertNotIn('-hwaccel', cmd)
 
@@ -1048,8 +1048,7 @@ class TestHEVCSourcePreservation(unittest.TestCase):
     def test_hevc_source_cpu_path_uses_libx265_at_eight_bit(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            'in.mkv', 'out.mkv', 2.2, self._HEVC_PROPS, False,
-            tonemapper='reinhard', bit_depth=8)
+            _req(input_path='in.mkv', gamma=2.2), self._HEVC_PROPS)
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'libx265')
         self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p')
         self.assertNotIn('-tune', cmd)
@@ -1059,17 +1058,14 @@ class TestHEVCSourcePreservation(unittest.TestCase):
         the source codec, not a blanket switch to HEVC for everyone."""
         manager = ConversionManager()
         props = dict(self._HEVC_PROPS, codec_name='h264')
-        cmd = manager.construct_ffmpeg_command(
-            'in.mp4', 'out.mkv', 2.2, props, False,
-            tonemapper='reinhard', bit_depth=8)
+        cmd = manager.construct_ffmpeg_command(_req(gamma=2.2), props)
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'libx264')
 
     def test_hevc_source_gpu_path_swaps_to_hevc_nvenc_at_eight_bit(self):
         manager = ConversionManager()
         manager._gpu_encoder = 'h264_nvenc'
         cmd = manager.construct_ffmpeg_command(
-            'in.mkv', 'out.mkv', 2.2, self._HEVC_PROPS, use_gpu=True,
-            tonemapper='reinhard', bit_depth=8)
+            _req(input_path='in.mkv', gamma=2.2, use_gpu=True), self._HEVC_PROPS)
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'hevc_nvenc')
         self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p')
 
@@ -1078,8 +1074,7 @@ class TestHEVCSourcePreservation(unittest.TestCase):
         manager._gpu_encoder = 'h264_nvenc'
         props = dict(self._HEVC_PROPS, codec_name='h264')
         cmd = manager.construct_ffmpeg_command(
-            'in.mp4', 'out.mkv', 2.2, props, use_gpu=True,
-            tonemapper='reinhard', bit_depth=8)
+            _req(gamma=2.2, use_gpu=True), props)
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'h264_nvenc')
 
 
@@ -1109,22 +1104,21 @@ class TestHEVCContainerTag(unittest.TestCase):
     def test_twelve_bit_libx265_mp4_gets_hvc1_tag(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            'in.mp4', 'out.mp4', 2.2, self._PROPS, False,
-            tonemapper='reinhard', bit_depth=12)
+            _req(output_path='out.mp4', gamma=2.2, bit_depth=12), self._PROPS)
         self.assertEqual(self._tag_value(cmd), 'hvc1')
 
     def test_hevc_source_eight_bit_mp4_gets_hvc1_tag(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            'in.mkv', 'out.mp4', 2.2, self._HEVC_PROPS, False,
-            tonemapper='reinhard', bit_depth=8)
+            _req(input_path='in.mkv', output_path='out.mp4', gamma=2.2),
+            self._HEVC_PROPS)
         self.assertEqual(self._tag_value(cmd), 'hvc1')
 
     def test_hevc_source_mov_gets_hvc1_tag(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            'in.mkv', 'out.mov', 2.2, self._HEVC_PROPS, False,
-            tonemapper='reinhard', bit_depth=8)
+            _req(input_path='in.mkv', output_path='out.mov', gamma=2.2),
+            self._HEVC_PROPS)
         self.assertEqual(self._tag_value(cmd), 'hvc1')
 
     def test_gpu_hevc_encoder_mp4_gets_hvc1_tag(self):
@@ -1133,23 +1127,21 @@ class TestHEVCContainerTag(unittest.TestCase):
         manager = ConversionManager()
         manager._gpu_encoder = 'h264_nvenc'
         cmd = manager.construct_ffmpeg_command(
-            'in.mp4', 'out.mp4', 2.2, self._PROPS, use_gpu=True,
-            tonemapper='reinhard', bit_depth=10)
+            _req(output_path='out.mp4', gamma=2.2, use_gpu=True, bit_depth=10),
+            self._PROPS)
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'hevc_nvenc')
         self.assertEqual(self._tag_value(cmd), 'hvc1')
 
     def test_mkv_output_gets_no_tag(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            'in.mkv', 'out.mkv', 2.2, self._HEVC_PROPS, False,
-            tonemapper='reinhard', bit_depth=12)
+            _req(input_path='in.mkv', gamma=2.2, bit_depth=12), self._HEVC_PROPS)
         self.assertNotIn('-tag:v', cmd)
 
     def test_h264_output_mp4_gets_no_tag(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            'in.mp4', 'out.mp4', 2.2, self._PROPS, False,
-            tonemapper='reinhard', bit_depth=8)
+            _req(output_path='out.mp4', gamma=2.2), self._PROPS)
         self.assertNotIn('-tag:v', cmd)
 
 
@@ -1176,9 +1168,7 @@ class TestBitDepthHardwareEncoderMapping(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = encoder
         return m.construct_ffmpeg_command(
-            'in.mp4', 'out.mkv', 1.0, self._BASE_PROPS,
-            use_gpu=True, tonemapper='reinhard', bit_depth=bit_depth
-        )
+            _req(use_gpu=True, bit_depth=bit_depth), self._BASE_PROPS)
 
     def test_nvenc_maps_to_hevc_nvenc_p010le(self):
         cmd = self._cmd('h264_nvenc', bit_depth=10)
@@ -1346,9 +1336,8 @@ class TestLibplaceboCommandConstruction(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = 'h264_nvenc'
         cmd = m.construct_ffmpeg_command(
-            'in.mp4', 'out.mp4', 2.2, self._PROPS,
-            use_gpu=True, tonemapper='Hable',
-        )
+            _req(output_path='out.mp4', gamma=2.2, use_gpu=True, tonemapper='Hable'),
+            self._PROPS)
         joined = ' '.join(cmd)
         self.assertIn('-init_hw_device', cmd)
         self.assertIn('vulkan=vk:0', cmd)
@@ -1365,8 +1354,7 @@ class TestLibplaceboCommandConstruction(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = 'h264_nvenc'
         cmd = ' '.join(m.construct_ffmpeg_command(
-            'in.mp4', 'out.mp4', 1.0, self._PROPS,
-            use_gpu=True, tonemapper='reinhard'))
+            _req(output_path='out.mp4', use_gpu=True), self._PROPS))
         self.assertNotIn('libplacebo', cmd)
         self.assertIn('zscale', cmd)
 
@@ -1374,8 +1362,7 @@ class TestLibplaceboCommandConstruction(unittest.TestCase):
     def test_cpu_path_when_gpu_toggle_off(self, _avail):
         m = ConversionManager()
         cmd = ' '.join(m.construct_ffmpeg_command(
-            'in.mp4', 'out.mp4', 1.0, self._PROPS,
-            use_gpu=False, tonemapper='reinhard'))
+            _req(output_path='out.mp4'), self._PROPS))
         self.assertNotIn('libplacebo', cmd)
         self.assertIn('zscale', cmd)
         self.assertIn('libx264', cmd)
@@ -1397,9 +1384,7 @@ class TestGpuOnlyTonemapperSafetyNet(unittest.TestCase):
         m = ConversionManager()
         with self.assertRaises(ValueError) as ctx:
             m.construct_ffmpeg_command(
-                'in.mp4', 'out.mkv', 1.0, self._PROPS,
-                use_gpu=True, tonemapper='BT.2390', bit_depth=12,
-            )
+                _req(use_gpu=True, tonemapper='BT.2390', bit_depth=12), self._PROPS)
         message = str(ctx.exception)
         self.assertIn('bt.2390', message)
         self.assertIn('GPU', message)
@@ -1410,8 +1395,7 @@ class TestGpuOnlyTonemapperSafetyNet(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = 'h264_nvenc'
         cmd = ' '.join(m.construct_ffmpeg_command(
-            'in.mp4', 'out.mp4', 1.0, self._PROPS,
-            use_gpu=True, tonemapper='BT.2390'))
+            _req(output_path='out.mp4', use_gpu=True, tonemapper='BT.2390'), self._PROPS))
         self.assertIn('tonemapping=bt.2390', cmd)
 
     @patch('src.conversion.vulkan_cuda_interop_available', return_value=False)
@@ -1420,8 +1404,7 @@ class TestGpuOnlyTonemapperSafetyNet(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = 'h264_nvenc'
         cmd = ' '.join(m.construct_ffmpeg_command(
-            'in.mp4', 'out.mp4', 1.0, self._PROPS,
-            use_gpu=True, tonemapper='Spline'))
+            _req(output_path='out.mp4', use_gpu=True, tonemapper='Spline'), self._PROPS))
         self.assertIn('tonemapping=spline', cmd)
 
 
@@ -1440,9 +1423,8 @@ class TestCudaVulkanInteropPath(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = 'h264_nvenc'
         cmd = m.construct_ffmpeg_command(
-            'in.mkv', 'out.mp4', 1.0, self._PROPS,
-            use_gpu=True, tonemapper='mobius',
-        )
+            _req(input_path='in.mkv', output_path='out.mp4', use_gpu=True,
+                 tonemapper='mobius'), self._PROPS)
         joined = ' '.join(cmd)
         self.assertIn('cuda=cu:0', joined)
         self.assertIn('vulkan=vk@cu', joined)
@@ -1459,9 +1441,7 @@ class TestCudaVulkanInteropPath(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = 'h264_nvenc'
         cmd = m.construct_ffmpeg_command(
-            'in.mkv', 'out.mp4', 1.0, self._PROPS,
-            use_gpu=True, tonemapper='reinhard',
-        )
+            _req(input_path='in.mkv', output_path='out.mp4', use_gpu=True), self._PROPS)
         joined = ' '.join(cmd)
         self.assertIn('vulkan=vk:0', joined)
         self.assertNotIn('vulkan=vk@cu', joined)
@@ -1475,9 +1455,7 @@ class TestCudaVulkanInteropPath(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = 'h264_amf'
         cmd = ' '.join(m.construct_ffmpeg_command(
-            'in.mkv', 'out.mp4', 1.0, self._PROPS,
-            use_gpu=True, tonemapper='reinhard',
-        ))
+            _req(input_path='in.mkv', output_path='out.mp4', use_gpu=True), self._PROPS))
         self.assertNotIn('cuda=cu:0', cmd)
         self.assertIn('vulkan=vk:0', cmd)
         self.assertIn('format=p010,hwupload', cmd)
@@ -1489,9 +1467,7 @@ class TestCudaVulkanInteropPath(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = 'h264_qsv'
         cmd = ' '.join(m.construct_ffmpeg_command(
-            'in.mkv', 'out.mp4', 1.0, self._PROPS,
-            use_gpu=True, tonemapper='reinhard',
-        ))
+            _req(input_path='in.mkv', output_path='out.mp4', use_gpu=True), self._PROPS))
         self.assertNotIn('cuda=cu:0', cmd)
         self.assertIn('vulkan=vk:0', cmd)
 
@@ -1500,9 +1476,7 @@ class TestCudaVulkanInteropPath(unittest.TestCase):
     def test_interop_not_used_when_gpu_disabled(self, _avail, _interop):
         m = ConversionManager()
         cmd = ' '.join(m.construct_ffmpeg_command(
-            'in.mkv', 'out.mp4', 1.0, self._PROPS,
-            use_gpu=False, tonemapper='reinhard',
-        ))
+            _req(input_path='in.mkv', output_path='out.mp4'), self._PROPS))
         self.assertNotIn('cuda=cu:0', cmd)
         self.assertIn('zscale', cmd)
 
@@ -1513,9 +1487,8 @@ class TestCudaVulkanInteropPath(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = 'h264_nvenc'
         cmd = ' '.join(m.construct_ffmpeg_command(
-            'in.mkv', 'out.mp4', 2.2, self._PROPS,
-            use_gpu=True, tonemapper='Hable',
-        ))
+            _req(input_path='in.mkv', output_path='out.mp4', gamma=2.2, use_gpu=True,
+                 tonemapper='Hable'), self._PROPS))
         self.assertIn('tonemapping=hable', cmd)
         self.assertIn('peak_detect=1', cmd)
         self.assertIn('eq=gamma=2.2', cmd)
@@ -1529,9 +1502,7 @@ class TestCudaVulkanInteropPath(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = 'h264_nvenc'
         cmd = ' '.join(m.construct_ffmpeg_command(
-            'in.mkv', 'out.mp4', 1.0, self._PROPS,
-            use_gpu=True, tonemapper='reinhard',
-        ))
+            _req(input_path='in.mkv', output_path='out.mp4', use_gpu=True), self._PROPS))
         self.assertIn('hwdownload', cmd)
         self.assertIn('lut3d=file=', cmd)
         self.assertNotIn('hwmap=reverse=1:derive_device=cuda', cmd)
@@ -1544,9 +1515,8 @@ class TestCudaVulkanInteropPath(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = 'h264_nvenc'
         cmd = ' '.join(m.construct_ffmpeg_command(
-            'in.mkv', 'out.mp4', 1.0, self._PROPS,
-            use_gpu=True, tonemapper='reinhard', lut_enabled=False,
-        ))
+            _req(input_path='in.mkv', output_path='out.mp4', use_gpu=True,
+                 lut_enabled=False), self._PROPS))
         self.assertIn('hwmap=reverse=1:derive_device=cuda', cmd)
         self.assertNotIn('lut3d=file=', cmd)
 
@@ -1557,9 +1527,8 @@ class TestCudaVulkanInteropPath(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = 'h264_nvenc'
         cmd = ' '.join(m.construct_ffmpeg_command(
-            'in.mkv', 'out.mp4', 1.0, self._PROPS,
-            use_gpu=True, tonemapper='reinhard', lut_enabled=False,
-        ))
+            _req(input_path='in.mkv', output_path='out.mp4', use_gpu=True,
+                 lut_enabled=False), self._PROPS))
         self.assertNotIn('lut3d=file=', cmd)
         self.assertIn('format=p010,hwupload', cmd)
 
@@ -1782,8 +1751,7 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
     def test_pro_dovi_audio_is_untouched_copy(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            'in.mkv', 'out.mkv', 1.0, self._dovi_props(), False,
-            tonemapper='reinhard', licensed=True)
+            _req(input_path='in.mkv', licensed=True), self._dovi_props())
         self.assertEqual(cmd[cmd.index('-c:a') + 1], 'copy')
         self.assertIn('0:a?', cmd)     # every audio stream mapped
         self.assertNotIn('-ac', cmd)   # multi-channel layout untouched
@@ -1792,16 +1760,14 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
     def test_free_dovi_audio_forces_two_channel_stereo(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            'in.mkv', 'out.mkv', 1.0, self._dovi_props(), False,
-            tonemapper='reinhard', licensed=False)
+            _req(input_path='in.mkv'), self._dovi_props())
         self.assertEqual(cmd[cmd.index('-c:a') + 1], 'aac')
         self.assertEqual(cmd[cmd.index('-ac') + 1], '2')
 
     def test_free_dovi_audio_restricted_to_first_stream(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            'in.mkv', 'out.mkv', 1.0, self._dovi_props(), False,
-            tonemapper='reinhard', licensed=False)
+            _req(input_path='in.mkv'), self._dovi_props())
         self.assertIn('0:a:0?', cmd)
         self.assertNotIn('0:a?', cmd)
 
@@ -1810,8 +1776,7 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         the safe one for a premium gate."""
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            'in.mkv', 'out.mkv', 1.0, self._dovi_props(), False,
-            tonemapper='reinhard')
+            _req(input_path='in.mkv'), self._dovi_props())
         self.assertEqual(cmd[cmd.index('-c:a') + 1], 'aac')
         self.assertEqual(cmd[cmd.index('-ac') + 1], '2')
 
@@ -1822,9 +1787,7 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         props = self._dovi_props()
         props['is_dolby_vision'] = False
         props['dovi_profile'] = None
-        cmd = manager.construct_ffmpeg_command(
-            'in.mkv', 'out.mkv', 1.0, props, False,
-            tonemapper='reinhard', licensed=False)
+        cmd = manager.construct_ffmpeg_command(_req(input_path='in.mkv'), props)
         self.assertEqual(cmd[cmd.index('-c:a') + 1], 'copy')
         self.assertIn('0:a?', cmd)
         self.assertNotIn('-ac', cmd)
@@ -1835,8 +1798,8 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         layout preserved (no -ac), unlike the Free downmix."""
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            'in.mkv', 'out.mp4', 1.0, self._dovi_props(audio='truehd'), False,
-            tonemapper='reinhard', licensed=True)
+            _req(input_path='in.mkv', output_path='out.mp4', licensed=True),
+            self._dovi_props(audio='truehd'))
         self.assertEqual(cmd[cmd.index('-c:a') + 1], 'aac')
         self.assertNotIn('-ac', cmd)
         self.assertIn('0:a?', cmd)
@@ -1851,8 +1814,7 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         manager = ConversionManager()
         with patch('src.conversion.vulkan_libplacebo_available', return_value=True):
             cmd = manager.construct_ffmpeg_command(
-                'in.mkv', 'out.mkv', 1.0, self._dovi_props(profile=5), False,
-                tonemapper='reinhard', licensed=True)
+                _req(input_path='in.mkv', licensed=True), self._dovi_props(profile=5))
         fc = cmd[cmd.index('-filter_complex') + 1]
         self.assertIn('libplacebo', fc)
         self.assertIn('-init_hw_device', cmd)   # Vulkan device for the filter
@@ -1862,8 +1824,7 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
     def test_dovi_profile5_without_libplacebo_falls_back_to_cpu_chain(self, mock_warn):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            'in.mkv', 'out.mkv', 1.0, self._dovi_props(profile=5), False,
-            tonemapper='reinhard', licensed=True)
+            _req(input_path='in.mkv', licensed=True), self._dovi_props(profile=5))
         fc = cmd[cmd.index('-filter_complex') + 1]
         self.assertIn('zscale', fc)
         self.assertNotIn('libplacebo', fc)
@@ -1875,8 +1836,7 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         conversion must not exit silently with no indication anything is off."""
         manager = ConversionManager()
         manager.construct_ffmpeg_command(
-            'in.mkv', 'out.mkv', 1.0, self._dovi_props(profile=5), False,
-            tonemapper='reinhard', licensed=True)
+            _req(input_path='in.mkv', licensed=True), self._dovi_props(profile=5))
         mock_warn.assert_called_once()
         warning_text = mock_warn.call_args[0][1].lower()
         self.assertIn('dolby vision', warning_text)
@@ -1890,8 +1850,7 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         manager = ConversionManager()
         with patch('src.conversion.vulkan_libplacebo_available', return_value=True):
             manager.construct_ffmpeg_command(
-                'in.mkv', 'out.mkv', 1.0, self._dovi_props(profile=5), False,
-                tonemapper='reinhard', licensed=True)
+                _req(input_path='in.mkv', licensed=True), self._dovi_props(profile=5))
         mock_warn.assert_not_called()
 
     @patch('src.conversion.messagebox.showinfo')
@@ -1902,8 +1861,7 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         manager = ConversionManager()
         with patch('src.conversion.vulkan_libplacebo_available', return_value=True):
             manager.construct_ffmpeg_command(
-                'in.mkv', 'out.mkv', 1.0, self._dovi_props(profile=5), False,
-                tonemapper='reinhard', licensed=True)
+                _req(input_path='in.mkv', licensed=True), self._dovi_props(profile=5))
         mock_info.assert_called_once()
         info_text = mock_info.call_args[0][1].lower()
         self.assertIn('dolby vision', info_text)
@@ -1922,8 +1880,8 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         with patch('src.conversion.vulkan_libplacebo_available', return_value=True), \
                 patch.object(manager, 'detect_gpu_encoder', return_value='h264_nvenc'):
             manager.construct_ffmpeg_command(
-                'in.mkv', 'out.mkv', 1.0, self._dovi_props(profile=5), True,
-                tonemapper='reinhard', licensed=True)
+                _req(input_path='in.mkv', use_gpu=True, licensed=True),
+                self._dovi_props(profile=5))
         mock_info.assert_not_called()
 
     def test_dovi_profile8_keeps_standard_hdr10_cpu_chain(self):
@@ -1933,8 +1891,7 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         manager = ConversionManager()
         with patch('src.conversion.vulkan_libplacebo_available', return_value=True):
             cmd = manager.construct_ffmpeg_command(
-                'in.mkv', 'out.mkv', 1.0, self._dovi_props(profile=8), False,
-                tonemapper='reinhard', licensed=True)
+                _req(input_path='in.mkv', licensed=True), self._dovi_props(profile=8))
         fc = cmd[cmd.index('-filter_complex') + 1]
         self.assertIn('zscale', fc)
         self.assertNotIn('libplacebo', fc)
@@ -1953,7 +1910,7 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
             manager.start_conversion(
                 'in.mkv', 'out.mkv', 1.0, False, MagicMock(), [], mock_gui,
                 False, MagicMock(), licensed=True)
-        self.assertIs(mock_build.call_args.kwargs.get('licensed'), True)
+        self.assertIs(mock_build.call_args.args[0].licensed, True)
 
     def test_cpu_retry_preserves_licensed_flag(self):
         """A GPU-failure retry must not silently demote a Pro user to the
@@ -1979,7 +1936,7 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
             manager.start_conversion(
                 'in.mkv', 'out.mkv', 1.0, False, MagicMock(), [], mock_gui,
                 False, MagicMock(), quality=30000, quality_mode='bitrate')
-        self.assertEqual(mock_build.call_args.kwargs.get('quality_mode'), 'bitrate')
+        self.assertEqual(mock_build.call_args.args[0].quality_mode, 'bitrate')
         self.assertEqual(manager._quality_mode, 'bitrate')
 
     def test_cpu_retry_preserves_quality_mode(self):
@@ -2053,10 +2010,8 @@ class TestBitrateModeCommandConstruction(unittest.TestCase):
         if encoder:
             m._gpu_encoder = encoder
         return m.construct_ffmpeg_command(
-            'in.mp4', 'out.mkv', 1.0, self._BASE_PROPS,
-            use_gpu=use_gpu, tonemapper='reinhard',
-            quality=quality, quality_mode=quality_mode,
-        )
+            _req(use_gpu=use_gpu, quality=quality, quality_mode=quality_mode),
+            self._BASE_PROPS)
 
     def test_nvenc_bitrate_mode_has_no_cq_flag(self):
         cmd = self._cmd('h264_nvenc', use_gpu=True, quality=20000)
@@ -2096,8 +2051,7 @@ class TestBitrateModeCommandConstruction(unittest.TestCase):
         props = {**self._BASE_PROPS, 'codec_name': 'hevc'}
         m = ConversionManager()
         cmd = m.construct_ffmpeg_command(
-            'in.mp4', 'out.mkv', 1.0, props, use_gpu=False, tonemapper='reinhard',
-            quality=20000, quality_mode='bitrate')
+            _req(quality=20000, quality_mode='bitrate'), props)
         self.assertIn('libx265', cmd)
         self.assertNotIn('-crf', cmd)
         self.assertEqual(cmd[cmd.index('-b:v') + 1], '20000000')

@@ -173,11 +173,7 @@ class ConversionManager:
         cancel_button.grid()
 
         try:
-            cmd = self.construct_ffmpeg_command(
-                input_path, output_path, gamma, properties, use_gpu,
-                tonemapper=tonemapper, quality=quality, quality_mode=quality_mode,
-                bit_depth=bit_depth, licensed=licensed, lut_enabled=lut_enabled
-            )
+            cmd = self.construct_ffmpeg_command(self._request, properties)
         except Exception:
             # The UI was already disabled and the cancel button gridded above,
             # but self.process hasn't been assigned yet -- Cancel would be a
@@ -243,9 +239,19 @@ class ConversionManager:
         'h264_qsv':   'hevc_qsv',
     }
 
-    def construct_ffmpeg_command(self, input_path, output_path, gamma, properties, use_gpu,
-                               tonemapper='reinhard', quality=23, quality_mode='cq',
-                               bit_depth=8, licensed=False, lut_enabled=True):
+    def construct_ffmpeg_command(self, request: ConversionRequest,
+                                 properties: dict[str, Any]) -> list[str]:
+        input_path = request.input_path
+        output_path = request.output_path
+        gamma = request.gamma
+        use_gpu = request.use_gpu
+        tonemapper = request.tonemapper
+        quality = request.quality
+        quality_mode = request.quality_mode
+        bit_depth = request.bit_depth
+        licensed = request.licensed
+        lut_enabled = request.lut_enabled
+
         # No hardware encoder (any vendor/generation) has a 12-bit HEVC profile
         # in its API -- it's a fixed silicon limitation, not a driver gap.
         # 12-bit always forces the full CPU pipeline (tonemap + encode).
@@ -271,8 +277,8 @@ class ConversionManager:
         # the GPU; encoding still follows the encoder dispatch below. Profiles
         # 7/8 carry an HDR10-compatible base layer and are already handled
         # correctly by the standard chain.
-        dovi_needs_rpu = (properties.get('is_dolby_vision')
-                          and properties.get('dovi_profile') == 5)
+        dovi_needs_rpu = bool(properties.get('is_dolby_vision')
+                             and properties.get('dovi_profile') == 5)
         use_libplacebo = (use_gpu or dovi_needs_rpu) and vulkan_libplacebo_available()
         if dovi_needs_rpu and not use_libplacebo:
             messagebox.showwarning(

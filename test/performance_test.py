@@ -24,7 +24,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../s
 
 from PIL import Image
 
-from src.gui import HDRConverterGUI, PREVIEW_SIZE, INITIAL_PANE_SIZE
+from src.gui import HDRConverterGUI
+from src.preview import PREVIEW_SIZE, INITIAL_PANE_SIZE
 from src.utils import (
     extract_frame, extract_frame_with_conversion, FFMPEG_EXECUTABLE,
     clear_maxfall_cache,
@@ -71,7 +72,7 @@ _FFMPEG_OK = bool(FFMPEG_EXECUTABLE) and os.path.exists(FFMPEG_EXECUTABLE)
 class TestSnappinessGuards(unittest.TestCase):
     """Deterministic invariants: the interactions that must stay subprocess-free."""
 
-    @patch('src.gui.ImageTk.PhotoImage')
+    @patch('src.preview.ImageTk.PhotoImage')
     @patch('src.preview.get_video_properties')
     @patch('src.preview.extract_frame_with_conversion')
     @patch('src.preview.extract_frame')
@@ -106,7 +107,7 @@ class TestSnappinessGuards(unittest.TestCase):
                                           width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1])
         self.assertEqual(mock_probe.call_count, 0)
 
-    @patch('src.gui.ImageTk.PhotoImage')
+    @patch('src.preview.ImageTk.PhotoImage')
     def test_gamma_change_does_not_resize_window(self, _mock_photo):
         gui = _bare_gui()
         gui.display_image_var = MagicMock()
@@ -121,7 +122,7 @@ class TestSnappinessGuards(unittest.TestCase):
 
         gui.adjust_window_size.assert_not_called()  # no geometry thrash per tick
 
-    @patch('src.gui.ImageTk.PhotoImage')
+    @patch('src.preview.ImageTk.PhotoImage')
     def test_render_caches_converted_base_at_preview_size(self, _mock_photo):
         # The cached base must be downsized to preview size so gamma stays cheap.
         gui = _bare_gui()

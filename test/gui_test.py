@@ -117,7 +117,7 @@ class TestHDRConverterGUI(TestCase):
         # Verify UI updates
         self._assert_frame_updates()
 
-    @patch('src.gui.ImageTk.PhotoImage')
+    @patch('src.preview.ImageTk.PhotoImage')
     @patch('src.preview.extract_frame_with_conversion')
     @patch('src.preview.extract_frame')
     @patch('src.preview.get_video_properties')
@@ -206,16 +206,16 @@ class TestHDRConverterGUI(TestCase):
 
     def test_preview_size_constant_is_4k(self):
         """PREVIEW_SIZE must be 4K so ffmpeg renders at the highest useful resolution."""
-        from src.gui import PREVIEW_SIZE
+        from src.preview import PREVIEW_SIZE
         self.assertEqual(PREVIEW_SIZE, (3840, 2160),
                          f"PREVIEW_SIZE should be (3840, 2160) but got {PREVIEW_SIZE}")
 
-    @patch('src.gui.ImageTk.PhotoImage')
+    @patch('src.preview.ImageTk.PhotoImage')
     def test_render_preview_images_correct_size_when_frame_collapsed(self, mock_photo_image):
         """Frame buttons must render at a usable size even when image_frame height
         is below _PREVIEW_HEIGHT_RESERVE (as happens during loading: the spinner is
         the only committed geometry so the frame is short)."""
-        from src.gui import _PREVIEW_HEIGHT_RESERVE, _MIN_PANE_W
+        from src.preview import _PREVIEW_HEIGHT_RESERVE, _MIN_PANE_W
         # Simulate a wide window whose image_frame height is below the reserve
         # because the loading indicator is still the committed geometry.
         self.gui.image_frame.winfo_width.return_value = 1380
@@ -243,7 +243,7 @@ class TestHDRConverterGUI(TestCase):
         self.assertGreaterEqual(used_size[1], 100,
                                 f"Rendered height {used_size[1]} is too small (collapsed frame bug)")
 
-    @patch('src.gui.ImageTk.PhotoImage')
+    @patch('src.preview.ImageTk.PhotoImage')
     def test_render_preview_reuses_previous_size_when_frame_height_constrains(self, mock_photo_image):
         """Clicking a frame button while a render is in progress must not shrink
         the images.  image_frame fills the root vertically (weight=1), so its
@@ -426,24 +426,6 @@ class TestWindowIcon(unittest.TestCase):
         self.assertIsNotNone(call_args, "iconbitmap should have been called")
         icon_path = str(call_args[0][0])
         self.assertIn('_internal', icon_path)
-        for p in patches.values():
-            p.stop()
-        gui.on_close()
-
-    def test_nuitka_exe_uses_executable_dir(self):
-        """Nuitka does not set sys.frozen; must still use sys.executable dir when exe is not python.exe."""
-        import sys as _sys
-        # Build an absolute path using os.sep so the path is valid on both Linux and Windows.
-        # A Windows-style r'C:\...' string is treated as a relative path on Linux, causing
-        # os.path.dirname(os.path.abspath(...)) to return the repo root instead of fake_nuitka.
-        fake_exe = os.path.join(os.sep, 'fake_nuitka', 'HDR_to_SDR_Converter.exe')
-        with patch('src.gui.os.path.exists', return_value=True), \
-             patch.object(_sys, 'executable', fake_exe):
-            gui, mock_root, patches, _ = self._make_gui()
-        call_args = mock_root.iconbitmap.call_args
-        self.assertIsNotNone(call_args, "iconbitmap should have been called")
-        icon_path = str(call_args[0][0])
-        self.assertIn('fake_nuitka', icon_path)
         for p in patches.values():
             p.stop()
         gui.on_close()

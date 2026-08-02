@@ -25,7 +25,6 @@ The [latest release](https://github.com/TORlN/HDR-to-SDR/releases) is free to do
 - **Drag and Drop**: Drop a single file to load and preview it.
 - **Live Frame Preview**: See the original (HDR) frame next to the converted (SDR) result side by side. Five evenly-spaced frame buttons let you scrub through the video, and the previews scale smoothly as you resize the window.
 - **Adjust Gamma Value**: Drag a slider (or type a value) to fine-tune the gamma of the output; the preview updates instantly.
-- **Conversion Methods**: Choose between a **Static** or **Dynamic** method. Static applies the same conversion regardless of the file; Dynamic analyzes the original's brightness (MAXFALL) for a more faithful result.
 - **Tonemappers**: Pick between Reinhard, Mobius, Hable, BT.2390, and Spline. BT.2390 and Spline are GPU-only (libplacebo) and shown greyed out until GPU tonemapping is active.
 - **Video Info Strip**: After a file loads, a one-line summary shows resolution, frame rate, codec, HDR/SDR, audio codec, and the probed source bitrate (estimated from the container total when a source, e.g. MKV, doesn't expose a per-stream bitrate). Dolby Vision sources are detected automatically and flagged in this strip.
 - **Monitor & Cancel**: A progress bar tracks the active conversion, and a Cancel button stops it cleanly.
@@ -35,7 +34,7 @@ The [latest release](https://github.com/TORlN/HDR-to-SDR/releases) is free to do
 - **H.265/HEVC Preservation**: An HEVC source is re-encoded back to HEVC instead of being converted to H.264.
 - **10-Bit Output**: Encode the SDR output at 10-bit color depth to avoid banding on gradients.
 - **Dolby Vision Support (Stereo Audio)**: Dolby Vision (profile 5) RPU metadata is routed through the libplacebo tonemapper for an accurate conversion. The source audio track is downmixed to 2-channel stereo AAC in the output.
-- **Persistent Settings**: Gamma, conversion method, tonemapper, quality, container, GPU toggle, preview toggle, and "open after conversion" are saved between sessions.
+- **Persistent Settings**: Gamma, tonemapper, quality, container, GPU toggle, preview toggle, and "open after conversion" are saved between sessions.
 
 ### Pro (Licensed)
 

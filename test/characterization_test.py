@@ -25,7 +25,8 @@ from src.utils import (
     extract_frame_with_conversion,
     FFMPEG_FILTER,
 )
-from src.gui import HDRConverterGUI, DEFAULT_MIN_SIZE, PREVIEW_SIZE
+from src.gui import HDRConverterGUI, DEFAULT_MIN_SIZE
+from src.preview import PREVIEW_SIZE
 
 
 def _bare_gui():
@@ -491,7 +492,7 @@ class TestPreviewPool(unittest.TestCase):
 
     def test_pool_worker_cap_formula(self):
         """max(1, cpu_count // 4) — matches the documented formula."""
-        from src.gui import _PREVIEW_POOL_WORKERS
+        from src.preview import _PREVIEW_POOL_WORKERS
         expected = max(1, (os.cpu_count() or 1) // 4)
         self.assertEqual(_PREVIEW_POOL_WORKERS, expected)
 
@@ -785,7 +786,7 @@ class TestGpuOnlyTonemapperPreviewDispatch(unittest.TestCase):
 
 
 class TestPreviewWorkerThreadRender(unittest.TestCase):
-    @patch('src.gui.ImageTk.PhotoImage')
+    @patch('src.preview.ImageTk.PhotoImage')
     def test_render_updates_labels_and_caches(self, mock_photo):
         gui = _bare_gui()
         mock_img = MagicMock(spec=Image.Image)
@@ -1416,7 +1417,7 @@ class TestPreviewPerformance(unittest.TestCase):
         gui.adjust_gamma = MagicMock(return_value=MagicMock())
         gui.converted_image_label = MagicMock()
 
-        with patch('src.gui.ImageTk.PhotoImage'):
+        with patch('src.preview.ImageTk.PhotoImage'):
             gui._apply_gamma_to_preview()
 
         gui.adjust_gamma.assert_called_once_with(base, 1.5)
@@ -1772,7 +1773,7 @@ class TestGuiErrorAndResizePaths(unittest.TestCase):
         gui.gpu_accel_var.set.assert_called_once_with(False)
         mock_mb.showerror.assert_called_once()
 
-    @patch('src.gui.ImageTk.PhotoImage')
+    @patch('src.preview.ImageTk.PhotoImage')
     def test_resize_images_rescales_present_frames(self, _mock_photo):
         gui = _bare_gui()
         img = MagicMock(spec=Image.Image)
@@ -1886,11 +1887,11 @@ class TestResponsivePreview(unittest.TestCase):
         self.assertEqual(w, round(300 * PREVIEW_SIZE[0] / PREVIEW_SIZE[1]))
 
     def test_fit_pane_clamps_to_minimum_width(self):
-        from src.gui import _MIN_PANE_W
+        from src.preview import _MIN_PANE_W
         w, _h = HDRConverterGUI._fit_preview_pane(10, 5000)
         self.assertEqual(w, _MIN_PANE_W)  # don't shrink a pane to nothing
 
-    @patch('src.gui.ImageTk.PhotoImage')
+    @patch('src.preview.ImageTk.PhotoImage')
     def test_render_at_size_resizes_both_panes(self, _mock_photo):
         gui = _bare_gui()
         img = MagicMock(spec=Image.Image)
@@ -1998,7 +1999,7 @@ class TestResponsivePreview(unittest.TestCase):
     def test_initial_preview_size_is_generous(self):
         # Issue 1: the first preview should open noticeably larger than the
         # minimum pane, so freshly added files aren't tiny thumbnails.
-        from src.gui import INITIAL_PANE_SIZE, _MIN_PANE_W
+        from src.preview import INITIAL_PANE_SIZE, _MIN_PANE_W
         gui = _bare_gui()
         gui.root = MagicMock()
         gui.root.winfo_screenwidth.return_value = 3840  # plenty of room
@@ -2006,7 +2007,7 @@ class TestResponsivePreview(unittest.TestCase):
         self.assertGreater(INITIAL_PANE_SIZE[0], _MIN_PANE_W)
 
     def test_initial_preview_size_capped_to_screen(self):
-        from src.gui import INITIAL_PANE_SIZE
+        from src.preview import INITIAL_PANE_SIZE
         gui = _bare_gui()
         gui.root = MagicMock()
         gui.root.winfo_screenwidth.return_value = 800  # narrow screen
@@ -2015,7 +2016,7 @@ class TestResponsivePreview(unittest.TestCase):
         self.assertEqual(h, round(w * PREVIEW_SIZE[1] / PREVIEW_SIZE[0]))  # 16:9
 
     def test_initial_preview_size_defaults_without_real_screen(self):
-        from src.gui import INITIAL_PANE_SIZE
+        from src.preview import INITIAL_PANE_SIZE
         gui = _bare_gui()
         gui.root = MagicMock()  # winfo_screenwidth returns a MagicMock, not int
         self.assertEqual(gui._initial_preview_size(), INITIAL_PANE_SIZE)
@@ -2144,7 +2145,7 @@ class TestMinWindowSize(unittest.TestCase):
         gui.progress_bar = self._frame(*progress_bar)
 
     def test_compute_min_from_chrome(self):
-        from src.gui import _MIN_SIZE_MARGIN
+        from src.preview import _MIN_SIZE_MARGIN
         gui = _bare_gui()
         gui.root = MagicMock()
         gui.control_frame = self._frame(700, 200)
@@ -2209,7 +2210,7 @@ class TestMinWindowSize(unittest.TestCase):
         gui.root.minsize.assert_called_once_with(*DEFAULT_MIN_SIZE)
 
     def test_initial_geometry_stretches_width_beyond_computed_minimum(self):
-        from src.gui import _INITIAL_WIDTH_STRETCH
+        from src.preview import _INITIAL_WIDTH_STRETCH
         gui = _bare_gui()
         gui.root = MagicMock()
         gui._min_window_size = (700, 400)
@@ -2220,7 +2221,7 @@ class TestMinWindowSize(unittest.TestCase):
         gui = _bare_gui()
         gui.root = MagicMock()
         gui._apply_initial_window_geometry()
-        from src.gui import _INITIAL_WIDTH_STRETCH
+        from src.preview import _INITIAL_WIDTH_STRETCH
         gui.root.geometry.assert_called_once_with(
             f"{DEFAULT_MIN_SIZE[0] + _INITIAL_WIDTH_STRETCH}x{DEFAULT_MIN_SIZE[1]}")
 
@@ -2538,7 +2539,7 @@ class TestPreviewLoadingIndicator(unittest.TestCase):
         gui._hide_preview_loading = MagicMock()
         gui._reveal_preview = MagicMock()
 
-        with patch('src.gui.ImageTk.PhotoImage'):
+        with patch('src.preview.ImageTk.PhotoImage'):
             gui._render_preview_images(img, img, time_position=5.0)
 
         gui._hide_preview_loading.assert_called_once()
@@ -2888,7 +2889,7 @@ class TestResizeImages(unittest.TestCase):
         gui.adjust_gamma = lambda img, g: img
         gui.original_image_label = MagicMock()
         gui.converted_image_label = MagicMock()
-        with patch('src.gui.ImageTk.PhotoImage'):
+        with patch('src.preview.ImageTk.PhotoImage'):
             gui.resize_images(400, 300)
         gui.original_image_label.config.assert_called_once()
         gui.converted_image_label.config.assert_called_once()
@@ -2910,7 +2911,7 @@ class TestResizeImages(unittest.TestCase):
         gui.adjust_gamma = lambda img, g: img
         gui.original_image_label = MagicMock()
         gui.converted_image_label = MagicMock()
-        with patch('src.gui.ImageTk.PhotoImage'):
+        with patch('src.preview.ImageTk.PhotoImage'):
             gui.resize_images(400, 300)
         self.assertEqual(
             gui._converted_preview_base.size, (200, 150),

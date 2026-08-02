@@ -34,16 +34,17 @@ TONEMAP = ["Reinhard", "Mobius", "Hable", "BT.2390", "Spline"]
 # accurate mode used by professional color tools) measurably reduces the
 # resulting error -- confirmed via real-ffmpeg pixel comparison against
 # zscale's own conversion on real HDR10 content.
-FFMPEG_FILTER = (
-    'zscale=t=linear:npl=100,tonemap={tonemapper},zscale=t=bt709:m=bt709:r=tv,'
-    'lut3d=file={lut_path}:interp=tetrahedral,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709,'
-    'eq=gamma={gamma},scale={width}:{height}:force_original_aspect_ratio=decrease'
-)
-
 FFMPEG_CONVERT_FILTER = (
     'zscale=t=linear:npl=100,tonemap={tonemapper},zscale=t=bt709:m=bt709:r=tv,'
     'lut3d=file={lut_path}:interp=tetrahedral,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709,'
     'eq=gamma={gamma}'
+)
+
+# The preview chain is the export chain plus a downscale, so it is derived from
+# it rather than restated -- the two must never drift apart.
+FFMPEG_FILTER = (
+    FFMPEG_CONVERT_FILTER
+    + ',scale={width}:{height}:force_original_aspect_ratio=decrease'
 )
 
 # Zscale-only gamut correction (no LUT). Used by the CPU preview path when
@@ -142,7 +143,8 @@ def get_executable_path(filename):
     """Helper function to get the correct path for bundled executables"""
     try:
         if getattr(sys, 'frozen', False):
-            # PyInstaller sets _MEIPASS; Nuitka does not — use __file__ instead.
+            # PyInstaller always sets _MEIPASS alongside frozen; the fallback is
+            # belt-and-braces so a missing one degrades instead of crashing at import.
             base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
         else:
             base_path = os.path.dirname(os.path.abspath(__file__))
@@ -222,36 +224,18 @@ def get_lut_filter_path() -> str:
     return _LUT_FILTER_PATH
 
 def verify_ffmpeg_files():
-    """Verify that ffmpeg files exist and are accessible"""
+    """Locate ffmpeg/ffprobe and publish their paths as module globals.
+
+    Keys are extension-free ('ffmpeg', not 'ffmpeg.exe') so callers stay
+    platform-agnostic. get_executable_path already logs and raises
+    FileNotFoundError when one is missing, so there is nothing to add here.
+    """
     global FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE
-    try:
-        if getattr(sys, 'frozen', False):
-            base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
-            logging.debug(f"Verifying FFmpeg files in bundled environment: {base_path}")
-        else:
-            base_path = os.path.dirname(os.path.abspath(__file__))
-            logging.debug(f"Verifying FFmpeg files in normal environment: {base_path}")
-        
-        files_to_check = ['ffmpeg', 'ffprobe']
-        found_files = {}
-
-        for name in files_to_check:
-            try:
-                path = get_executable_path(name)
-                found_files[name] = path
-                logging.info(f"Found {name} at: {path}")
-            except FileNotFoundError as e:
-                logging.error(f"Could not find {name}: {str(e)}")
-                raise
-
-        FFMPEG_EXECUTABLE = found_files['ffmpeg']
-        FFPROBE_EXECUTABLE = found_files['ffprobe']
-
-        return found_files
-
-    except Exception as e:
-        logging.error(f"Error verifying FFmpeg files: {str(e)}")
-        raise
+    # Resolve both before publishing either: a half-initialized pair (ffmpeg
+    # set, ffprobe still None) is worse than neither being set.
+    found = {name: get_executable_path(name) for name in ('ffmpeg', 'ffprobe')}
+    FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE = found['ffmpeg'], found['ffprobe']
+    return found
 
 def initialize_ffmpeg():
     """Initialize FFmpeg executables and configure the environment."""

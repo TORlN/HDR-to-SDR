@@ -13,8 +13,6 @@ from tkinter import ttk
 from dialog_theme import (
     _ACCENT,
     _BG,
-    _ENTRY_BG,
-    _ERROR_FG,
     _FG,
     _FONT,
     _FONT_BOLD,

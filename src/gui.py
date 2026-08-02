@@ -8,24 +8,18 @@ from tkinter import filedialog, messagebox
 from tkinter import ttk
 from dark_theme import apply_dark_theme
 from conversion import conversion_manager
-from utils import (get_video_properties, get_maxcll, TONEMAP, clear_maxfall_cache,
+from utils import (get_video_properties, get_maxcll, TONEMAP,
                    is_gpu_only_tonemapper, vulkan_libplacebo_available,
                    VIDEO_FILE_FILTER, parse_drop_paths as _shared_parse_drop_paths)
 from settings import load_settings, save_settings
-from licensing import InvalidKeyError, DeviceLimitError, NetworkError, LicenseError
-from PIL import Image, ImageTk
+from PIL import Image
 from tkinterdnd2 import DND_FILES, TkinterDnD
 import logging
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 
-from dialogs import _LicenseDialog, _UpdateDialog, activate_license
-from preview import (
-    DEFAULT_MIN_SIZE, PREVIEW_SIZE, INITIAL_PANE_SIZE,
-    _MIN_PANE_W, _RESIZE_DEBOUNCE_MS, _PREVIEW_WIDTH_RESERVE,
-    _PREVIEW_HEIGHT_RESERVE, _MIN_SIZE_MARGIN, _PREVIEW_POOL_WORKERS,
-    _INITIAL_WIDTH_STRETCH, _HDRPreviewMixin,
-)
+from dialogs import _LicenseDialog, _UpdateDialog
+from preview import DEFAULT_MIN_SIZE, _PREVIEW_POOL_WORKERS, _HDRPreviewMixin
 # Imported as a module object, not `from pro.batch import _BatchMixin`. As in
 # src/licensing.py and src/dialogs.py: a `from`-import of an unresolved
 # module leaves pyright treating the unresolved import *declaration* as
@@ -303,9 +297,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
     # ── Window icon ────────────────────────────────────────────────────────────
 
     def _set_window_icon(self) -> None:
-        exe_name = os.path.basename(sys.executable).lower()
-        is_compiled = getattr(sys, 'frozen', False) or not exe_name.startswith('python')
-        if is_compiled:
+        if getattr(sys, 'frozen', False):
             meipass: str | None = getattr(sys, '_MEIPASS', None)
             base_dir = meipass if meipass is not None else os.path.dirname(
                 os.path.abspath(sys.executable))

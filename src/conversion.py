@@ -6,15 +6,13 @@ import re
 import logging
 from tkinter import messagebox, ttk
 from utils import (get_video_properties, FFMPEG_CONVERT_FILTER,
-                   FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE,
+                   FFMPEG_EXECUTABLE,
                    VULKAN_DEVICE_ARGS, VULKAN_CUDA_DEVICE_ARGS,
                    build_libplacebo_filter, is_gpu_only_tonemapper,
                    vulkan_libplacebo_available, vulkan_cuda_interop_available,
                    get_lut_filter_path,
                    _startupinfo as _utils_startupinfo)
-from tkinterdnd2 import DND_FILES
-import sys
-import platform  # Add this import at the top
+import platform
 
 class ConversionManager:
     def __init__(self):

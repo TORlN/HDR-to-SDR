@@ -127,15 +127,6 @@ class ConversionManager:
         self._request = request
         self._ui = ui
         self.cancelled = False
-        # Loose attributes stay for now; Task 6 deletes them once every
-        # consumer reads the request instead.
-        self.use_gpu = request.use_gpu
-        self._quality = request.quality
-        self._quality_mode = request.quality_mode
-        self._bit_depth = request.bit_depth
-        self._lut_enabled = request.lut_enabled
-        self._licensed = request.licensed
-        self._on_complete = ui.on_complete
 
         input_path = request.input_path
         output_path = request.output_path
@@ -146,13 +137,6 @@ class ConversionManager:
         open_after_conversion = request.open_after_conversion
         gamma = request.gamma
         tonemapper = request.tonemapper
-        use_gpu = request.use_gpu
-        quality = request.quality
-        quality_mode = request.quality_mode
-        bit_depth = request.bit_depth
-        licensed = request.licensed
-        lut_enabled = request.lut_enabled
-        on_complete = ui.on_complete
 
         properties = get_video_properties(input_path)
         if properties is None:
@@ -616,54 +600,37 @@ class ConversionManager:
                 logging.warning("GPU acceleration failed. Retrying with CPU encoding.")
                 # The retry touches Tk (gpu checkbox, dialog, UI state) and must run
                 # on the main thread, not this worker thread.
-                ui.gui_instance.root.after(0, lambda: self._retry_with_cpu(
-                    ui.gui_instance, ui.interactable_elements, ui.cancel_button, ui.progress_var,
-                    request.open_after_conversion, request.gamma, request.tonemapper))
+                ui.gui_instance.root.after(0, lambda: self._retry_with_cpu(ui))
             else:
                 self.handle_completion(request, ui, error_messages, returncode)
 
-    def _retry_with_cpu(self, gui_instance, interactable_elements, cancel_button,
-                        progress_var, open_after_conversion, gamma, tonemapper):
-        """Restart the conversion on the CPU after a GPU failure. Runs on the main thread."""
-        gui_instance.gpu_accel_var.set(False)
+    def _retry_with_cpu(self, ui: ConversionUI) -> None:
+        """Restart the conversion on the CPU after a GPU failure. Main thread.
+
+        The retry derives its request from the original with replace() rather
+        than re-reading the GUI: a path edited mid-conversion used to redirect
+        the retry to a different file.
+        """
+        assert self._request is not None, '_retry_with_cpu before a conversion started'
+        ui.gui_instance.gpu_accel_var.set(False)
         # A raw Variable.set() doesn't fire the checkbox's command= callback
         # (check_gpu_acceleration), which is normally what persists a GPU
         # toggle onto the current batch item's stored settings -- without
         # this, reselecting the item later would restore the stale,
         # pre-failure gpu_accel=True.
-        gui_instance._write_back_current_settings()
+        ui.gui_instance._write_back_current_settings()
         messagebox.showwarning("GPU Acceleration Failed",
                                "GPU acceleration failed. Switching to CPU encoding.")
-        on_complete = getattr(self, '_on_complete', None)
         try:
-            self.start_conversion(
-                input_path=gui_instance.input_path_var.get(),
-                output_path=gui_instance.output_path_var.get(),
-                gamma=gamma,
-                use_gpu=False,  # Force CPU encoding
-                progress_var=progress_var,
-                interactable_elements=interactable_elements,
-                gui_instance=gui_instance,
-                open_after_conversion=open_after_conversion,
-                cancel_button=cancel_button,
-                tonemapper=tonemapper,
-                quality=getattr(self, '_quality', 23),
-                quality_mode=getattr(self, '_quality_mode', 'cq'),
-                on_complete=on_complete,
-                bit_depth=getattr(self, '_bit_depth', 8),
-                licensed=getattr(self, '_licensed', False),
-                lut_enabled=getattr(self, '_lut_enabled', True),
-            )
+            self._start(replace(self._request, use_gpu=False), ui)
         except Exception as e:
-            # E.g. a GPU-only tonemapper (BT.2390/Spline) that has no CPU
-            # implementation: construct_ffmpeg_command already restored UI
-            # state and re-raised. Unlike a first attempt (wrapped by
-            # _start_next_batch_item's own try/except), nothing else in this
-            # call path calls on_complete -- without this, the batch item
-            # would be stuck at 'Converting' forever.
-            logging.error(f"CPU retry failed to start ({tonemapper}): {e}")
-            if on_complete is not None:
-                on_complete(False)
+            # E.g. a GPU-only tonemapper (BT.2390/Spline) with no CPU
+            # implementation: _start already restored UI state and re-raised.
+            # Nothing else in this call path calls on_complete -- without this
+            # the batch item would be stuck at 'Converting' forever.
+            logging.error(f"CPU retry failed to start ({self._request.tonemapper}): {e}")
+            if ui.on_complete is not None:
+                ui.on_complete(False)
 
     def parse_time(self, time_str):
         hours, minutes, seconds = map(float, time_str.split(':'))

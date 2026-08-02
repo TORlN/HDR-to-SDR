@@ -781,19 +781,6 @@ class TestBatchCompletionHook(unittest.TestCase):
         mock_enable.assert_not_called()
         cancel.grid_remove.assert_not_called()
 
-    @patch('src.conversion.get_video_properties')
-    @patch('src.conversion.subprocess.Popen')
-    def test_start_conversion_stores_on_complete(self, mock_popen, mock_props):
-        mock_props.return_value = dict(self._PROPS)
-        proc = MagicMock(); proc.stderr = iter([]); proc.returncode = 0
-        mock_popen.return_value = proc
-        manager = ConversionManager()
-        done = MagicMock()
-        manager.start_conversion('in.mp4', 'out.mkv', 1.0, False, MagicMock(),
-                                 [], self._gui(), False, MagicMock(), on_complete=done)
-        self.assertIs(manager._on_complete, done)
-
-
 class TestStartConversionSignalsFailureOnEarlyReturn(unittest.TestCase):
     """Every guard in start_conversion that bails out before launching ffmpeg
     must still report failure to the caller: return False, and -- when an
@@ -1970,18 +1957,6 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
                 False, MagicMock(), licensed=True)
         self.assertIs(mock_build.call_args.args[0].licensed, True)
 
-    def test_cpu_retry_preserves_licensed_flag(self):
-        """A GPU-failure retry must not silently demote a Pro user to the
-        Free stereo downmix."""
-        manager = ConversionManager()
-        manager._licensed = True  # as remembered by start_conversion(licensed=True)
-        mock_gui = MagicMock()
-        with patch.object(manager, 'start_conversion') as mock_start, \
-             patch('src.conversion.messagebox.showwarning'):
-            manager._retry_with_cpu(mock_gui, [], MagicMock(), MagicMock(),
-                                    False, 1.0, 'reinhard')
-        self.assertIs(mock_start.call_args.kwargs.get('licensed'), True)
-
     def test_start_conversion_threads_quality_mode(self):
         manager = ConversionManager()
         mock_gui = MagicMock()
@@ -1995,56 +1970,6 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
                 'in.mkv', 'out.mkv', 1.0, False, MagicMock(), [], mock_gui,
                 False, MagicMock(), quality=30000, quality_mode='bitrate')
         self.assertEqual(mock_build.call_args.args[0].quality_mode, 'bitrate')
-        self.assertEqual(manager._quality_mode, 'bitrate')
-
-    def test_cpu_retry_preserves_quality_mode(self):
-        """A GPU-failure retry must keep targeting the same bitrate/CQ mode,
-        not silently fall back to Constant Quality."""
-        manager = ConversionManager()
-        manager._quality_mode = 'bitrate'  # as remembered by start_conversion(quality_mode='bitrate')
-        manager._quality = 30000
-        mock_gui = MagicMock()
-        with patch.object(manager, 'start_conversion') as mock_start, \
-             patch('src.conversion.messagebox.showwarning'):
-            manager._retry_with_cpu(mock_gui, [], MagicMock(), MagicMock(),
-                                    False, 1.0, 'reinhard')
-        self.assertEqual(mock_start.call_args.kwargs.get('quality_mode'), 'bitrate')
-        self.assertEqual(mock_start.call_args.kwargs.get('quality'), 30000)
-
-    def test_cpu_retry_calls_on_complete_when_construct_ffmpeg_command_raises(self):
-        """A CPU retry that still can't build a command (e.g. a GPU-only
-        tonemapper with no CPU implementation) must still call on_complete,
-        or the batch item is stuck at 'Converting' forever -- unlike a first
-        (non-retry) attempt, nothing else in this call path (there's no
-        surrounding try/except the way _start_next_batch_item wraps its own
-        call to start_conversion) catches the exception."""
-        manager = ConversionManager()
-        manager._on_complete = MagicMock()
-        mock_gui = MagicMock()
-        mock_gui.input_path_var.get.return_value = 'in.mkv'
-        mock_gui.output_path_var.get.return_value = 'out.mkv'
-        with patch.object(manager, 'construct_ffmpeg_command',
-                          side_effect=ValueError('bt.2390 requires GPU tonemapping')), \
-             patch('src.conversion.get_video_properties', return_value={'duration': 10.0}), \
-             patch('src.conversion.messagebox'):
-            manager._retry_with_cpu(mock_gui, [], MagicMock(), MagicMock(),
-                                    False, 1.0, 'bt.2390')
-        manager._on_complete.assert_called_once_with(False)
-
-    def test_cpu_retry_writes_back_gpu_accel_off_to_current_batch_item(self):
-        """gpu_accel_var.set(False) alone doesn't persist -- it's a raw
-        Variable.set(), which doesn't fire the checkbutton's command= callback
-        that normally triggers a settings write-back. Without an explicit
-        write-back here, reselecting the batch item this retry ran for would
-        restore the stale (pre-failure) gpu_accel=True and silently re-enable
-        GPU on a file that just proved it fails on GPU."""
-        manager = ConversionManager()
-        mock_gui = MagicMock()
-        with patch.object(manager, 'start_conversion'), \
-             patch('src.conversion.messagebox.showwarning'):
-            manager._retry_with_cpu(mock_gui, [], MagicMock(), MagicMock(),
-                                    False, 1.0, 'reinhard')
-        mock_gui._write_back_current_settings.assert_called_once()
 
 
 class TestBitrateModeCommandConstruction(unittest.TestCase):
@@ -2186,6 +2111,79 @@ class TestStartConversionBuildsRequest(unittest.TestCase):
         request, ui = mock_start.call_args.args
         self.assertEqual(request.tonemapper, 'hable')
         self.assertIsNone(ui.on_complete)
+
+
+class TestRetryUsesTheRequest(unittest.TestCase):
+    """Uses the module-level _req()/_ui() helpers from Task 1."""
+
+    def test_cpu_retry_uses_original_paths_not_current_widgets(self):
+        """BEHAVIOR CHANGE: the retry re-encodes what the failed run was
+        encoding. Previously it re-read input_path_var/output_path_var, so a
+        path edited mid-conversion silently redirected the retry."""
+        m = ConversionManager()
+        m._request = _req(input_path='original_in.mkv',
+                          output_path='original_out.mp4', use_gpu=True)
+        ui = _ui()
+        ui.gui_instance.input_path_var.get.return_value = 'CHANGED_in.mkv'
+        ui.gui_instance.output_path_var.get.return_value = 'CHANGED_out.mp4'
+        with patch.object(m, '_start') as mock_start, \
+             patch('src.conversion.messagebox.showwarning'):
+            m._retry_with_cpu(ui)
+        sent = mock_start.call_args.args[0]
+        self.assertEqual(sent.input_path, 'original_in.mkv')
+        self.assertEqual(sent.output_path, 'original_out.mp4')
+
+    def test_cpu_retry_forces_cpu_but_keeps_every_other_setting(self):
+        """Replaces the old tests that poked manager._licensed / _quality."""
+        m = ConversionManager()
+        m._request = _req(use_gpu=True, quality=30000, quality_mode='bitrate',
+                          bit_depth=10, licensed=True, lut_enabled=False,
+                          tonemapper='hable')
+        with patch.object(m, '_start') as mock_start, \
+             patch('src.conversion.messagebox.showwarning'):
+            m._retry_with_cpu(_ui())
+        sent = mock_start.call_args.args[0]
+        self.assertIs(sent.use_gpu, False)
+        self.assertEqual(sent.quality, 30000)
+        self.assertEqual(sent.quality_mode, 'bitrate')
+        self.assertEqual(sent.bit_depth, 10)
+        self.assertIs(sent.licensed, True)
+        self.assertIs(sent.lut_enabled, False)
+        self.assertEqual(sent.tonemapper, 'hable')
+
+    def test_cpu_retry_calls_on_complete_when_start_raises(self):
+        """A GPU-only tonemapper has no CPU path; without this the batch item
+        is stuck at 'Converting' forever."""
+        m = ConversionManager()
+        m._request = _req(use_gpu=True, tonemapper='bt.2390')
+        cb = MagicMock()
+        with patch.object(m, '_start', side_effect=ValueError('needs GPU')), \
+             patch('src.conversion.messagebox'):
+            m._retry_with_cpu(_ui(on_complete=cb))
+        cb.assert_called_once_with(False)
+
+    def test_cpu_retry_writes_back_gpu_accel_off(self):
+        """gpu_accel_var.set(False) alone doesn't fire the checkbutton's
+        command= callback, so the batch item would keep a stale gpu_accel=True."""
+        m = ConversionManager()
+        m._request = _req(use_gpu=True)
+        ui = _ui()
+        with patch.object(m, '_start'), patch('src.conversion.messagebox.showwarning'):
+            m._retry_with_cpu(ui)
+        ui.gui_instance._write_back_current_settings.assert_called_once()
+
+
+class TestNoLooseStateRemains(unittest.TestCase):
+
+    def test_manager_exposes_no_legacy_setting_attributes(self):
+        """Item 5: these were read via getattr(self, '_x', default) fallbacks
+        that silently substituted wrong values -- notably licensed=False, which
+        would demote a Pro user's Dolby Vision audio to the free downmix."""
+        m = ConversionManager()
+        for name in ('use_gpu', '_quality', '_quality_mode', '_bit_depth',
+                     '_lut_enabled', '_licensed', '_on_complete'):
+            self.assertFalse(hasattr(m, name),
+                             msg=f'{name} should have been folded into _request/_ui')
 
 
 if __name__ == '__main__':

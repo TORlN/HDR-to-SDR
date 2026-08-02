@@ -220,22 +220,30 @@ class TestMonitorProgress(unittest.TestCase):
         proc.stderr = iter(['Cannot load nvcuda.dll', 'cuda failure'])
         proc.returncode = 1
         manager.process = proc
-        manager.start_conversion = MagicMock()
+        # The retry now re-enters _start directly (not the public
+        # start_conversion) with a request derived via replace().
+        manager._start = MagicMock()
 
         gui = self._gui()
         gui.input_path_var.get.return_value = 'in.mp4'
         gui.output_path_var.get.return_value = 'out.mkv'
 
+        # _start would normally have stashed this on the manager before
+        # monitor_progress's worker thread ever runs.
+        request = self._req(use_gpu=True, tonemapper='hable')
+        manager._request = request
+
         manager.monitor_progress(
-            self._req(use_gpu=True, tonemapper='hable'),
+            request,
             self._ui(gui_instance=gui),
             90.0,
         )
 
-        manager.start_conversion.assert_called_once()
-        self.assertIs(manager.start_conversion.call_args.kwargs['use_gpu'], False)
+        manager._start.assert_called_once()
+        sent_request = manager._start.call_args.args[0]
+        self.assertIs(sent_request.use_gpu, False)
         # The retry preserves the user's tonemapper (was previously lost).
-        self.assertEqual(manager.start_conversion.call_args.kwargs['tonemapper'], 'hable')
+        self.assertEqual(sent_request.tonemapper, 'hable')
         gui.gpu_accel_var.set.assert_called_once_with(False)
 
     @patch('src.conversion.messagebox')

@@ -186,9 +186,9 @@ class ConversionManager:
             raise
         self.process = self.start_ffmpeg_process(cmd)
 
-        thread = threading.Thread(target=self.monitor_progress, args=(
-            progress_var, properties['duration'], gui_instance, interactable_elements,
-            cancel_button, output_path, open_after_conversion, gamma, tonemapper))
+        thread = threading.Thread(
+            target=self.monitor_progress,
+            args=(self._request, self._ui, properties['duration']))
         thread.daemon = True
         thread.start()
         return True
@@ -573,11 +573,10 @@ class ConversionManager:
         logging.debug(f"Started FFmpeg process with command: {' '.join(cmd)}")
         return process
 
-    def monitor_progress(self, progress_var, duration, gui_instance, interactable_elements,
-                         cancel_button, output_path, open_after_conversion, gamma,
-                         tonemapper='reinhard'):
+    def monitor_progress(self, request: ConversionRequest, ui: ConversionUI,
+                         duration: float) -> None:
         progress_pattern = re.compile(r'time=(\d+:\d+:\d+\.\d+)')
-        error_messages = []
+        error_messages: list[str] = []
         gpu_error_detected = False
 
         # Capture a stable local reference at thread-entry time.  cancel_conversion
@@ -597,8 +596,8 @@ class ConversionManager:
             if match and duration:
                 elapsed_time = self.parse_time(match.group(1))
                 progress = (elapsed_time / duration) * 100
-                gui_instance.root.after(0, lambda p=progress: progress_var.set(p))
-                gui_instance.root.after(0, gui_instance.root.update_idletasks)
+                ui.gui_instance.root.after(0, lambda p=progress: ui.progress_var.set(p))
+                ui.gui_instance.root.after(0, ui.gui_instance.root.update_idletasks)
 
             # ffmpeg's own banner lines echo the input/output path verbatim
             # ("Input #0, ..., from '<path>':" / "Output #0, ..., to
@@ -613,17 +612,15 @@ class ConversionManager:
         if proc is not None:
             proc.wait()
             returncode = proc.returncode
-            if returncode != 0 and self.use_gpu and gpu_error_detected and not self.cancelled:
+            if returncode != 0 and request.use_gpu and gpu_error_detected and not self.cancelled:
                 logging.warning("GPU acceleration failed. Retrying with CPU encoding.")
                 # The retry touches Tk (gpu checkbox, dialog, UI state) and must run
                 # on the main thread, not this worker thread.
-                gui_instance.root.after(0, lambda: self._retry_with_cpu(
-                    gui_instance, interactable_elements, cancel_button, progress_var,
-                    open_after_conversion, gamma, tonemapper))
+                ui.gui_instance.root.after(0, lambda: self._retry_with_cpu(
+                    ui.gui_instance, ui.interactable_elements, ui.cancel_button, ui.progress_var,
+                    request.open_after_conversion, request.gamma, request.tonemapper))
             else:
-                self.handle_completion(gui_instance, interactable_elements, cancel_button,
-                                    output_path, open_after_conversion, error_messages,
-                                    returncode)
+                self.handle_completion(request, ui, error_messages, returncode)
 
     def _retry_with_cpu(self, gui_instance, interactable_elements, cancel_button,
                         progress_var, open_after_conversion, gamma, tonemapper):
@@ -672,16 +669,16 @@ class ConversionManager:
         hours, minutes, seconds = map(float, time_str.split(':'))
         return hours * 3600 + minutes * 60 + seconds
 
-    def handle_completion(self, gui_instance, interactable_elements, cancel_button,
-                          output_path, open_after_conversion, error_messages, returncode):
-        def _handle():
+    def handle_completion(self, request: ConversionRequest, ui: ConversionUI,
+                          error_messages: list[str], returncode: int) -> None:
+        def _handle() -> None:
             # returncode is the value monitor_progress already read from its
             # own locally-captured proc, not re-read from self.process here:
             # cancel_conversion (main thread) can set self.process = None
             # between monitor_progress finishing and this after(0)-scheduled
             # callback actually running, which would otherwise misreport a
             # conversion that had already finished successfully.
-            on_complete = getattr(self, '_on_complete', None)
+            on_complete = ui.on_complete
             if on_complete is not None:
                 # Batch/queue mode: no per-file dialog and the UI stays disabled
                 # between files. The callback marks status and advances the queue
@@ -697,9 +694,10 @@ class ConversionManager:
             if returncode == 0:
                 logging.info("Conversion completed successfully.")
                 messagebox.showinfo(
-                    "Success", f"Conversion complete! Output saved to: {output_path}")
-                if open_after_conversion:
-                    webbrowser.open(output_path)
+                    "Success",
+                    f"Conversion complete! Output saved to: {request.output_path}")
+                if request.open_after_conversion:
+                    webbrowser.open(request.output_path)
             elif not self.cancelled:
                 tail = error_messages[-50:]  # ffmpeg stderr can be thousands of progress lines; show only the tail where real errors appear
                 error_message = '\n'.join(tail)
@@ -707,13 +705,13 @@ class ConversionManager:
                 messagebox.showerror(
                     "Error", f"Conversion failed with code {returncode}\n{error_message}")
 
-            self.enable_ui(interactable_elements)
-            cancel_button.grid_remove()
+            self.enable_ui(ui.interactable_elements)
+            ui.cancel_button.grid_remove()
 
-            if hasattr(gui_instance, 'register_drop_target'):
-                gui_instance.register_drop_target()
+            if hasattr(ui.gui_instance, 'register_drop_target'):
+                ui.gui_instance.register_drop_target()
 
-        gui_instance.root.after(0, _handle)
+        ui.gui_instance.root.after(0, _handle)
 
     def cancel_conversion(self, gui_instance, interactable_elements, cancel_button):
         self.cancelled = True

@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../s
 
 from PIL import Image
 
-from src.conversion import ConversionManager
+from src.conversion import ConversionManager, ConversionRequest, ConversionUI
 from src.utils import (
     get_maxcll,
     get_video_properties,
@@ -177,10 +177,21 @@ class TestMonitorProgress(unittest.TestCase):
         gui.root.after = MagicMock(side_effect=lambda delay, func, *a: func())
         return gui
 
+    def _req(self, **overrides):
+        base = dict(input_path='in.mp4', output_path='out.mkv', gamma=1.0,
+                    use_gpu=False, open_after_conversion=False)
+        base.update(overrides)
+        return ConversionRequest(**base)
+
+    def _ui(self, **overrides):
+        base = dict(gui_instance=MagicMock(), progress_var=MagicMock(),
+                    interactable_elements=[], cancel_button=MagicMock())
+        base.update(overrides)
+        return ConversionUI(**base)
+
     @patch('src.conversion.messagebox')
     def test_progress_is_parsed_and_pushed_to_progress_var(self, _mb):
         manager = ConversionManager()
-        manager.use_gpu = False
         manager.cancelled = False
         proc = MagicMock()
         proc.stderr = iter(['frame=1 time=00:00:45.00 bitrate=1'])
@@ -192,9 +203,9 @@ class TestMonitorProgress(unittest.TestCase):
         gui = self._gui()
 
         manager.monitor_progress(
-            progress_var, duration=90.0, gui_instance=gui,
-            interactable_elements=[], cancel_button=MagicMock(),
-            output_path='out.mkv', open_after_conversion=False, gamma=1.0,
+            self._req(),
+            self._ui(gui_instance=gui, progress_var=progress_var),
+            90.0,
         )
 
         # 45s of 90s == 50%.
@@ -204,7 +215,6 @@ class TestMonitorProgress(unittest.TestCase):
     @patch('src.conversion.messagebox')
     def test_gpu_error_triggers_cpu_retry(self, _mb):
         manager = ConversionManager()
-        manager.use_gpu = True
         manager.cancelled = False
         proc = MagicMock()
         proc.stderr = iter(['Cannot load nvcuda.dll', 'cuda failure'])
@@ -217,10 +227,9 @@ class TestMonitorProgress(unittest.TestCase):
         gui.output_path_var.get.return_value = 'out.mkv'
 
         manager.monitor_progress(
-            MagicMock(), duration=90.0, gui_instance=gui,
-            interactable_elements=[], cancel_button=MagicMock(),
-            output_path='out.mkv', open_after_conversion=False, gamma=1.0,
-            tonemapper='hable',
+            self._req(use_gpu=True, tonemapper='hable'),
+            self._ui(gui_instance=gui),
+            90.0,
         )
 
         manager.start_conversion.assert_called_once()
@@ -232,7 +241,6 @@ class TestMonitorProgress(unittest.TestCase):
     @patch('src.conversion.messagebox')
     def test_cancelled_run_does_not_retry_on_gpu_error(self, _mb):
         manager = ConversionManager()
-        manager.use_gpu = True
         manager.cancelled = True  # user cancelled
         proc = MagicMock()
         proc.stderr = iter(['cuda failure'])
@@ -244,9 +252,9 @@ class TestMonitorProgress(unittest.TestCase):
         gui = self._gui()
 
         manager.monitor_progress(
-            MagicMock(), duration=90.0, gui_instance=gui,
-            interactable_elements=[], cancel_button=MagicMock(),
-            output_path='out.mkv', open_after_conversion=False, gamma=1.0,
+            self._req(use_gpu=True),
+            self._ui(gui_instance=gui),
+            90.0,
         )
 
         manager.start_conversion.assert_not_called()
@@ -3022,11 +3030,11 @@ class TestConversionManagerInternals(unittest.TestCase):
         m = ConversionManager()
         m.process = None
         m.cancelled = False
-        m.monitor_progress(
-            MagicMock(), duration=90.0, gui_instance=MagicMock(),
-            interactable_elements=[], cancel_button=MagicMock(),
-            output_path='out.mkv', open_after_conversion=False, gamma=1.0,
-        )
+        req = ConversionRequest(input_path='in.mp4', output_path='out.mkv', gamma=1.0,
+                                use_gpu=False, open_after_conversion=False)
+        ui = ConversionUI(gui_instance=MagicMock(), progress_var=MagicMock(),
+                          interactable_elements=[], cancel_button=MagicMock())
+        m.monitor_progress(req, ui, 90.0)
 
     def test_nvidia_present_true_when_smi_exits_zero(self):
         m = ConversionManager()

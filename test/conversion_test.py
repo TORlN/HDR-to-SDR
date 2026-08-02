@@ -111,6 +111,38 @@ class TestConversionUI(unittest.TestCase):
         self.assertEqual(len(ui.interactable_elements), 2)
 
 
+class TestMonitorAndCompletionTakeObjects(unittest.TestCase):
+    """Uses the module-level _req()/_ui() helpers from Task 1."""
+
+    def test_handle_completion_opens_output_from_the_request(self):
+        """open_after_conversion and output_path both ride on the request now."""
+        m = ConversionManager()
+        ui = _ui()
+        ui.gui_instance.root.after.side_effect = lambda _d, fn: fn()
+        req = _req(output_path='done.mp4', open_after_conversion=True)
+        with patch('src.conversion.messagebox'), \
+             patch('src.conversion.webbrowser.open') as mock_open:
+            m.handle_completion(req, ui, [], 0)
+        mock_open.assert_called_once_with('done.mp4')
+
+    def test_handle_completion_batch_mode_calls_on_complete_not_dialog(self):
+        m = ConversionManager()
+        cb = MagicMock()
+        ui = _ui(on_complete=cb)
+        ui.gui_instance.root.after.side_effect = lambda _d, fn: fn()
+        with patch('src.conversion.messagebox') as mock_box:
+            m.handle_completion(_req(), ui, [], 0)
+        cb.assert_called_once_with(True)
+        mock_box.showinfo.assert_not_called()
+
+    def test_monitor_progress_returns_early_without_a_process(self):
+        """The guard must survive the signature change -- monitor_progress runs
+        on a worker thread and cancel_conversion can null self.process."""
+        m = ConversionManager()
+        m.process = None
+        m.monitor_progress(_req(), _ui(), 10.0)  # must not raise
+
+
 class TestConversionManager(unittest.TestCase):
 
     def setUp(self):
@@ -264,7 +296,10 @@ class TestConversionManager(unittest.TestCase):
 
         with patch.object(manager, 'enable_ui') as mock_enable_ui:
             manager.handle_completion(
-                mock_gui, [], cancel_button, 'output.mkv', True, error_messages, 0
+                _req(output_path='output.mkv', open_after_conversion=True),
+                ConversionUI(gui_instance=mock_gui, progress_var=MagicMock(),
+                             interactable_elements=[], cancel_button=cancel_button),
+                error_messages, 0
             )
 
             mock_showinfo.assert_called_once_with(
@@ -292,7 +327,10 @@ class TestConversionManager(unittest.TestCase):
 
         with patch.object(manager, 'enable_ui') as mock_enable_ui:
             manager.handle_completion(
-                mock_gui, [], cancel_button, 'output.mkv', False, error_messages, 1
+                _req(output_path='output.mkv', open_after_conversion=False),
+                ConversionUI(gui_instance=mock_gui, progress_var=MagicMock(),
+                             interactable_elements=[], cancel_button=cancel_button),
+                error_messages, 1
             )
 
             mock_showerror.assert_called_once_with(
@@ -323,7 +361,10 @@ class TestConversionManager(unittest.TestCase):
 
         with patch.object(manager, 'enable_ui'):
             manager.handle_completion(
-                mock_gui, [], cancel_button, 'out.mkv', False, error_messages, 1
+                _req(output_path='out.mkv', open_after_conversion=False),
+                ConversionUI(gui_instance=mock_gui, progress_var=MagicMock(),
+                             interactable_elements=[], cancel_button=cancel_button),
+                error_messages, 1
             )
 
         call_args = mock_showerror.call_args[0]
@@ -706,28 +747,37 @@ class TestBatchCompletionHook(unittest.TestCase):
     @patch('src.conversion.webbrowser.open')
     def test_on_complete_called_instead_of_dialog_on_success(self, mock_open, mock_mb):
         manager = ConversionManager()
-        manager._on_complete = MagicMock()
-        manager.handle_completion(self._gui(), [], MagicMock(), 'out.mkv', False, [], 0)
-        manager._on_complete.assert_called_once_with(True)
+        done = MagicMock()
+        ui = ConversionUI(gui_instance=self._gui(), progress_var=MagicMock(),
+                          interactable_elements=[], cancel_button=MagicMock(),
+                          on_complete=done)
+        manager.handle_completion(_req(output_path='out.mkv'), ui, [], 0)
+        done.assert_called_once_with(True)
         mock_mb.showinfo.assert_not_called()  # no per-file success dialog
 
     @patch('src.conversion.messagebox')
     def test_on_complete_called_with_false_on_failure(self, mock_mb):
         manager = ConversionManager()
         manager.cancelled = False
-        manager._on_complete = MagicMock()
-        manager.handle_completion(self._gui(), [], MagicMock(), 'out.mkv', False, ['err'], 1)
-        manager._on_complete.assert_called_once_with(False)
+        done = MagicMock()
+        ui = ConversionUI(gui_instance=self._gui(), progress_var=MagicMock(),
+                          interactable_elements=[], cancel_button=MagicMock(),
+                          on_complete=done)
+        manager.handle_completion(_req(output_path='out.mkv'), ui, ['err'], 1)
+        done.assert_called_once_with(False)
         mock_mb.showerror.assert_not_called()  # no per-file error dialog
 
     @patch('src.conversion.messagebox')
     def test_on_complete_does_not_enable_ui_between_files(self, mock_mb):
         # Between queued files the UI must stay disabled and the cancel button shown.
         manager = ConversionManager()
-        manager._on_complete = MagicMock()
+        done = MagicMock()
         cancel = MagicMock()
+        ui = ConversionUI(gui_instance=self._gui(), progress_var=MagicMock(),
+                          interactable_elements=['e'], cancel_button=cancel,
+                          on_complete=done)
         with patch.object(manager, 'enable_ui') as mock_enable:
-            manager.handle_completion(self._gui(), ['e'], cancel, 'out.mkv', False, [], 0)
+            manager.handle_completion(_req(output_path='out.mkv'), ui, [], 0)
         mock_enable.assert_not_called()
         cancel.grid_remove.assert_not_called()
 
@@ -1586,8 +1636,10 @@ class TestMonitorProgressCancellationRace(unittest.TestCase):
 
         try:
             manager.monitor_progress(
-                MagicMock(), 10.0, self._make_gui(), [],
-                MagicMock(), 'out.mkv', False, 2.2,
+                _req(output_path='out.mkv', open_after_conversion=False, gamma=2.2),
+                _ui(gui_instance=self._make_gui(), interactable_elements=[],
+                    cancel_button=MagicMock()),
+                10.0,
             )
         except AttributeError as exc:
             self.fail(
@@ -1617,8 +1669,10 @@ class TestMonitorProgressCancellationRace(unittest.TestCase):
 
         try:
             manager.monitor_progress(
-                MagicMock(), 10.0, self._make_gui(), [],
-                MagicMock(), 'out.mkv', False, 2.2,
+                _req(output_path='out.mkv', open_after_conversion=False, gamma=2.2),
+                _ui(gui_instance=self._make_gui(), interactable_elements=[],
+                    cancel_button=MagicMock()),
+                10.0,
             )
         except AttributeError as exc:
             self.fail(
@@ -1643,8 +1697,7 @@ class TestMonitorProgressCancellationRace(unittest.TestCase):
         """
         manager = ConversionManager()
         manager.cancelled = False
-        manager.use_gpu = False
-        manager._on_complete = MagicMock()
+        done = MagicMock()
 
         mock_proc = MagicMock()
         mock_proc.stderr = iter([])  # empty -> loop exits immediately
@@ -1658,13 +1711,16 @@ class TestMonitorProgressCancellationRace(unittest.TestCase):
 
         with patch('src.conversion.messagebox'):
             manager.monitor_progress(
-                MagicMock(), 10.0, gui, [], MagicMock(), 'out.mkv', False, 2.2)
+                _req(output_path='out.mkv', open_after_conversion=False, gamma=2.2),
+                _ui(gui_instance=gui, interactable_elements=[], cancel_button=MagicMock(),
+                    on_complete=done),
+                10.0)
             # cancel_conversion races in right after monitor_progress decided
             # the process succeeded, but before the scheduled handler runs.
             manager.process = None
             captured['cb']()
 
-        manager._on_complete.assert_called_once_with(True)
+        done.assert_called_once_with(True)
 
 
 class TestGpuErrorDetectionFalsePositive(unittest.TestCase):
@@ -1683,7 +1739,6 @@ class TestGpuErrorDetectionFalsePositive(unittest.TestCase):
     def _run(self, stderr_lines, returncode=1):
         manager = ConversionManager()
         manager.cancelled = False
-        manager.use_gpu = True
         mock_proc = MagicMock()
         mock_proc.stderr = iter(stderr_lines)
         mock_proc.returncode = returncode
@@ -1695,7 +1750,10 @@ class TestGpuErrorDetectionFalsePositive(unittest.TestCase):
         with patch.object(manager, '_retry_with_cpu') as mock_retry, \
              patch('src.conversion.messagebox'):
             manager.monitor_progress(
-                MagicMock(), 10.0, gui, [], MagicMock(), 'out.mkv', False, 2.2)
+                _req(output_path='out.mkv', open_after_conversion=False, gamma=2.2,
+                     use_gpu=True),
+                _ui(gui_instance=gui, interactable_elements=[], cancel_button=MagicMock()),
+                10.0)
         return mock_retry
 
     def test_gpu_keyword_in_input_banner_line_does_not_trigger_retry(self):

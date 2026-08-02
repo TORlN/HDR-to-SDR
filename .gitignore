@@ -23,6 +23,12 @@ venv.bak/
 build/
 dist/
 *.spec
+# ...except the build spec itself: it defines the shipped binary (bundled
+# ffmpeg/ffprobe, the LUT, and the four pro.* hiddenimports that a Pro release
+# depends on). The blanket *.spec rule above kept it untracked for the whole
+# project history -- a disk failure would have taken the release pipeline with
+# it. Must stay after *.spec so the negation isn't re-shadowed.
+!HDR_to_SDR_Converter.spec
 
 # Installer logs
 pip-log.txt
@@ -45,6 +51,12 @@ claude/
 # Script files
 *.sh
 *.bat
+# ...except the release build script: it carries the pre-build test gate, the
+# free-build confirmation alarm, the PyArmor branch, Azure code signing, and the
+# PYZ bundle check that stops a Pro-labeled installer shipping without Pro code.
+# Signing credentials are NOT in here -- they live in signing/metadata.json,
+# which stays ignored via the signing/ rule below.
+!build_installer.bat
 *.gitignore
 *.ps1
 video.mkv

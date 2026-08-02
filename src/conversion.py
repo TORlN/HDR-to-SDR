@@ -325,96 +325,45 @@ class ConversionManager:
         # kbps value; T/maxrate/bufsize are its "target average, capped
         # burst" ffmpeg args, standard on every encoder here (GPU or CPU).
         quality = str(quality)
-        target_bv = maxrate = bufsize = None
         bitrate_rc_args: list = []  # type: ignore[type-arg]
         if quality_mode == 'bitrate':
             target_bv = int(quality) * 1000
-            maxrate = int(target_bv * 1.5)
-            bufsize = target_bv * 2
-            bitrate_rc_args = ['-b:v', str(target_bv), '-maxrate', str(maxrate),
-                                '-bufsize', str(bufsize)]
+            bitrate_rc_args = ['-b:v', str(target_bv),
+                               '-maxrate', str(int(target_bv * 1.5)),
+                               '-bufsize', str(target_bv * 2)]
 
-        if active_encoder in ('h264_nvenc', 'hevc_nvenc'):
-            if quality_mode == 'bitrate':
-                cmd += [
-                    '-c:v', active_encoder,
-                    '-preset', 'p4',
-                    '-tune', 'hq',
-                    '-rc', 'vbr',
-                ] + bitrate_rc_args
-            else:
-                # MKV containers often report bit_rate=0; fall back to 8 Mbps
-                # so nvenc doesn't receive -b:v 0 / -maxrate 0 / -bufsize 0.
-                _bv = properties['bit_rate'] or 8_000_000
-                cmd += [
-                    '-c:v', active_encoder,
-                    '-preset', 'p4',
-                    '-tune', 'hq',
-                    '-rc', 'vbr',
-                    '-cq', quality,
-                    '-b:v', str(_bv),
-                    '-maxrate', str(_bv),
-                    '-bufsize', str(_bv * 2)
-                ]
-        elif active_encoder in ('h264_amf', 'hevc_amf'):
-            if quality_mode == 'bitrate':
-                cmd += [
-                    '-c:v', active_encoder,
-                    '-quality', 'balanced',
-                    '-rc', 'vbr_peak',
-                ] + bitrate_rc_args
-            else:
-                cmd += [
-                    '-c:v', active_encoder,
-                    '-quality', 'balanced',
-                    '-rc', 'cqp',
-                    '-qp_i', quality, '-qp_p', quality, '-qp_b', quality,
-                ]
-        elif active_encoder in ('h264_qsv', 'hevc_qsv'):
-            if quality_mode == 'bitrate':
-                cmd += [
-                    '-c:v', active_encoder,
-                ] + bitrate_rc_args
-            else:
-                _bv = properties['bit_rate'] or 8_000_000
-                cmd += [
-                    '-c:v', active_encoder,
-                    '-global_quality', quality,
-                    '-b:v', str(_bv),
-                ]
-        elif want_libx265:
-            # libx264 tops out at 10-bit -- feeding it 12-bit silently
-            # downgrades to yuv420p10le instead of erroring, so 12-bit (and
-            # HEVC-source preservation in general) must switch codecs
-            # explicitly. libx265 has no 'film' tune (x264's -tune film
-            # fails encoder init on x265), so it's omitted here.
-            if quality_mode == 'bitrate':
-                cmd += [
-                    '-c:v', 'libx265',
-                    '-preset', 'veryfast',
-                ] + bitrate_rc_args
-            else:
-                cmd += [
-                    '-c:v', 'libx265',
-                    '-preset', 'veryfast',
-                    '-crf', quality,
-                ]
-        else:
-            if quality_mode == 'bitrate':
-                cmd += [
-                    '-c:v', 'libx264',
-                    '-preset', 'veryfast',
-                    '-tune', 'film',
-                ] + bitrate_rc_args
-            else:
-                # No -b:v here: libx264 in CRF (constant-quality) mode ignores
-                # a target bitrate, so it was dead weight.
-                cmd += [
-                    '-c:v', 'libx264',
-                    '-preset', 'veryfast',
-                    '-tune', 'film',
-                    '-crf', quality,
-                ]
+        # MKV containers often report bit_rate=0; fall back to 8 Mbps so nvenc/
+        # qsv never receive -b:v 0 / -maxrate 0 / -bufsize 0.
+        _bv = properties['bit_rate'] or 8_000_000
+        # libx264 tops out at 10-bit -- feeding it 12-bit silently downgrades to
+        # yuv420p10le instead of erroring, so 12-bit (and HEVC-source
+        # preservation in general) must switch codecs explicitly.
+        codec = active_encoder or ('libx265' if want_libx265 else 'libx264')
+        # Per encoder: (args shared by both modes, Constant-Quality-only args,
+        # Target-Bitrate-only args). The command is always
+        # `-c:v <codec>` + shared + (bitrate-only + bitrate_rc_args | cq-only),
+        # so a change to one mode can't silently skip the other. The key is the
+        # vendor suffix: an unrecognised encoder is already nulled to None by
+        # the vendor dispatch above, so this lookup is total.
+        encoder_args = {
+            'nvenc': (['-preset', 'p4', '-tune', 'hq', '-rc', 'vbr'],
+                      ['-cq', quality, '-b:v', str(_bv),
+                       '-maxrate', str(_bv), '-bufsize', str(_bv * 2)],
+                      []),
+            'amf': (['-quality', 'balanced'],
+                    ['-rc', 'cqp', '-qp_i', quality,
+                     '-qp_p', quality, '-qp_b', quality],
+                    ['-rc', 'vbr_peak']),
+            'qsv': ([], ['-global_quality', quality, '-b:v', str(_bv)], []),
+            # libx265 has no 'film' tune -- x264's -tune film fails x265 init.
+            'libx265': (['-preset', 'veryfast'], ['-crf', quality], []),
+            # No -b:v in CRF mode: libx264 ignores a target bitrate there.
+            'libx264': (['-preset', 'veryfast', '-tune', 'film'],
+                        ['-crf', quality], []),
+        }
+        shared, cq_args, bitrate_args = encoder_args[codec.rsplit('_', 1)[-1]]
+        cmd += ['-c:v', codec] + shared + (
+            bitrate_args + bitrate_rc_args if quality_mode == 'bitrate' else cq_args)
 
         # HEVC in MP4/MOV must be tagged 'hvc1': ffmpeg's default sample entry
         # is 'hev1', which QuickTime/Apple devices (and some Windows players)
@@ -734,21 +683,19 @@ class ConversionManager:
         logging.debug(f"Detected GPU encoder: {self._gpu_encoder}")
         return self._gpu_encoder
 
-    def is_gpu_available(self):
-        try:
-            if self._gpu_encoder is None:
-                self._gpu_encoder = self.detect_gpu_encoder()
-            return self._gpu_encoder is not None
-        except Exception as e:
-            logging.error(f"Error checking GPU availability: {e}")
-            return False
-
     def is_gpu_acceleration_available(self):
         """True if any GPU acceleration is usable: a hardware H.264 encoder
         (nvenc/amf/qsv) and/or GPU tonemapping via libplacebo. Either one alone
         makes the GPU toggle worthwhile -- a machine with Vulkan/libplacebo but
         no hardware encoder still gets the (bigger) tonemapping speedup -- so the
         toggle is gated on the union, not on the encoder alone."""
-        return self.is_gpu_available() or vulkan_libplacebo_available()
+        try:
+            if self._gpu_encoder is None:
+                self._gpu_encoder = self.detect_gpu_encoder()
+            has_encoder = self._gpu_encoder is not None
+        except Exception as e:
+            logging.error(f"Error checking GPU availability: {e}")
+            has_encoder = False
+        return has_encoder or vulkan_libplacebo_available()
 
 conversion_manager = ConversionManager()

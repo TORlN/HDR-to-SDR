@@ -373,15 +373,8 @@ class TestConversionManager(unittest.TestCase):
                 creationflags=ANY,
             )
 
-    def test_is_gpu_available_no_gpu(self):
-        """is_gpu_available returns False when detect_gpu_encoder finds nothing."""
-        manager = ConversionManager()
-        with patch.object(manager, 'detect_gpu_encoder', return_value=None):
-            self.assertFalse(manager.is_gpu_available())
-
     @patch('src.conversion.subprocess.Popen')
-    @patch('src.conversion.ConversionManager.is_gpu_available', return_value=True)
-    def test_construct_ffmpeg_command_with_gpu(self, mock_popen, mock_is_gpu):
+    def test_construct_ffmpeg_command_with_gpu(self, mock_popen):
         """Test construct_ffmpeg_command with GPU acceleration enabled."""
         manager = ConversionManager()
         manager._gpu_encoder = 'h264_nvenc'
@@ -398,9 +391,8 @@ class TestConversionManager(unittest.TestCase):
         self.assertIn('h264_nvenc', cmd)
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'h264_nvenc')
 
-    @patch('src.conversion.ConversionManager.is_gpu_available', return_value=False)
     @patch('src.conversion.subprocess.Popen')
-    def test_construct_ffmpeg_command_without_gpu(self, mock_popen, mock_is_gpu):
+    def test_construct_ffmpeg_command_without_gpu(self, mock_popen):
         """Test construct_ffmpeg_command with GPU acceleration disabled."""
         manager = ConversionManager()
         properties = {
@@ -554,16 +546,18 @@ class TestConversionManager(unittest.TestCase):
         self.assertEqual(cmd[cmd.index('-qp_i') + 1], '22')
         self.assertEqual(cmd[cmd.index('-qp_p') + 1], '22')
 
-    def test_is_gpu_available_nvidia_smi_missing(self):
-        """is_gpu_available returns False when detect_gpu_encoder raises."""
+    def test_gpu_acceleration_available_encoder_exception_falls_back_to_libplacebo(self):
+        """A detect_gpu_encoder exception (e.g. nvidia-smi missing) must degrade
+        to the libplacebo check instead of raising out of the GPU toggle."""
         manager = ConversionManager()
-        with patch.object(manager, 'detect_gpu_encoder', side_effect=FileNotFoundError()):
-            self.assertFalse(manager.is_gpu_available())
+        with patch.object(manager, 'detect_gpu_encoder', side_effect=FileNotFoundError()), \
+             patch('src.conversion.vulkan_libplacebo_available', return_value=False):
+            self.assertFalse(manager.is_gpu_acceleration_available())
 
     def test_gpu_acceleration_available_with_encoder_only(self):
         """A hardware encoder alone enables the GPU toggle."""
         manager = ConversionManager()
-        with patch.object(manager, 'is_gpu_available', return_value=True), \
+        with patch.object(manager, 'detect_gpu_encoder', return_value='h264_nvenc'), \
              patch('src.conversion.vulkan_libplacebo_available', return_value=False):
             self.assertTrue(manager.is_gpu_acceleration_available())
 
@@ -571,13 +565,13 @@ class TestConversionManager(unittest.TestCase):
         """GPU tonemapping (libplacebo) alone enables the toggle, even with no
         hardware encoder -- the decoupled case."""
         manager = ConversionManager()
-        with patch.object(manager, 'is_gpu_available', return_value=False), \
+        with patch.object(manager, 'detect_gpu_encoder', return_value=None), \
              patch('src.conversion.vulkan_libplacebo_available', return_value=True):
             self.assertTrue(manager.is_gpu_acceleration_available())
 
     def test_gpu_acceleration_unavailable_when_neither(self):
         manager = ConversionManager()
-        with patch.object(manager, 'is_gpu_available', return_value=False), \
+        with patch.object(manager, 'detect_gpu_encoder', return_value=None), \
              patch('src.conversion.vulkan_libplacebo_available', return_value=False):
             self.assertFalse(manager.is_gpu_acceleration_available())
 
@@ -779,20 +773,22 @@ class TestDetectGpuEncoder(unittest.TestCase):
         m = self._manager_with_encoders('h264_nvenc h264_amf', nvidia_present=False)
         self.assertEqual(m.detect_gpu_encoder(), 'h264_amf')
 
-    def test_is_gpu_available_delegates_to_detect(self):
+    def test_gpu_acceleration_available_delegates_to_detect(self):
         m = ConversionManager()
-        with patch.object(m, 'detect_gpu_encoder', return_value='h264_amf') as mock_detect:
-            self.assertTrue(m.is_gpu_available())
+        with patch.object(m, 'detect_gpu_encoder', return_value='h264_amf') as mock_detect, \
+             patch('src.conversion.vulkan_libplacebo_available', return_value=False):
+            self.assertTrue(m.is_gpu_acceleration_available())
             mock_detect.assert_called_once()
 
-    def test_is_gpu_available_uses_cached_encoder_without_reprobing(self):
-        """Once detect_gpu_encoder has run, is_gpu_available must reuse the
-        cached self._gpu_encoder instead of re-spawning nvidia-smi/ffmpeg on
-        every call (e.g. every GPU-accel checkbox toggle)."""
+    def test_gpu_acceleration_available_uses_cached_encoder_without_reprobing(self):
+        """Once detect_gpu_encoder has run, the cached self._gpu_encoder must be
+        reused instead of re-spawning nvidia-smi/ffmpeg on every call (e.g.
+        every GPU-accel checkbox toggle)."""
         m = ConversionManager()
         m._gpu_encoder = 'h264_nvenc'
-        with patch.object(m, 'detect_gpu_encoder') as mock_detect:
-            self.assertTrue(m.is_gpu_available())
+        with patch.object(m, 'detect_gpu_encoder') as mock_detect, \
+             patch('src.conversion.vulkan_libplacebo_available', return_value=False):
+            self.assertTrue(m.is_gpu_acceleration_available())
             mock_detect.assert_not_called()
 
 
@@ -1844,7 +1840,7 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         surprising happened, so no notice should fire."""
         manager = ConversionManager()
         # Alone among these tests this one passes use_gpu=True, which sends
-        # construct_ffmpeg_command through is_gpu_available() -> real
+        # construct_ffmpeg_command through detect_gpu_encoder() -> real
         # `ffmpeg -encoders` plus `nvidia-smi`. That made it the slowest
         # non-smoke test in the suite (1.7s) and its result machine-dependent.
         with patch('src.conversion.vulkan_libplacebo_available', return_value=True), \

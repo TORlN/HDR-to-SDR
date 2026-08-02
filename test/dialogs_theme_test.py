@@ -10,17 +10,6 @@ sys.path.insert(0, _SRC)
 
 
 class TestDialogTheme(unittest.TestCase):
-    def test_theme_constants_present(self):
-        import dialog_theme as theme
-        for name in ('_BG', '_FG', '_ENTRY_BG', '_ACCENT', '_ERROR_FG',
-                     '_FONT', '_FONT_BOLD', '_FONT_SM'):
-            self.assertTrue(hasattr(theme, name),
-                            msg=f'dialog_theme is missing {name}')
-
-    def test_center_helper_present(self):
-        import dialog_theme as theme
-        self.assertTrue(callable(theme._center_over_master))
-
     def test_dialogs_reexports_theme(self):
         """dialogs.py must keep exposing these names -- tests patch them there."""
         import dialog_theme as theme

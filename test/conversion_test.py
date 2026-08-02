@@ -2109,6 +2109,73 @@ class TestBitrateModeCommandConstruction(unittest.TestCase):
         self.assertNotIn('-b:v', cmd)
 
 
+class TestStartConversionBuildsRequest(unittest.TestCase):
+    """start_conversion's signature is frozen (src/pro/ calls it), so it must
+    assemble the request itself from its parameters."""
+
+    def _start(self, manager, **kwargs):
+        mock_gui = MagicMock()
+        with patch('src.conversion.get_video_properties',
+                   return_value={'duration': 10.0, 'bit_rate': 4000000}), \
+             patch.object(manager, 'construct_ffmpeg_command', return_value=['ffmpeg']), \
+             patch.object(manager, 'start_ffmpeg_process', return_value=MagicMock()), \
+             patch.object(manager, 'monitor_progress'):
+            manager.start_conversion(
+                'in.mkv', 'out.mkv', 2.2, True, MagicMock(), [], mock_gui,
+                False, MagicMock(), **kwargs)
+        return mock_gui
+
+    def test_request_captures_every_encode_setting(self):
+        m = ConversionManager()
+        self._start(m, tonemapper='hable', quality=30000, quality_mode='bitrate',
+                    bit_depth=10, licensed=True, lut_enabled=False)
+        r = m._request
+        self.assertEqual(r.input_path, os.path.abspath('in.mkv'))
+        self.assertEqual(r.output_path, os.path.abspath('out.mkv'))
+        self.assertEqual(r.gamma, 2.2)
+        self.assertIs(r.use_gpu, True)
+        self.assertEqual(r.tonemapper, 'hable')
+        self.assertEqual(r.quality, 30000)
+        self.assertEqual(r.quality_mode, 'bitrate')
+        self.assertEqual(r.bit_depth, 10)
+        self.assertIs(r.licensed, True)
+        self.assertIs(r.lut_enabled, False)
+
+    def test_request_stores_absolute_paths(self):
+        """start_conversion abspath()s both paths before use; the request must
+        hold the resolved paths so a retry re-encodes the same files."""
+        m = ConversionManager()
+        self._start(m)
+        self.assertTrue(os.path.isabs(m._request.input_path))
+        self.assertTrue(os.path.isabs(m._request.output_path))
+
+    def test_ui_captures_handles_and_on_complete(self):
+        m = ConversionManager()
+        cb = MagicMock()
+        self._start(m, on_complete=cb)
+        self.assertIs(m._ui.on_complete, cb)
+        self.assertIsNotNone(m._ui.gui_instance)
+        self.assertIsNotNone(m._ui.cancel_button)
+
+    def test_request_and_ui_start_as_none(self):
+        m = ConversionManager()
+        self.assertIsNone(m._request)
+        self.assertIsNone(m._ui)
+
+    def test_start_conversion_delegates_to_start(self):
+        """start_conversion is only an adapter; _start carries the logic and is
+        what _retry_with_cpu re-enters."""
+        m = ConversionManager()
+        with patch.object(m, '_start', return_value=True) as mock_start:
+            result = m.start_conversion(
+                'in.mkv', 'out.mkv', 2.2, True, MagicMock(), [], MagicMock(),
+                False, MagicMock(), tonemapper='hable')
+        self.assertIs(result, True)
+        request, ui = mock_start.call_args.args
+        self.assertEqual(request.tonemapper, 'hable')
+        self.assertIsNone(ui.on_complete)
+
+
 if __name__ == '__main__':
     unittest.main()
 

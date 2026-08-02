@@ -56,16 +56,50 @@ class ConversionUI:
 
 
 class ConversionManager:
-    def __init__(self):
-        self.process = None
-        self.cancelled = False
-        self._gpu_encoder = None
+    def __init__(self) -> None:
+        self.process: subprocess.Popen[str] | None = None
+        self.cancelled: bool = False
+        self._gpu_encoder: str | None = None
+        self._request: ConversionRequest | None = None
+        self._ui: ConversionUI | None = None
 
     def start_conversion(self, input_path, output_path, gamma, use_gpu,
                          progress_var, interactable_elements, gui_instance,
                          open_after_conversion, cancel_button, tonemapper='reinhard',
                          quality=23, quality_mode='cq', on_complete=None, bit_depth=8,
                          licensed=False, lut_enabled=True):
+        """Public entry point. Frozen signature -- src/pro/batch.py calls this.
+
+        Assembles the request/UI pair and hands off to _start, which is also
+        what the GPU->CPU retry re-enters with a modified request.
+        """
+        # Guarded (not a bare abspath()): verify_paths' "both paths given" check
+        # relies on an empty string staying falsy. os.path.abspath('') resolves
+        # to the cwd, which is truthy, so that guard would silently stop firing
+        # on a blank path if abspath ran unconditionally here.
+        request = ConversionRequest(
+            input_path=os.path.abspath(input_path) if input_path else input_path,
+            output_path=os.path.abspath(output_path) if output_path else output_path,
+            gamma=gamma,
+            use_gpu=use_gpu,
+            open_after_conversion=open_after_conversion,
+            tonemapper=tonemapper,
+            quality=quality,
+            quality_mode=quality_mode,
+            bit_depth=bit_depth,
+            licensed=licensed,
+            lut_enabled=lut_enabled,
+        )
+        ui = ConversionUI(
+            gui_instance=gui_instance,
+            progress_var=progress_var,
+            interactable_elements=interactable_elements,
+            cancel_button=cancel_button,
+            on_complete=on_complete,
+        )
+        return self._start(request, ui)
+
+    def _start(self, request: ConversionRequest, ui: ConversionUI) -> bool:
         # Every early-out below must go through here rather than a bare
         # `return`: on_complete drives the batch queue, and a guard that
         # fires without calling it leaves the item stuck at 'Converting'
@@ -73,36 +107,52 @@ class ConversionManager:
         # conversion never actually started.
         # A batch run has no human watching for a per-guard dialog -- see
         # _reject/verify_paths.
-        show_dialog = on_complete is None
+        show_dialog = ui.on_complete is None
 
-        def _abort_before_start():
-            if on_complete is not None:
-                on_complete(False)
+        def _abort_before_start() -> bool:
+            if ui.on_complete is not None:
+                ui.on_complete(False)
             return False
 
-        if not self.verify_paths(input_path, output_path, show_dialog=show_dialog):
+        if not self.verify_paths(request.input_path, request.output_path,
+                                 show_dialog=show_dialog):
             return _abort_before_start()
 
-        incompatibility = self.validate_bit_depth_output(output_path, bit_depth)
+        incompatibility = self.validate_bit_depth_output(
+            request.output_path, request.bit_depth)
         if incompatibility:
             self._reject(incompatibility, show_dialog)
             return _abort_before_start()
 
-        input_path = os.path.abspath(input_path)
-        output_path = os.path.abspath(output_path)
+        self._request = request
+        self._ui = ui
         self.cancelled = False
-        self.use_gpu = use_gpu  # Store the use_gpu state
-        self._quality = quality  # remembered so a GPU->CPU retry keeps the same quality
-        self._quality_mode = quality_mode  # remembered so a GPU->CPU retry keeps the same mode
-        self._bit_depth = bit_depth  # remembered so a GPU->CPU retry keeps the same color depth
-        self._lut_enabled = lut_enabled  # remembered so a GPU->CPU retry keeps the same setting
-        # Remembered so a GPU->CPU retry keeps the license tier: the Dolby
-        # Vision audio split (Pro passthrough vs Free stereo downmix) must not
-        # silently demote a Pro user on retry.
-        self._licensed = licensed
-        # When set (batch/queue runs), the per-file success/error dialog is
-        # suppressed and this callback drives queue progression instead.
-        self._on_complete = on_complete
+        # Loose attributes stay for now; Task 6 deletes them once every
+        # consumer reads the request instead.
+        self.use_gpu = request.use_gpu
+        self._quality = request.quality
+        self._quality_mode = request.quality_mode
+        self._bit_depth = request.bit_depth
+        self._lut_enabled = request.lut_enabled
+        self._licensed = request.licensed
+        self._on_complete = ui.on_complete
+
+        input_path = request.input_path
+        output_path = request.output_path
+        gui_instance = ui.gui_instance
+        interactable_elements = ui.interactable_elements
+        cancel_button = ui.cancel_button
+        progress_var = ui.progress_var
+        open_after_conversion = request.open_after_conversion
+        gamma = request.gamma
+        tonemapper = request.tonemapper
+        use_gpu = request.use_gpu
+        quality = request.quality
+        quality_mode = request.quality_mode
+        bit_depth = request.bit_depth
+        licensed = request.licensed
+        lut_enabled = request.lut_enabled
+        on_complete = ui.on_complete
 
         properties = get_video_properties(input_path)
         if properties is None:

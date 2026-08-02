@@ -8,8 +8,8 @@ from src.utils import (
     extract_frame_with_conversion, get_executable_path, initialize_ffmpeg,
     build_libplacebo_filter, vulkan_libplacebo_available, reset_libplacebo_probe,
     vulkan_cuda_interop_available, reset_cuda_interop_probe, VULKAN_CUDA_DEVICE_ARGS,
-    get_maxcll, verify_ffmpeg_files, clear_video_properties_cache,
-    clear_maxfall_cache,
+    get_maxcll, verify_ffmpeg_files,
+    clear_hdr_metadata_cache,
     extract_frames_batch, extract_frames_with_conversion_batch, _split_png_frames,
     extract_frame_with_gpu_conversion, extract_frames_with_gpu_conversion_batch,
 )
@@ -744,7 +744,7 @@ class TestVulkanLibplaceboProbe(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Issue #1 — Concurrency: _MAXFALL_CACHE must be guarded by a lock
+# Issue #1 — Concurrency: _HDR_METADATA_CACHE must be guarded by a lock
 # ---------------------------------------------------------------------------
 
 class TestMaxfallConcurrency(unittest.TestCase):
@@ -757,7 +757,7 @@ class TestMaxfallConcurrency(unittest.TestCase):
 
     def setUp(self):
         import src.utils as _u
-        self._cache = _u._MAXFALL_CACHE
+        self._cache = _u._HDR_METADATA_CACHE
         self._cache.clear()
         self.addCleanup(self._cache.clear)
 
@@ -770,7 +770,7 @@ class TestMaxfallConcurrency(unittest.TestCase):
             import time
             time.sleep(0.05)
             call_count.append(1)
-            return {'maxcll': 400.0, 'maxfall': None, 'mastering_peak': None}
+            return {'maxcll': 400.0}
 
         results: list = []
 
@@ -1295,21 +1295,12 @@ class TestVideoPropertiesCache(unittest.TestCase):
         self.assertEqual(first, second)
 
     @patch('src.utils.subprocess.Popen')
-    def test_clear_video_properties_cache_forces_reprobe(self, mock_popen):
-        """After clear_video_properties_cache(), the next call must spawn a fresh ffprobe."""
+    def test_clear_hdr_metadata_cache_forces_reprobe(self, mock_popen):
+        """After clear_hdr_metadata_cache(), the next call must spawn a fresh ffprobe."""
         self._mock_popen(mock_popen)
         get_video_properties('cache_clear_test.mkv')
-        clear_video_properties_cache()
+        clear_hdr_metadata_cache()
         get_video_properties('cache_clear_test.mkv')
-        self.assertEqual(mock_popen.call_count, 2)
-
-    @patch('src.utils.subprocess.Popen')
-    def test_clear_maxfall_cache_also_clears_video_props(self, mock_popen):
-        """clear_maxfall_cache() must evict video properties so both caches stay in sync."""
-        self._mock_popen(mock_popen)
-        get_video_properties('sync_clear_test.mkv')
-        clear_maxfall_cache()
-        get_video_properties('sync_clear_test.mkv')
         self.assertEqual(mock_popen.call_count, 2)
 
     @patch('src.utils.subprocess.Popen')
@@ -1438,22 +1429,15 @@ class TestProbeHdrMetadata(unittest.TestCase):
     def setUp(self):
         import src.utils as _u
         self._u = _u
-        _u._MAXFALL_CACHE.clear()
-        self.addCleanup(_u._MAXFALL_CACHE.clear)
+        _u._HDR_METADATA_CACHE.clear()
+        self.addCleanup(_u._HDR_METADATA_CACHE.clear)
 
-    def _frame_data(self, maxcll=1000, maxfall=400, mastering_peak='10000000/10000'):
+    def _frame_data(self, maxcll=1000):
         side_data = []
         if maxcll is not None:
             side_data.append({
                 'side_data_type': 'Content light level metadata',
                 'max_content': maxcll,
-                'max_average': maxfall,
-            })
-        if mastering_peak is not None:
-            side_data.append({
-                'side_data_type': 'Mastering display metadata',
-                'min_luminance': '0/10000',
-                'max_luminance': mastering_peak,
             })
         return json.dumps({'frames': [{'side_data_list': side_data}]}).encode()
 
@@ -1464,26 +1448,10 @@ class TestProbeHdrMetadata(unittest.TestCase):
         self.assertEqual(result['maxcll'], 1000.0)
 
     @patch('src.utils.subprocess.check_output')
-    def test_reads_maxfall_from_content_light_level(self, mock_out):
-        """max_average from Content light level metadata must be stored as maxfall."""
-        mock_out.return_value = self._frame_data(maxfall=400)
-        result = self._u._probe_hdr_metadata('/fake/hdr.mkv')
-        self.assertEqual(result['maxfall'], 400.0)
-
-    @patch('src.utils.subprocess.check_output')
-    def test_reads_mastering_peak_as_fraction(self, mock_out):
-        """max_luminance '40000000/10000' must be parsed to 4000.0 nits."""
-        mock_out.return_value = self._frame_data(mastering_peak='40000000/10000')
-        result = self._u._probe_hdr_metadata('/fake/hdr.mkv')
-        self.assertAlmostEqual(result['mastering_peak'], 4000.0)
-
-    @patch('src.utils.subprocess.check_output')
     def test_returns_none_values_when_no_metadata(self, mock_out):
         mock_out.return_value = json.dumps({'frames': [{'side_data_list': []}]}).encode()
         result = self._u._probe_hdr_metadata('/fake/sdr.mkv')
         self.assertIsNone(result['maxcll'])
-        self.assertIsNone(result['maxfall'])
-        self.assertIsNone(result['mastering_peak'])
 
     @patch('src.utils.subprocess.check_output')
     def test_zero_maxcll_is_kept_not_treated_as_absent(self, mock_out):
@@ -1493,21 +1461,6 @@ class TestProbeHdrMetadata(unittest.TestCase):
         mock_out.return_value = self._frame_data(maxcll=0)
         result = self._u._probe_hdr_metadata('/fake/hdr.mkv')
         self.assertEqual(result['maxcll'], 0.0)
-
-    @patch('src.utils.subprocess.check_output')
-    def test_zero_maxfall_is_kept_not_treated_as_absent(self, mock_out):
-        mock_out.return_value = self._frame_data(maxfall=0)
-        result = self._u._probe_hdr_metadata('/fake/hdr.mkv')
-        self.assertEqual(result['maxfall'], 0.0)
-
-    @patch('src.utils.subprocess.check_output')
-    def test_reads_mastering_peak_as_plain_integer(self, mock_out):
-        """Some containers report max_luminance as a plain integer (no '/'),
-        not the fraction form -- that's a valid value and must not be
-        silently dropped just because it lacks a slash."""
-        mock_out.return_value = self._frame_data(mastering_peak=4000)
-        result = self._u._probe_hdr_metadata('/fake/hdr.mkv')
-        self.assertAlmostEqual(result['mastering_peak'], 4000.0)
 
     @patch('src.utils.subprocess.check_output')
     def test_ffprobe_failure_returns_none_values_instead_of_raising(self, mock_out):
@@ -1521,16 +1474,12 @@ class TestProbeHdrMetadata(unittest.TestCase):
         mock_out.side_effect = self._u.subprocess.CalledProcessError(1, ['ffprobe'])
         result = self._u._probe_hdr_metadata('/fake/corrupt.mkv')
         self.assertIsNone(result['maxcll'])
-        self.assertIsNone(result['maxfall'])
-        self.assertIsNone(result['mastering_peak'])
 
     @patch('src.utils.subprocess.check_output')
     def test_malformed_json_returns_none_values_instead_of_raising(self, mock_out):
         mock_out.return_value = b'not valid json {{{'
         result = self._u._probe_hdr_metadata('/fake/corrupt.mkv')
         self.assertIsNone(result['maxcll'])
-        self.assertIsNone(result['maxfall'])
-        self.assertIsNone(result['mastering_peak'])
 
 
 class TestDolbyVisionDetection(unittest.TestCase):
@@ -1540,8 +1489,8 @@ class TestDolbyVisionDetection(unittest.TestCase):
     badge."""
 
     def setUp(self):
-        clear_video_properties_cache()
-        self.addCleanup(clear_video_properties_cache)
+        clear_hdr_metadata_cache()
+        self.addCleanup(clear_hdr_metadata_cache)
 
     @staticmethod
     def _probe_json(side_data=None):

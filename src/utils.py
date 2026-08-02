@@ -316,10 +316,10 @@ def run_ffmpeg_command(cmd):
         logging.error(f"Error running FFmpeg command: {str(e)}")
         raise RuntimeError(f"Error running FFmpeg command: {str(e)}")
 
-# HDR metadata (MaxCLL, mastering display peak) is static per file and costs
-# ~0.5-1.2s to probe.  Cache the full dict so all callers share one ffprobe hit.
-_MAXFALL_CACHE: dict[str, dict] = {}
-_MAXFALL_CACHE_LOCK = threading.Lock()
+# HDR metadata (MaxCLL) is static per file and costs ~0.5-1.2s to probe.
+# Cache the dict so all callers share one ffprobe hit.
+_HDR_METADATA_CACHE: dict[str, dict] = {}
+_HDR_METADATA_CACHE_LOCK = threading.Lock()
 
 # Video properties (streams, duration, codec) are also static per file; caching
 # eliminates the extra ffprobe spawned inside each extract_frame / extract_frame_with_conversion call.
@@ -327,24 +327,19 @@ _VIDEO_PROPS_CACHE: dict[str, dict] = {}
 _VIDEO_PROPS_CACHE_LOCK = threading.Lock()
 
 
-def clear_video_properties_cache() -> None:
-    """Drop cached video properties (call when loading a new/replaced file)."""
+def clear_hdr_metadata_cache():
+    """Drop cached HDR metadata and video properties (call when loading a new/replaced file)."""
+    with _HDR_METADATA_CACHE_LOCK:
+        _HDR_METADATA_CACHE.clear()
     with _VIDEO_PROPS_CACHE_LOCK:
         _VIDEO_PROPS_CACHE.clear()
 
 
-def clear_maxfall_cache():
-    """Drop cached HDR metadata and video properties (call when loading a new/replaced file)."""
-    with _MAXFALL_CACHE_LOCK:
-        _MAXFALL_CACHE.clear()
-    clear_video_properties_cache()
-
-
 def _probe_hdr_metadata(video_path):
-    """Probe MaxCLL and mastering display peak luminance from the first frame (uncached).
+    """Probe MaxCLL from the first frame (uncached).
 
     Returns:
-        dict with keys 'maxcll' (float|None) and 'mastering_peak' (float|None).
+        dict with key 'maxcll' (float|None).
     """
     cmd = [
         FFPROBE_EXECUTABLE,
@@ -357,7 +352,7 @@ def _probe_hdr_metadata(video_path):
     ]
 
     startupinfo, creationflags = _startupinfo()
-    result: dict = {'maxcll': None, 'maxfall': None, 'mastering_peak': None}
+    result: dict = {'maxcll': None}
 
     try:
         out = subprocess.check_output(
@@ -377,39 +372,24 @@ def _probe_hdr_metadata(video_path):
         return result
     for frame in data.get('frames', []):
         for sd in frame.get('side_data_list', []):
-            sdt = sd.get('side_data_type')
-            if sdt == 'Content light level metadata':
+            if sd.get('side_data_type') == 'Content light level metadata':
                 # A legitimately-reported 0 must not be treated the same as
                 # an absent key -- 'if mc:' would silently drop it.
                 mc = sd.get('max_content')
                 if mc is not None:
                     result['maxcll'] = float(mc)
-                mf = sd.get('max_average')
-                if mf is not None:
-                    result['maxfall'] = float(mf)
-            elif sdt == 'Mastering display metadata':
-                lum = sd.get('max_luminance')
-                if lum is not None:
-                    if '/' in str(lum):
-                        num, den = str(lum).split('/')
-                        if float(den) != 0:
-                            result['mastering_peak'] = float(num) / float(den)
-                    else:
-                        # Some containers report a plain number instead of
-                        # the fraction form -- just as valid, don't drop it.
-                        result['mastering_peak'] = float(lum)
     return result
 
 
 def _get_hdr_metadata(video_path):
     """Thread-safe cached wrapper around _probe_hdr_metadata."""
-    if video_path in _MAXFALL_CACHE:
-        return _MAXFALL_CACHE[video_path]
-    with _MAXFALL_CACHE_LOCK:
-        if video_path in _MAXFALL_CACHE:
-            return _MAXFALL_CACHE[video_path]
+    if video_path in _HDR_METADATA_CACHE:
+        return _HDR_METADATA_CACHE[video_path]
+    with _HDR_METADATA_CACHE_LOCK:
+        if video_path in _HDR_METADATA_CACHE:
+            return _HDR_METADATA_CACHE[video_path]
         meta = _probe_hdr_metadata(video_path)
-        _MAXFALL_CACHE[video_path] = meta
+        _HDR_METADATA_CACHE[video_path] = meta
         return meta
 
 

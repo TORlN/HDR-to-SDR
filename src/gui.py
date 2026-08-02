@@ -428,8 +428,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         if conversion_manager.process and conversion_manager.process.poll() is None:
             if messagebox.askokcancel(
                     "Quit", "A conversion is in progress. Do you want to cancel and exit?"):
-                conversion_manager.cancel_conversion(
-                    self, self.interactable_elements, self.cancel_button)
+                conversion_manager.cancel_conversion()
                 self._save_current_settings()
                 if hasattr(self, '_preview_pool'):
                     self._preview_pool.shutdown(wait=False, cancel_futures=True)
@@ -1490,8 +1489,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
 
     def cancel_conversion(self) -> None:
         """Cancel the ongoing video conversion process."""
-        conversion_manager.cancel_conversion(
-            self, self.interactable_elements, self.cancel_button)
+        conversion_manager.cancel_conversion()
 
     # ── Drop-target ────────────────────────────────────────────────────────────
 

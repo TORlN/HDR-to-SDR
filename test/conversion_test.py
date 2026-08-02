@@ -218,7 +218,10 @@ class TestConversionManager(unittest.TestCase):
 
         manager = ConversionManager()
         manager.process = mock_process
-        manager.cancel_conversion(mock_gui, interactable_elements, cancel_button)
+        manager._ui = _ui(gui_instance=mock_gui,
+                          interactable_elements=interactable_elements,
+                          cancel_button=cancel_button)
+        manager.cancel_conversion()
 
         # Execute the scheduled callbacks
         for call in mock_gui.root.after.call_args_list:
@@ -727,6 +730,29 @@ class TestConversionManager(unittest.TestCase):
         self.assertIn("duration", mock_showwarning.call_args[0][1].lower())
         mock_popen.assert_not_called()  # never launched ffmpeg
         self.assertIsNone(manager.process)
+
+
+class TestCancelUsesStoredUI(unittest.TestCase):
+
+    def test_cancel_terminates_and_restores_ui(self):
+        m = ConversionManager()
+        proc = MagicMock()
+        m.process = proc
+        gui = MagicMock()
+        btn = MagicMock()
+        m._ui = ConversionUI(gui_instance=gui, progress_var=MagicMock(),
+                             interactable_elements=[], cancel_button=btn)
+        with patch('src.conversion.messagebox'):
+            m.cancel_conversion()
+        proc.terminate.assert_called_once()
+        self.assertIs(m.cancelled, True)
+        btn.grid_remove.assert_called_once()
+
+    def test_cancel_before_any_conversion_is_a_no_op(self):
+        """_ui is None until the first conversion starts."""
+        m = ConversionManager()
+        m.cancel_conversion()  # must not raise
+        self.assertIs(m.cancelled, True)
 
 
 class TestBatchCompletionHook(unittest.TestCase):

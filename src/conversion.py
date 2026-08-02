@@ -152,8 +152,7 @@ class ConversionManager:
             return _abort_before_start()
 
         self.disable_ui(interactable_elements)
-        cancel_button.config(command=lambda: self.cancel_conversion(
-            gui_instance, interactable_elements, cancel_button))
+        cancel_button.config(command=self.cancel_conversion)
         cancel_button.grid()
 
         try:
@@ -680,18 +679,19 @@ class ConversionManager:
 
         ui.gui_instance.root.after(0, _handle)
 
-    def cancel_conversion(self, gui_instance, interactable_elements, cancel_button):
+    def cancel_conversion(self) -> None:
         self.cancelled = True
-        if self.process:
+        ui = self._ui
+        if self.process and ui is not None:
             self.process.terminate()
             self.process = None
-            gui_instance.root.after(0, lambda: messagebox.showinfo(
+            ui.gui_instance.root.after(0, lambda: messagebox.showinfo(
                 "Cancelled", "Video conversion has been cancelled."))
-            self.enable_ui(interactable_elements)
-            cancel_button.grid_remove()
+            self.enable_ui(ui.interactable_elements)
+            ui.cancel_button.grid_remove()
 
-            if hasattr(gui_instance, 'register_drop_target'):
-                gui_instance.register_drop_target()
+            if hasattr(ui.gui_instance, 'register_drop_target'):
+                ui.gui_instance.register_drop_target()
 
     def _nvidia_present(self):
         """Return True if nvidia-smi reports a usable NVIDIA GPU."""

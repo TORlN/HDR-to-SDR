@@ -2308,8 +2308,7 @@ class TestGuiLifecycle(unittest.TestCase):
 
         gui.cancel_conversion()
 
-        mock_cm.cancel_conversion.assert_called_once_with(
-            gui, ['element'], gui.cancel_button)
+        mock_cm.cancel_conversion.assert_called_once_with()
 
     @patch('src.gui.conversion_manager')
     def test_on_close_destroys_when_idle(self, mock_cm):
@@ -2335,7 +2334,7 @@ class TestGuiLifecycle(unittest.TestCase):
 
         gui.on_close()
 
-        mock_cm.cancel_conversion.assert_called_once_with(gui, [], gui.cancel_button)
+        mock_cm.cancel_conversion.assert_called_once_with()
         gui.root.destroy.assert_called_once()
 
     @patch('src.gui.messagebox')

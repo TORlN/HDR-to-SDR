@@ -15,7 +15,7 @@ from utils import (
     extract_frame_with_conversion,
     extract_frame_with_gpu_conversion,
     get_video_properties,
-    clear_maxfall_cache,
+    clear_hdr_metadata_cache,
     extract_frames_batch,
     extract_frames_with_conversion_batch,
     extract_frames_with_gpu_conversion_batch,
@@ -489,7 +489,7 @@ class _HDRPreviewMixin:
         """Drop all cached preview frames (e.g. when a new file is loaded)."""
         self._preview_cache_original = {}
         self._preview_cache_converted = {}
-        clear_maxfall_cache()
+        clear_hdr_metadata_cache()
 
     def _cache_store(self, cache: dict, key: object, value: Image.Image) -> None:
         """Insert into a preview cache, evicting the oldest entry past the cap."""

@@ -112,8 +112,8 @@ class TestGetMaxcll(unittest.TestCase):
     """get_maxcll returns MaxCLL (max_content / peak pixel luminance), not MaxFALL."""
 
     def setUp(self):
-        from src.utils import clear_maxfall_cache
-        clear_maxfall_cache()
+        from src.utils import clear_hdr_metadata_cache
+        clear_hdr_metadata_cache()
 
     @patch('src.utils.subprocess.check_output')
     def test_returns_maxcll_not_maxfall(self, mock_out):
@@ -135,8 +135,8 @@ class TestGetMaxcllCaching(unittest.TestCase):
     """HDR metadata is probed once per path and cached (~0.5–1.2 s per probe)."""
 
     def setUp(self):
-        from src.utils import clear_maxfall_cache
-        clear_maxfall_cache()
+        from src.utils import clear_hdr_metadata_cache
+        clear_hdr_metadata_cache()
 
     @patch('src.utils.subprocess.check_output')
     def test_repeated_calls_probe_once(self, mock_out):
@@ -160,10 +160,10 @@ class TestGetMaxcllCaching(unittest.TestCase):
 
     @patch('src.utils.subprocess.check_output')
     def test_clear_cache_forces_reprobe(self, mock_out):
-        from src.utils import clear_maxfall_cache
+        from src.utils import clear_hdr_metadata_cache
         mock_out.return_value = json.dumps({"frames": []}).encode('utf-8')
         get_maxcll('a.mkv')
-        clear_maxfall_cache()
+        clear_hdr_metadata_cache()
         get_maxcll('a.mkv')
         self.assertEqual(mock_out.call_count, 2)
 

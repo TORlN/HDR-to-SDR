@@ -28,7 +28,7 @@ from src.gui import HDRConverterGUI
 from src.preview import PREVIEW_SIZE, INITIAL_PANE_SIZE
 from src.utils import (
     extract_frame, extract_frame_with_conversion, FFMPEG_EXECUTABLE,
-    clear_maxfall_cache,
+    clear_hdr_metadata_cache,
 )
 
 
@@ -95,12 +95,12 @@ class TestSnappinessGuards(unittest.TestCase):
 
     @patch('src.utils.run_ffmpeg_command')
     @patch('src.utils.get_video_properties', return_value={'duration': 100, 'width': 1920, 'height': 1080})
-    @patch('src.utils._probe_hdr_metadata', return_value={'maxcll': 200.0, 'maxfall': None, 'mastering_peak': None})
+    @patch('src.utils._probe_hdr_metadata', return_value={'maxcll': 200.0})
     def test_maxfall_not_probed_during_preview_extraction(self, mock_probe, _mock_props, mock_run):
         # extract_frame_with_conversion uses npl=100 (hardcoded SDR reference white),
         # so HDR metadata probing is never needed during preview extraction.
-        clear_maxfall_cache()
-        self.addCleanup(clear_maxfall_cache)
+        clear_hdr_metadata_cache()
+        self.addCleanup(clear_hdr_metadata_cache)
         mock_run.return_value = _png_bytes()
         for t, tonemap in [(10.0, 'mobius'), (20.0, 'hable'), (30.0, 'reinhard')]:
             extract_frame_with_conversion('clip.mkv', gamma=1.0, tonemapper=tonemap, time_position=t,
@@ -219,8 +219,8 @@ class TestExtractionPerfAudit(unittest.TestCase):
 
     def test_report_maxfall_cache_cold_vs_warm(self):
         # Repeated preview extractions: cache avoids repeated ffmpeg for same frames.
-        clear_maxfall_cache()
-        self.addCleanup(clear_maxfall_cache)
+        clear_hdr_metadata_cache()
+        self.addCleanup(clear_hdr_metadata_cache)
 
         def extract(t):
             extract_frame_with_conversion(

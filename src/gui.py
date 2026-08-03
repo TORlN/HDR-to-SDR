@@ -7,7 +7,8 @@ from typing import TypeVar
 from tkinter import filedialog, messagebox
 from tkinter import ttk
 from dark_theme import apply_dark_theme
-from conversion import conversion_manager
+from conversion import ConversionRequest, conversion_manager
+from tk_conversion_view import TkConversionView
 from utils import (get_video_properties, get_maxcll, TONEMAP,
                    is_gpu_only_tonemapper, vulkan_libplacebo_available,
                    VIDEO_FILE_FILTER, parse_drop_paths as _shared_parse_drop_paths)
@@ -1466,18 +1467,21 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 f"Output: {output_path}, Gamma: {gamma}")
 
             # Only touch drag-and-drop/Cancel once the conversion has actually
-            # started -- start_conversion returns False (without raising) when
+            # started -- start returns False (without raising) when
             # a guard rejects the file (e.g. undetermined duration), and doing
             # this beforehand would leave DnD permanently unregistered with the
             # Cancel button stuck visible with no process behind it.
-            started = conversion_manager.start_conversion(
-                input_path, output_path, gamma, use_gpu,
-                self.progress_var, self.interactable_elements, self,
-                self.open_after_conversion_var.get(), self.cancel_button,
+            request = ConversionRequest(
+                input_path=input_path, output_path=output_path, gamma=gamma,
+                use_gpu=use_gpu,
+                open_after_conversion=self.open_after_conversion_var.get(),
                 tonemapper=tonemapper, quality=quality, quality_mode=quality_mode,
                 bit_depth=bit_depth, licensed=self._licensed,
                 lut_enabled=self._effective_lut_enabled(),
             )
+            view = TkConversionView(self, self.progress_var,
+                                    self.interactable_elements, self.cancel_button)
+            started = conversion_manager.start(request, view)
             if started:
                 if self.drop_target_registered:
                     self.unregister_drop_target()

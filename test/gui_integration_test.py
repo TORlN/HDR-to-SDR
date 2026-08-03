@@ -25,6 +25,7 @@ from tkinterdnd2 import TkinterDnD
 
 from src.gui import HDRConverterGUI, DEFAULT_MIN_SIZE
 from src.conversion import conversion_manager
+from src.tk_conversion_view import TkConversionView
 from src.utils import TONEMAP
 from src.settings import DEFAULTS
 
@@ -306,11 +307,13 @@ class TestConstruction(_GuiTestBase):
         self.assertEqual(set(self.gui.interactable_elements), expected)
 
     def test_batch_listbox_disabled_during_conversion(self):
-        # Regression: batch_listbox was never gated by disable_ui, so clicking
-        # a different queue row mid-conversion could overwrite input/output
-        # path vars while a GPU->CPU retry was about to re-read them fresh,
-        # corrupting which file gets converted to which path.
-        conversion_manager.disable_ui(self.gui.interactable_elements)
+        # Regression: batch_listbox was never gated by set_inputs_enabled(False),
+        # so clicking a different queue row mid-conversion could overwrite
+        # input/output path vars while a GPU->CPU retry was about to re-read
+        # them fresh, corrupting which file gets converted to which path.
+        TkConversionView(self.gui, self.gui.progress_var,
+                         self.gui.interactable_elements,
+                         self.gui.cancel_button).set_inputs_enabled(False)
         self.assertEqual(str(self.gui.batch_listbox.cget('state')), 'disabled')
 
     def test_drop_target_registered_on_start(self):
@@ -429,8 +432,10 @@ class TestBatchQueueWidgets(_GuiTestBase):
 
 class TestStateAndLayout(_GuiTestBase):
 
-    def test_disable_ui_sets_widgets_disabled(self):
-        conversion_manager.disable_ui(self.gui.interactable_elements)
+    def test_set_inputs_enabled_false_disables_widgets(self):
+        TkConversionView(self.gui, self.gui.progress_var,
+                         self.gui.interactable_elements,
+                         self.gui.cancel_button).set_inputs_enabled(False)
         for widget in self.gui.interactable_elements:
             self.assertIn('disabled', str(widget.cget('state')))
 
@@ -581,7 +586,7 @@ class TestUserActions(_GuiTestBase):
         self.gui.input_path_var.set('in.mkv')
         self.gui.output_path_var.set('out.mkv')
         self.gui.convert_video()
-        mock_cm.start_conversion.assert_called_once()
+        mock_cm.start.assert_called_once()
         self.assertFalse(self.gui.drop_target_registered)  # unregistered
         self.assertNotEqual(self.gui.cancel_button.grid_info(), {})  # shown
 
@@ -589,16 +594,16 @@ class TestUserActions(_GuiTestBase):
     @patch('src.gui.os.path.exists', return_value=False)
     @patch('src.gui.os.path.isfile', return_value=True)
     @patch('src.gui.conversion_manager')
-    def test_convert_video_leaves_ui_usable_when_start_conversion_declines(self, mock_cm, *_):
-        """start_conversion returning False means a guard rejected the file
+    def test_convert_video_leaves_ui_usable_when_start_declines(self, mock_cm, *_):
+        """start returning False means a guard rejected the file
         before ever launching ffmpeg (e.g. undetermined duration). Drag-and-
         drop must stay registered and Cancel must stay hidden -- otherwise
         the only way to recover is restarting the app."""
-        mock_cm.start_conversion.return_value = False
+        mock_cm.start.return_value = False
         self.gui.input_path_var.set('in.mkv')
         self.gui.output_path_var.set('out.mkv')
         self.gui.convert_video()
-        mock_cm.start_conversion.assert_called_once()
+        mock_cm.start.assert_called_once()
         self.assertTrue(self.gui.drop_target_registered)  # still registered
         self.assertEqual(self.gui.cancel_button.grid_info(), {})  # still hidden
 

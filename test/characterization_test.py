@@ -14,11 +14,13 @@ import threading
 import unittest
 from unittest.mock import patch, MagicMock, ANY, call
 
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
 from PIL import Image
 
-from src.conversion import ConversionManager, ConversionRequest, ConversionUI
+from _recording_view import RecordingConversionView
+from src.conversion import ConversionManager, ConversionRequest
 from src.utils import (
     get_maxcll,
     get_video_properties,
@@ -171,26 +173,13 @@ class TestGetMaxcllCaching(unittest.TestCase):
 
 class TestMonitorProgress(unittest.TestCase):
 
-    def _gui(self):
-        gui = MagicMock()
-        # Run scheduled Tk callbacks immediately and synchronously.
-        gui.root.after = MagicMock(side_effect=lambda delay, func, *a: func())
-        return gui
-
     def _req(self, **overrides):
         base = dict(input_path='in.mp4', output_path='out.mkv', gamma=1.0,
                     use_gpu=False, open_after_conversion=False)
         base.update(overrides)
         return ConversionRequest(**base)
 
-    def _ui(self, **overrides):
-        base = dict(gui_instance=MagicMock(), progress_var=MagicMock(),
-                    interactable_elements=[], cancel_button=MagicMock())
-        base.update(overrides)
-        return ConversionUI(**base)
-
-    @patch('src.conversion.messagebox')
-    def test_progress_is_parsed_and_pushed_to_progress_var(self, _mb):
+    def test_progress_is_parsed_and_pushed_to_progress_var(self):
         manager = ConversionManager()
         manager.cancelled = False
         proc = MagicMock()
@@ -199,75 +188,54 @@ class TestMonitorProgress(unittest.TestCase):
         manager.process = proc
         manager.handle_completion = MagicMock()
 
-        progress_var = MagicMock()
-        gui = self._gui()
+        view = RecordingConversionView()
 
-        manager.monitor_progress(
-            self._req(),
-            self._ui(gui_instance=gui, progress_var=progress_var),
-            90.0,
-        )
+        manager.monitor_progress(self._req(), view, 90.0)
 
         # 45s of 90s == 50%.
-        progress_var.set.assert_any_call(50.0)
+        self.assertIn(50.0, view.progress)
         manager.handle_completion.assert_called_once()
 
-    @patch('src.conversion.messagebox')
-    def test_gpu_error_triggers_cpu_retry(self, _mb):
+    def test_gpu_error_triggers_cpu_retry(self):
         manager = ConversionManager()
         manager.cancelled = False
         proc = MagicMock()
         proc.stderr = iter(['Cannot load nvcuda.dll', 'cuda failure'])
         proc.returncode = 1
         manager.process = proc
-        # The retry now re-enters _start directly (not the public
-        # start_conversion) with a request derived via replace().
-        manager._start = MagicMock()
+        # The retry re-enters start with a request derived via replace().
+        manager.start = MagicMock()
 
-        gui = self._gui()
-        gui.input_path_var.get.return_value = 'in.mp4'
-        gui.output_path_var.get.return_value = 'out.mkv'
-
-        # _start would normally have stashed this on the manager before
-        # monitor_progress's worker thread ever runs.
+        view = RecordingConversionView()
         request = self._req(use_gpu=True, tonemapper='hable')
+        # start would normally have stashed this on the manager before
+        # monitor_progress's worker thread ever runs.
         manager._request = request
 
-        manager.monitor_progress(
-            request,
-            self._ui(gui_instance=gui),
-            90.0,
-        )
+        manager.monitor_progress(request, view, 90.0)
 
-        manager._start.assert_called_once()
-        sent_request = manager._start.call_args.args[0]
+        manager.start.assert_called_once()
+        sent_request = manager.start.call_args.args[0]
         self.assertIs(sent_request.use_gpu, False)
         # The retry preserves the user's tonemapper (was previously lost).
         self.assertEqual(sent_request.tonemapper, 'hable')
-        gui.gpu_accel_var.set.assert_called_once_with(False)
+        self.assertEqual(view.gpu_fallbacks, 1)
 
-    @patch('src.conversion.messagebox')
-    def test_cancelled_run_does_not_retry_on_gpu_error(self, _mb):
+    def test_cancelled_run_does_not_retry_on_gpu_error(self):
         manager = ConversionManager()
         manager.cancelled = True  # user cancelled
         proc = MagicMock()
         proc.stderr = iter(['cuda failure'])
         proc.returncode = 1
         manager.process = proc
-        # The retry re-enters _start directly (not the public start_conversion);
-        # asserting on start_conversion here would pass regardless of behavior.
-        manager._start = MagicMock()
+        # The retry re-enters start with a request derived via replace().
+        manager.start = MagicMock()
         manager.handle_completion = MagicMock()
 
-        gui = self._gui()
-
         manager.monitor_progress(
-            self._req(use_gpu=True),
-            self._ui(gui_instance=gui),
-            90.0,
-        )
+            self._req(use_gpu=True), RecordingConversionView(), 90.0)
 
-        manager._start.assert_not_called()
+        manager.start.assert_not_called()
         manager.handle_completion.assert_called_once()
 
 
@@ -1526,7 +1494,7 @@ class TestConvertVideoBranches(unittest.TestCase):
         mock_mb.showwarning.assert_called_once_with(
             "Warning", "Please select both an input file and specify an output file.")
         mock_mb.showerror.assert_not_called()      # not a misleading "not found"
-        mock_cm.start_conversion.assert_not_called()
+        mock_cm.start.assert_not_called()
 
     @patch('src.gui.conversion_manager')
     @patch('src.gui.messagebox')
@@ -1535,7 +1503,7 @@ class TestConvertVideoBranches(unittest.TestCase):
         gui = self._gui()
         gui.convert_video()
         mock_mb.showerror.assert_called_once()
-        mock_cm.start_conversion.assert_not_called()
+        mock_cm.start.assert_not_called()
 
     @patch('src.gui.conversion_manager')
     @patch('src.gui.messagebox')
@@ -1545,7 +1513,7 @@ class TestConvertVideoBranches(unittest.TestCase):
         mock_mb.askyesno.return_value = False
         gui = self._gui()
         gui.convert_video()
-        mock_cm.start_conversion.assert_not_called()
+        mock_cm.start.assert_not_called()
 
     @patch('src.gui.conversion_manager')
     @patch('src.gui.messagebox')
@@ -1567,7 +1535,7 @@ class TestConvertVideoBranches(unittest.TestCase):
 
         mock_mb.showinfo.assert_not_called()             # no surprise dialog
         gui.output_path_var.set.assert_called_with('out.mkv')
-        mock_cm.start_conversion.assert_called_once()
+        mock_cm.start.assert_called_once()
 
     @patch('src.gui.conversion_manager')
     @patch('src.gui.messagebox')
@@ -1586,8 +1554,8 @@ class TestConvertVideoBranches(unittest.TestCase):
 
         gui.convert_video()
 
-        _, kwargs = mock_cm.start_conversion.call_args
-        self.assertEqual(kwargs['quality'], 19)
+        request = mock_cm.start.call_args.args[0]
+        self.assertEqual(request.quality, 19)
         gui.output_path_var.set.assert_called_with('out.mp4')  # MP4 container forced
 
     @patch('src.gui.conversion_manager')
@@ -1612,8 +1580,8 @@ class TestConvertVideoBranches(unittest.TestCase):
 
         gui.convert_video()
 
-        _, kwargs = mock_cm.start_conversion.call_args
-        self.assertTrue(kwargs['lut_enabled'])
+        request = mock_cm.start.call_args.args[0]
+        self.assertTrue(request.lut_enabled)
 
     @patch('src.gui.conversion_manager')
     @patch('src.gui.messagebox')
@@ -1638,12 +1606,12 @@ class TestConvertVideoBranches(unittest.TestCase):
 
         gui.convert_video()
 
-        _, kwargs = mock_cm.start_conversion.call_args
-        self.assertFalse(kwargs['lut_enabled'])
+        request = mock_cm.start.call_args.args[0]
+        self.assertFalse(request.lut_enabled)
         gui.lut_export_var.get.return_value = True
         gui.convert_video()
-        _, kwargs = mock_cm.start_conversion.call_args
-        self.assertTrue(kwargs['lut_enabled'])
+        request = mock_cm.start.call_args.args[0]
+        self.assertTrue(request.lut_enabled)
 
     @patch('src.gui.conversion_manager')
     @patch('src.gui.messagebox')
@@ -1662,9 +1630,9 @@ class TestConvertVideoBranches(unittest.TestCase):
 
         gui.convert_video()
 
-        _, kwargs = mock_cm.start_conversion.call_args
-        self.assertEqual(kwargs['quality_mode'], 'bitrate')
-        self.assertEqual(kwargs['quality'], 42000)
+        request = mock_cm.start.call_args.args[0]
+        self.assertEqual(request.quality_mode, 'bitrate')
+        self.assertEqual(request.quality, 42000)
 
     @patch('src.gui.conversion_manager')
     @patch('src.gui.messagebox')
@@ -1685,8 +1653,8 @@ class TestConvertVideoBranches(unittest.TestCase):
 
         gui.convert_video()
 
-        _, kwargs = mock_cm.start_conversion.call_args
-        self.assertEqual(kwargs['bit_depth'], 10)
+        request = mock_cm.start.call_args.args[0]
+        self.assertEqual(request.bit_depth, 10)
 
     @patch('src.gui.conversion_manager')
     @patch('src.gui.messagebox')
@@ -1707,8 +1675,8 @@ class TestConvertVideoBranches(unittest.TestCase):
 
         gui.convert_video()
 
-        _, kwargs = mock_cm.start_conversion.call_args
-        self.assertEqual(kwargs['bit_depth'], 12)
+        request = mock_cm.start.call_args.args[0]
+        self.assertEqual(request.bit_depth, 12)
 
     @patch('src.gui.conversion_manager')
     @patch('src.gui.messagebox')
@@ -1727,8 +1695,8 @@ class TestConvertVideoBranches(unittest.TestCase):
 
         gui.convert_video()
 
-        _, kwargs = mock_cm.start_conversion.call_args
-        self.assertEqual(kwargs['bit_depth'], 8)
+        request = mock_cm.start.call_args.args[0]
+        self.assertEqual(request.bit_depth, 8)
 
     @patch('src.gui.conversion_manager')
     @patch('src.gui.messagebox')
@@ -1750,8 +1718,8 @@ class TestConvertVideoBranches(unittest.TestCase):
 
         gui.convert_video()
 
-        _, kwargs = mock_cm.start_conversion.call_args
-        self.assertEqual(kwargs['bit_depth'], 10)
+        request = mock_cm.start.call_args.args[0]
+        self.assertEqual(request.bit_depth, 10)
 
 
 class TestGuiErrorAndResizePaths(unittest.TestCase):
@@ -3041,9 +3009,7 @@ class TestConversionManagerInternals(unittest.TestCase):
         m.cancelled = False
         req = ConversionRequest(input_path='in.mp4', output_path='out.mkv', gamma=1.0,
                                 use_gpu=False, open_after_conversion=False)
-        ui = ConversionUI(gui_instance=MagicMock(), progress_var=MagicMock(),
-                          interactable_elements=[], cancel_button=MagicMock())
-        m.monitor_progress(req, ui, 90.0)
+        m.monitor_progress(req, RecordingConversionView(), 90.0)
 
     def test_nvidia_present_true_when_smi_exits_zero(self):
         m = ConversionManager()

@@ -3,12 +3,11 @@ from __future__ import annotations
 import os
 import subprocess
 import threading
-import webbrowser
 import re
 import logging
 from dataclasses import dataclass, replace
-from typing import Any, Callable
-from tkinter import messagebox, ttk
+from typing import Any
+from conversion_view import ConversionView, Notice
 from utils import (get_video_properties, FFMPEG_CONVERT_FILTER,
                    FFMPEG_EXECUTABLE,
                    VULKAN_DEVICE_ARGS, VULKAN_CUDA_DEVICE_ARGS,
@@ -40,105 +39,59 @@ class ConversionRequest:
     lut_enabled: bool = True
 
 
-@dataclass(frozen=True, eq=False)
-class ConversionUI:
-    """Every GUI handle this module needs, in one place.
-
-    eq=False because it holds live Tk widgets, for which field-wise equality
-    is meaningless -- and because a generated __hash__ would raise on the
-    interactable_elements list.
-    """
-    gui_instance: Any
-    progress_var: Any
-    interactable_elements: list[Any]
-    cancel_button: Any
-    on_complete: Callable[[bool], None] | None = None
-
-
 class ConversionManager:
     def __init__(self) -> None:
         self.process: subprocess.Popen[str] | None = None
         self.cancelled: bool = False
         self._gpu_encoder: str | None = None
         self._request: ConversionRequest | None = None
-        self._ui: ConversionUI | None = None
+        self._view: ConversionView | None = None
 
-    def start_conversion(self, input_path: str, output_path: str, gamma: float,
-                         use_gpu: bool, progress_var: Any,
-                         interactable_elements: list[Any], gui_instance: Any,
-                         open_after_conversion: bool, cancel_button: Any,
-                         tonemapper: str = 'reinhard', quality: int = 23,
-                         quality_mode: str = 'cq',
-                         on_complete: Callable[[bool], None] | None = None,
-                         bit_depth: int = 8, licensed: bool = False,
-                         lut_enabled: bool = True) -> bool:
-        """Public entry point. Frozen signature -- src/pro/batch.py calls this.
+    def start(self, request: ConversionRequest, view: ConversionView) -> bool:
+        """Public entry point. The only way to begin a conversion.
 
-        Assembles the request/UI pair and hands off to _start, which is also
-        what the GPU->CPU retry re-enters with a modified request.
+        view.on_complete decides batch vs interactive; the caller sets it when
+        constructing the view. The GPU->CPU retry re-enters here with a
+        request derived via replace().
         """
         # Guarded (not a bare abspath()): verify_paths' "both paths given" check
         # relies on an empty string staying falsy. os.path.abspath('') resolves
         # to the cwd, which is truthy, so that guard would silently stop firing
         # on a blank path if abspath ran unconditionally here.
-        request = ConversionRequest(
-            input_path=os.path.abspath(input_path) if input_path else input_path,
-            output_path=os.path.abspath(output_path) if output_path else output_path,
-            gamma=gamma,
-            use_gpu=use_gpu,
-            open_after_conversion=open_after_conversion,
-            tonemapper=tonemapper,
-            quality=quality,
-            quality_mode=quality_mode,
-            bit_depth=bit_depth,
-            licensed=licensed,
-            lut_enabled=lut_enabled,
+        request = replace(
+            request,
+            input_path=(os.path.abspath(request.input_path)
+                        if request.input_path else request.input_path),
+            output_path=(os.path.abspath(request.output_path)
+                         if request.output_path else request.output_path),
         )
-        ui = ConversionUI(
-            gui_instance=gui_instance,
-            progress_var=progress_var,
-            interactable_elements=interactable_elements,
-            cancel_button=cancel_button,
-            on_complete=on_complete,
-        )
-        return self._start(request, ui)
 
-    def _start(self, request: ConversionRequest, ui: ConversionUI) -> bool:
         # Every early-out below must go through here rather than a bare
         # `return`: on_complete drives the batch queue, and a guard that
         # fires without calling it leaves the item stuck at 'Converting'
         # forever. Returning False also lets single-file callers know the
         # conversion never actually started.
-        # A batch run has no human watching for a per-guard dialog -- see
-        # _reject/verify_paths.
-        show_dialog = ui.on_complete is None
-
         def _abort_before_start() -> bool:
-            if ui.on_complete is not None:
-                ui.on_complete(False)
+            if view.on_complete is not None:
+                view.on_complete(False)
             return False
 
-        if not self.verify_paths(request.input_path, request.output_path,
-                                 show_dialog=show_dialog):
+        if not self.verify_paths(request.input_path, request.output_path, view):
             return _abort_before_start()
 
         incompatibility = self.validate_bit_depth_output(
             request.output_path, request.bit_depth)
         if incompatibility:
-            self._reject(incompatibility, show_dialog)
+            self._reject(incompatibility, view)
             return _abort_before_start()
 
         self._request = request
-        self._ui = ui
+        self._view = view
         self.cancelled = False
 
-        input_path = request.input_path
-        interactable_elements = ui.interactable_elements
-        cancel_button = ui.cancel_button
-
-        properties = get_video_properties(input_path)
+        properties = get_video_properties(request.input_path)
         if properties is None:
-            self._reject("Failed to retrieve video properties.", show_dialog)
+            self._reject("Failed to retrieve video properties.", view)
             return _abort_before_start()
 
         # A missing/zero duration would make progress tracking divide by zero in
@@ -146,15 +99,14 @@ class ConversionManager:
         if not properties.get('duration'):
             self._reject(
                 "Could not determine the video's duration, so it can't be converted.",
-                show_dialog)
+                view)
             return _abort_before_start()
 
-        self.disable_ui(interactable_elements)
-        cancel_button.config(command=self.cancel_conversion)
-        cancel_button.grid()
+        view.set_inputs_enabled(False)
+        view.set_cancel_visible(True, on_cancel=self.cancel_conversion)
 
         try:
-            cmd = self.construct_ffmpeg_command(request, properties)
+            cmd = self.construct_ffmpeg_command(request, properties, view)
         except Exception:
             # The UI was already disabled and the cancel button gridded above,
             # but self.process hasn't been assigned yet -- Cancel would be a
@@ -162,55 +114,43 @@ class ConversionManager:
             # UI. Undo both here so the app isn't left permanently disabled,
             # then let the original exception propagate unchanged so callers
             # still see/log/report it exactly as before.
-            self.enable_ui(interactable_elements)
-            cancel_button.grid_remove()
+            view.set_inputs_enabled(True)
+            view.set_cancel_visible(False)
             raise
         self.process = self.start_ffmpeg_process(cmd)
 
         thread = threading.Thread(
             target=self.monitor_progress,
-            args=(request, ui, properties['duration']))
+            args=(request, view, properties['duration']))
         thread.daemon = True
         thread.start()
         return True
 
     @staticmethod
-    def _reject(message: str, show_dialog: bool) -> None:
-        """Log a guard rejection; only pop a blocking dialog in interactive
-        (single-file) mode. A batch run has no human watching for it, so a
-        modal here would stall the whole queue until someone clicks it --
-        the item is still marked Failed and visible in the batch list."""
-        if show_dialog:
-            messagebox.showwarning("Warning", message)
-        else:
-            logging.error(f"Conversion rejected: {message}")
+    def _reject(message: str, view: ConversionView) -> None:
+        """Hand a guard rejection to the view.
+
+        A batch run has no human watching for it, so a modal here would stall
+        the whole queue until someone clicks it -- BatchConversionView turns
+        this into a log line instead, and the item is still marked Failed and
+        visible in the batch list.
+        """
+        view.notify(Notice.warning("Warning", message))
 
     def verify_paths(self, input_path: str, output_path: str,
-                     show_dialog: bool = True) -> bool:
+                     view: ConversionView) -> bool:
         if not input_path or not output_path:
             self._reject(
-                "Please select both an input file and specify an output file.", show_dialog)
+                "Please select both an input file and specify an output file.", view)
             return False
         # normcase folds case on Windows (NTFS is case-insensitive) and is a
         # no-op elsewhere -- without it, 'movie.mp4' vs 'Movie.mp4' would
         # pass this guard and ffmpeg (-y) would read and write the same file.
         if os.path.normcase(os.path.abspath(input_path)) == \
                 os.path.normcase(os.path.abspath(output_path)):
-            self._reject("Input and output file cannot be the same.", show_dialog)
+            self._reject("Input and output file cannot be the same.", view)
             return False
         return True
-
-    def disable_ui(self, elements: list[Any]) -> None:
-        for element in elements:
-            element.config(state="disabled")
-
-    def enable_ui(self, elements: list[Any]) -> None:
-        for element in elements:
-            # A ttk.Combobox re-enabled to 'normal' becomes freely typeable,
-            # not just clickable -- these are only ever built 'readonly', so
-            # restore that instead of clobbering it with 'normal'.
-            state = 'readonly' if isinstance(element, ttk.Combobox) else 'normal'
-            element.config(state=state)
 
     # Hardware H.264 encoders can't do 10-bit at all; their HEVC counterparts
     # can. Also used to preserve an already-HEVC source's codec on GPU (see
@@ -222,7 +162,8 @@ class ConversionManager:
     }
 
     def construct_ffmpeg_command(self, request: ConversionRequest,
-                                 properties: dict[str, Any]) -> list[str]:
+                                 properties: dict[str, Any],
+                                 view: ConversionView) -> list[str]:
         input_path = request.input_path
         output_path = request.output_path
         gamma = request.gamma
@@ -263,24 +204,24 @@ class ConversionManager:
                              and properties.get('dovi_profile') == 5)
         use_libplacebo = (use_gpu or dovi_needs_rpu) and vulkan_libplacebo_available()
         if dovi_needs_rpu and not use_libplacebo:
-            messagebox.showwarning(
+            view.notify(Notice.warning(
                 "Warning",
                 "This Dolby Vision (profile 5) source has no HDR10-compatible "
                 "base layer and requires GPU tonemapping to render correctly, "
                 "which isn't available on this system. The output colors may "
-                "look wrong (green/purple cast).")
+                "look wrong (green/purple cast)."))
         elif dovi_needs_rpu and not use_gpu:
             # use_gpu is False here, so without this notice the override is
             # silent -- a user who unchecked "Enable GPU Acceleration"
             # expecting a pure-CPU run has no way to know GPU tonemapping ran
             # anyway (only the tonemap step; encoding still follows the
             # encoder dispatch below, so it stays on the CPU encoder).
-            messagebox.showinfo(
+            view.notify(Notice.info(
                 "Dolby Vision Profile 5",
                 "This Dolby Vision (profile 5) source has no HDR10-compatible "
                 "base layer, so GPU tonemapping is being used to render its "
                 "colors correctly even though \"Enable GPU Acceleration\" is "
-                "unchecked. Encoding itself still runs on the CPU.")
+                "unchecked. Encoding itself still runs on the CPU."))
 
         # GPU acceleration setup — dispatch on whichever encoder was detected
         active_encoder = None
@@ -294,22 +235,22 @@ class ConversionManager:
                     if not use_libplacebo:
                         cmd += ['-hwaccel', 'cuda', '-hwaccel_device', '0']
                 else:
-                    messagebox.showwarning("Warning", "GPU acceleration is not supported on this platform.")
+                    view.notify(Notice.warning("Warning", "GPU acceleration is not supported on this platform."))
                     active_encoder = None
             elif active_encoder == 'h264_qsv':
                 if current_platform in ["windows", "linux"]:
                     if not use_libplacebo:
                         cmd += ['-hwaccel', 'qsv']
                 else:
-                    messagebox.showwarning("Warning", "GPU acceleration is not supported on this platform.")
+                    view.notify(Notice.warning("Warning", "GPU acceleration is not supported on this platform."))
                     active_encoder = None
             elif active_encoder == 'h264_amf':
                 if current_platform not in ["windows", "linux"]:
-                    messagebox.showwarning("Warning", "GPU acceleration is not supported on this platform.")
+                    view.notify(Notice.warning("Warning", "GPU acceleration is not supported on this platform."))
                     active_encoder = None
                 # AMF needs no separate hwaccel flag
             elif active_encoder is not None:
-                messagebox.showwarning("Warning", "GPU acceleration is not supported on this platform.")
+                view.notify(Notice.warning("Warning", "GPU acceleration is not supported on this platform."))
                 active_encoder = None
 
         # NVIDIA fast path: use CUDA→Vulkan interop so NVDEC handles decode on
@@ -558,7 +499,7 @@ class ConversionManager:
         logging.debug(f"Started FFmpeg process with command: {' '.join(cmd)}")
         return process
 
-    def monitor_progress(self, request: ConversionRequest, ui: ConversionUI,
+    def monitor_progress(self, request: ConversionRequest, view: ConversionView,
                          duration: float) -> None:
         progress_pattern = re.compile(r'time=(\d+:\d+:\d+\.\d+)')
         error_messages: list[str] = []
@@ -581,8 +522,7 @@ class ConversionManager:
             if match and duration:
                 elapsed_time = self.parse_time(match.group(1))
                 progress = (elapsed_time / duration) * 100
-                ui.gui_instance.root.after(0, lambda p=progress: ui.progress_var.set(p))
-                ui.gui_instance.root.after(0, ui.gui_instance.root.update_idletasks)
+                view.set_progress(progress)
 
             # ffmpeg's own banner lines echo the input/output path verbatim
             # ("Input #0, ..., from '<path>':" / "Output #0, ..., to
@@ -601,11 +541,12 @@ class ConversionManager:
                 logging.warning("GPU acceleration failed. Retrying with CPU encoding.")
                 # The retry touches Tk (gpu checkbox, dialog, UI state) and must run
                 # on the main thread, not this worker thread.
-                ui.gui_instance.root.after(0, lambda: self._retry_with_cpu(request, ui))
+                view.schedule(lambda: self._retry_with_cpu(request, view))
             else:
-                self.handle_completion(request, ui, error_messages, returncode)
+                self.handle_completion(request, view, error_messages, returncode)
 
-    def _retry_with_cpu(self, request: ConversionRequest, ui: ConversionUI) -> None:
+    def _retry_with_cpu(self, request: ConversionRequest,
+                        view: ConversionView) -> None:
         """Restart the conversion on the CPU after a GPU failure. Main thread.
 
         The retry derives its request from the original with replace() rather
@@ -615,35 +556,30 @@ class ConversionManager:
         belong to a different, later-started conversion by the time this
         after(0) callback fires (e.g. cancel + immediately start another file).
         """
-        ui.gui_instance.gpu_accel_var.set(False)
-        # A raw Variable.set() doesn't fire the checkbox's command= callback
-        # (check_gpu_acceleration), which is normally what persists a GPU
-        # toggle onto the current batch item's stored settings -- without
-        # this, reselecting the item later would restore the stale,
-        # pre-failure gpu_accel=True.
-        ui.gui_instance._write_back_current_settings()
-        messagebox.showwarning("GPU Acceleration Failed",
-                               "GPU acceleration failed. Switching to CPU encoding.")
+        view.on_gpu_fallback()
+        view.notify(Notice.warning(
+            "GPU Acceleration Failed",
+            "GPU acceleration failed. Switching to CPU encoding."))
         try:
-            self._start(replace(request, use_gpu=False), ui)
+            self.start(replace(request, use_gpu=False), view)
         except Exception as e:
             # E.g. a GPU-only tonemapper (BT.2390/Spline) with no CPU
-            # implementation, raised from construct_ffmpeg_command -- _start
-            # restores UI state before re-raising in that case. But _start can
+            # implementation, raised from construct_ffmpeg_command -- start
+            # restores UI state before re-raising in that case. But start can
             # also raise from start_ffmpeg_process (e.g. a missing ffmpeg
             # binary), which sits outside that try/except and leaves the UI
             # disabled. Either way, nothing else in this call path calls
             # on_complete -- without this the batch item would be stuck at
             # 'Converting' forever.
             logging.error(f"CPU retry failed to start ({request.tonemapper}): {e}")
-            if ui.on_complete is not None:
-                ui.on_complete(False)
+            if view.on_complete is not None:
+                view.on_complete(False)
 
     def parse_time(self, time_str: str) -> float:
         hours, minutes, seconds = map(float, time_str.split(':'))
         return hours * 3600 + minutes * 60 + seconds
 
-    def handle_completion(self, request: ConversionRequest, ui: ConversionUI,
+    def handle_completion(self, request: ConversionRequest, view: ConversionView,
                           error_messages: list[str], returncode: int) -> None:
         def _handle() -> None:
             # returncode is the value monitor_progress already read from its
@@ -652,7 +588,7 @@ class ConversionManager:
             # between monitor_progress finishing and this after(0)-scheduled
             # callback actually running, which would otherwise misreport a
             # conversion that had already finished successfully.
-            on_complete = ui.on_complete
+            on_complete = view.on_complete
             if on_complete is not None:
                 # Batch/queue mode: no per-file dialog and the UI stays disabled
                 # between files. The callback marks status and advances the queue
@@ -667,39 +603,35 @@ class ConversionManager:
 
             if returncode == 0:
                 logging.info("Conversion completed successfully.")
-                messagebox.showinfo(
+                view.notify(Notice.info(
                     "Success",
-                    f"Conversion complete! Output saved to: {request.output_path}")
+                    f"Conversion complete! Output saved to: {request.output_path}"))
                 if request.open_after_conversion:
-                    webbrowser.open(request.output_path)
+                    view.open_output(request.output_path)
             elif not self.cancelled:
                 tail = error_messages[-50:]  # ffmpeg stderr can be thousands of progress lines; show only the tail where real errors appear
                 error_message = '\n'.join(tail)
                 logging.error(f"Conversion failed with code {returncode}: {error_message}")
-                messagebox.showerror(
-                    "Error", f"Conversion failed with code {returncode}\n{error_message}")
+                view.notify(Notice.error(
+                    "Error", f"Conversion failed with code {returncode}\n{error_message}"))
 
-            self.enable_ui(ui.interactable_elements)
-            ui.cancel_button.grid_remove()
+            view.set_inputs_enabled(True)
+            view.set_cancel_visible(False)
+            view.restore_drop_target()
 
-            if hasattr(ui.gui_instance, 'register_drop_target'):
-                ui.gui_instance.register_drop_target()
-
-        ui.gui_instance.root.after(0, _handle)
+        view.schedule(_handle)
 
     def cancel_conversion(self) -> None:
         self.cancelled = True
-        ui = self._ui
-        if self.process and ui is not None:
+        view = self._view
+        if self.process and view is not None:
             self.process.terminate()
             self.process = None
-            ui.gui_instance.root.after(0, lambda: messagebox.showinfo(
-                "Cancelled", "Video conversion has been cancelled."))
-            self.enable_ui(ui.interactable_elements)
-            ui.cancel_button.grid_remove()
-
-            if hasattr(ui.gui_instance, 'register_drop_target'):
-                ui.gui_instance.register_drop_target()
+            view.schedule(lambda: view.notify(Notice.info(
+                "Cancelled", "Video conversion has been cancelled.")))
+            view.set_inputs_enabled(True)
+            view.set_cancel_visible(False)
+            view.restore_drop_target()
 
     def _nvidia_present(self) -> bool:
         """Return True if nvidia-smi reports a usable NVIDIA GPU."""

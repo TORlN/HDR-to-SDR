@@ -85,6 +85,7 @@ import tempfile
 import subprocess
 import unittest
 
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
 from PIL import Image
@@ -101,6 +102,7 @@ from src.utils import (
     FFMPEG_FILTER_LEGACY_NO_LUT,
     get_lut_filter_path,
 )
+from _recording_view import RecordingConversionView
 from src.conversion import ConversionManager, ConversionRequest
 
 
@@ -205,7 +207,7 @@ class TestRealSdrBaseline(unittest.TestCase):
             out_path = os.path.join(tmpdir, 'out.mp4')
             manager = ConversionManager()
             cmd = manager.construct_ffmpeg_command(
-                _req(SDR_VIDEO, out_path, tonemapper='reinhard'), props)
+                _req(SDR_VIDEO, out_path, tonemapper='reinhard'), props, RecordingConversionView())
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.assertEqual(
                 result.returncode, 0,
@@ -235,7 +237,7 @@ class TestRealHdr10TenBit(unittest.TestCase):
             out_path = os.path.join(tmpdir, 'out.mp4')
             manager = ConversionManager()
             cmd = manager.construct_ffmpeg_command(
-                _req(HDR10_10BIT_VIDEO, out_path, tonemapper='mobius'), props)
+                _req(HDR10_10BIT_VIDEO, out_path, tonemapper='mobius'), props, RecordingConversionView())
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.assertEqual(
                 result.returncode, 0,
@@ -345,7 +347,7 @@ class TestRealGpuOnlyTonemappers(unittest.TestCase):
             out_path = os.path.join(tmpdir, out_name)
             manager = ConversionManager()
             cmd = manager.construct_ffmpeg_command(
-                _req(HDR10_10BIT_VIDEO, out_path, use_gpu=True, tonemapper=tonemapper), props)
+                _req(HDR10_10BIT_VIDEO, out_path, use_gpu=True, tonemapper=tonemapper), props, RecordingConversionView())
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.assertEqual(
                 result.returncode, 0,
@@ -449,7 +451,7 @@ class TestRealHdr10TwelveBitConversion(unittest.TestCase):
             out_path = os.path.join(tmpdir, 'out.mkv')
             manager = ConversionManager()
             cmd = manager.construct_ffmpeg_command(
-                _req(HDR10_12BIT_VIDEO, out_path, tonemapper='reinhard', bit_depth=12), props)
+                _req(HDR10_12BIT_VIDEO, out_path, tonemapper='reinhard', bit_depth=12), props, RecordingConversionView())
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.assertEqual(
                 result.returncode, 0,
@@ -480,7 +482,7 @@ class TestRealTrueHdAssMkv(unittest.TestCase):
             out_path = os.path.join(tmpdir, 'out.mkv')
             manager = ConversionManager()
             cmd = manager.construct_ffmpeg_command(
-                _req(TRUEHD_ASS_MKV, out_path, tonemapper='mobius'), props)
+                _req(TRUEHD_ASS_MKV, out_path, tonemapper='mobius'), props, RecordingConversionView())
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.assertEqual(
                 result.returncode, 0,
@@ -501,7 +503,7 @@ class TestRealTrueHdAssMkv(unittest.TestCase):
             out_path = os.path.join(tmpdir, 'out.mp4')
             manager = ConversionManager()
             cmd = manager.construct_ffmpeg_command(
-                _req(TRUEHD_ASS_MKV, out_path, tonemapper='mobius'), props)
+                _req(TRUEHD_ASS_MKV, out_path, tonemapper='mobius'), props, RecordingConversionView())
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.assertEqual(
                 result.returncode, 0,
@@ -549,7 +551,7 @@ class TestRealTrueHdPgsMkv(unittest.TestCase):
             out_path = os.path.join(tmpdir, 'out.mkv')
             manager = ConversionManager()
             cmd = manager.construct_ffmpeg_command(
-                _req(TRUEHD_PGS_MKV, out_path, tonemapper='mobius'), props)
+                _req(TRUEHD_PGS_MKV, out_path, tonemapper='mobius'), props, RecordingConversionView())
 
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.assertEqual(
@@ -576,7 +578,7 @@ class TestRealTrueHdPgsMkv(unittest.TestCase):
             out_path = os.path.join(tmpdir, 'out_from_mkv.mp4')
             manager = ConversionManager()
             cmd = manager.construct_ffmpeg_command(
-                _req(TRUEHD_PGS_MKV, out_path, tonemapper='mobius'), props)
+                _req(TRUEHD_PGS_MKV, out_path, tonemapper='mobius'), props, RecordingConversionView())
 
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.assertEqual(
@@ -637,7 +639,7 @@ class TestRealDolbyVisionTierConversion(unittest.TestCase):
         out_path = os.path.join(self._tmpdir, out_name)
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            _req(DOVI_VIDEO, out_path, tonemapper='reinhard', licensed=licensed), props)
+            _req(DOVI_VIDEO, out_path, tonemapper='reinhard', licensed=licensed), props, RecordingConversionView())
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.assertEqual(
             result.returncode, 0,

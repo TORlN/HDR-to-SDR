@@ -279,23 +279,23 @@ class TestHDRConverterGUI(TestCase):
 
     @patch('src.gui.messagebox.askyesno')
     @patch('src.gui.HDRConverterGUI.unregister_drop_target')
-    @patch('src.gui.conversion_manager.start_conversion')
+    @patch('src.gui.conversion_manager.start')
     @patch('src.gui.os.path.isfile')
-    def test_video_conversion(self, mock_isfile, mock_start_conversion, mock_unregister, mock_confirm):
+    def test_video_conversion(self, mock_isfile, mock_start, mock_unregister, mock_confirm):
         """Test the video conversion process."""
         self._setup_conversion_test(mock_confirm)
         mock_isfile.return_value = True
         
         self.gui.convert_video()
         
-        self._assert_conversion_started(mock_unregister, mock_start_conversion)
+        self._assert_conversion_started(mock_unregister, mock_start)
 
     @patch('src.gui.messagebox.askyesno')
     @patch('src.gui.HDRConverterGUI.unregister_drop_target')
-    @patch('src.gui.conversion_manager.start_conversion')
+    @patch('src.gui.conversion_manager.start')
     @patch('src.gui.os.path.isfile')
     def test_video_conversion_passes_license_tier(self, mock_isfile,
-                                                  mock_start_conversion,
+                                                  mock_start,
                                                   mock_unregister, mock_confirm):
         """convert_video forwards the license tier so the conversion layer can
         apply the DoVi Pro-passthrough / Free-stereo-downmix audio split."""
@@ -304,8 +304,7 @@ class TestHDRConverterGUI(TestCase):
 
         self.gui.convert_video()
 
-        kwargs = mock_start_conversion.call_args.kwargs
-        self.assertIs(kwargs.get('licensed'), True)  # setUp builds licensed=True
+        self.assertIs(mock_start.call_args.args[0].licensed, True)  # setUp builds licensed=True
 
     def _assert_frame_updates(self):
         """Helper method to verify frame updates."""
@@ -330,22 +329,24 @@ class TestHDRConverterGUI(TestCase):
         mock_confirm.return_value = True
         self.gui.drop_target_registered = True
 
-    def _assert_conversion_started(self, mock_unregister, mock_start_conversion):
+    def _assert_conversion_started(self, mock_unregister, mock_start):
         """Helper method to verify conversion startup."""
         mock_unregister.assert_called_once()
-        
-        actual_call = mock_start_conversion.call_args
-        args = actual_call[0]
-        self.assertEqual(args[0], 'test_input.mp4')  # input path
-        self.assertEqual(args[1], 'test_output.mkv')  # output path
-        self.assertEqual(args[2], 2.2)  # gamma
-        self.assertIs(args[3], False)  # gpu acceleration
-        self.assertIs(args[4], self.gui.progress_var)  # progress var
-        self.assertEqual(args[5], self.gui.interactable_elements)  # interactable elements
-        self.assertIs(args[6], self.gui)  # gui instance
-        self.assertTrue(args[7])  # open after conversion
-        self.assertIs(args[8], self.gui.cancel_button)  # cancel button
-        
+
+        request, view = mock_start.call_args.args
+        self.assertEqual(request.input_path, 'test_input.mp4')
+        self.assertEqual(request.output_path, 'test_output.mkv')
+        self.assertEqual(request.gamma, 2.2)
+        self.assertIs(request.use_gpu, False)
+        self.assertTrue(request.open_after_conversion)
+        # The four widget handles that used to be loose parameters now ride
+        # inside the view, so they are checked there rather than by position.
+        self.assertIs(view._gui, self.gui)
+        self.assertIs(view._progress_var, self.gui.progress_var)
+        self.assertEqual(view._elements, self.gui.interactable_elements)
+        self.assertIs(view._cancel_button, self.gui.cancel_button)
+        self.assertIsNone(view.on_complete)
+
         self.gui.cancel_button.grid.assert_called_once()
 
 def _safe_stop(patcher):

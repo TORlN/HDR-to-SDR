@@ -4,18 +4,25 @@ import subprocess  # Added import
 import multiprocessing  # Added import
 import ctypes  # Added import for SW_HIDE
 import threading  # Added import for threading
-import inspect
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 import unittest
 from unittest.mock import patch, MagicMock, ANY  # Import ANY
 from src.conversion import ConversionManager
 from src.utils import get_video_properties
-from tkinter import ttk
 from PIL import Image
 from src.utils import FFMPEG_CONVERT_FILTER, get_lut_filter_path
 from src.utils import FFMPEG_EXECUTABLE  # Import FFMPEG_EXECUTABLE
-from dataclasses import FrozenInstanceError, replace, fields
-from src.conversion import ConversionRequest, ConversionUI
+from dataclasses import FrozenInstanceError, replace
+from src.conversion import ConversionRequest
+from conversion_view import Notice   # bare: same class src.conversion builds
+from _recording_view import RecordingConversionView
+
+# _PROPS is the minimum get_video_properties result that lets start() reach
+# ffmpeg: anything missing 'duration' is rejected by a guard before launch.
+_PROPS = {'width': 1920, 'height': 1080, 'bit_rate': 4000000,
+          'frame_rate': 30.0, 'audio_codec': 'aac',
+          'audio_bit_rate': 128000, 'subtitle_streams': []}
 
 
 def _req(**overrides) -> ConversionRequest:
@@ -30,39 +37,20 @@ def _req(**overrides) -> ConversionRequest:
     return ConversionRequest(**base)
 
 
-def _ui(**overrides) -> ConversionUI:
-    """A ConversionUI wired to mocks; override only what the test asserts on."""
-    base = dict(gui_instance=MagicMock(), progress_var=MagicMock(),
-                interactable_elements=[], cancel_button=MagicMock())
-    base.update(overrides)
-    return ConversionUI(**base)
+def _view(**overrides) -> RecordingConversionView:
+    """A view that records instead of rendering; see test/_recording_view.py."""
+    return RecordingConversionView(**overrides)
 
 
 class TestConversionRequest(unittest.TestCase):
-    """The request is an immutable snapshot of what to encode."""
+    """The request is an immutable snapshot of what to encode.
 
-    def test_defaults_match_start_conversion_defaults(self):
-        """Defaults must mirror start_conversion's, or building a request
-        from a partial call would silently change encoder behavior.
-
-        Reads start_conversion's real signature via inspect rather than
-        hard-coding the literals here: ~70 call sites in this file build
-        requests through _req(), which relies on ConversionRequest's
-        dataclass defaults, not on start_conversion's. If the two ever
-        diverged (a default changed on one but not the other), a
-        hard-coded copy of the values would stay green and the divergence
-        would be invisible everywhere else in the suite.
-        """
-        sig = inspect.signature(ConversionManager.start_conversion)
-        request_defaults = {f.name: f.default for f in fields(ConversionRequest)}
-        for name in ('tonemapper', 'quality', 'quality_mode', 'bit_depth',
-                     'licensed', 'lut_enabled'):
-            start_default = sig.parameters[name].default
-            self.assertEqual(
-                start_default, request_defaults[name],
-                msg=(f"start_conversion's default for {name!r} "
-                     f"({start_default!r}) no longer matches "
-                     f"ConversionRequest's ({request_defaults[name]!r})"))
+    There is no longer a defaults-agreement test here: start_conversion used
+    to declare a second copy of every encoder default, so a test read its
+    signature via inspect to catch drift. start(request, view) takes no such
+    parameters, which makes ConversionRequest's dataclass defaults the only
+    declaration -- there is nothing left for them to diverge from.
+    """
 
     def test_request_is_frozen(self):
         r = _req()
@@ -98,62 +86,38 @@ class TestConstructTakesRequest(unittest.TestCase):
             use_gpu=False, open_after_conversion=False,
             tonemapper='hable', quality=18, bit_depth=10)
         with patch('src.conversion.vulkan_libplacebo_available', return_value=False):
-            cmd = m.construct_ffmpeg_command(req, self._PROPS)
+            cmd = m.construct_ffmpeg_command(req, self._PROPS, _view())
         self.assertIn('libx264', cmd)
         self.assertIn('yuv420p10le', cmd)
         self.assertIn('18', cmd)
         self.assertIn('hable', ' '.join(cmd))
 
 
-class TestConversionUI(unittest.TestCase):
-
-    def test_on_complete_defaults_to_none(self):
-        """on_complete is None in single-file mode; batch mode supplies it.
-        _start reads this to decide whether guards may show a dialog."""
-        self.assertIsNone(_ui().on_complete)
-
-    def test_ui_is_frozen(self):
-        ui = _ui()
-        with self.assertRaises(FrozenInstanceError):
-            ui.cancel_button = MagicMock()  # type: ignore[misc]
-
-    def test_ui_holds_a_mutable_element_list_without_hashing(self):
-        """eq=False keeps ConversionUI from generating a __hash__ that would
-        raise on the interactable_elements list."""
-        ui = _ui(interactable_elements=[MagicMock(), MagicMock()])
-        self.assertEqual(len(ui.interactable_elements), 2)
-
-
 class TestMonitorAndCompletionTakeObjects(unittest.TestCase):
-    """Uses the module-level _req()/_ui() helpers from Task 1."""
+    """Uses the module-level _req()/_view() helpers."""
 
     def test_handle_completion_opens_output_from_the_request(self):
         """open_after_conversion and output_path both ride on the request now."""
         m = ConversionManager()
-        ui = _ui()
-        ui.gui_instance.root.after.side_effect = lambda _d, fn: fn()
+        view = _view()
         req = _req(output_path='done.mp4', open_after_conversion=True)
-        with patch('src.conversion.messagebox'), \
-             patch('src.conversion.webbrowser.open') as mock_open:
-            m.handle_completion(req, ui, [], 0)
-        mock_open.assert_called_once_with('done.mp4')
+        m.handle_completion(req, view, [], 0)
+        self.assertEqual(view.opened, ['done.mp4'])
 
     def test_handle_completion_batch_mode_calls_on_complete_not_dialog(self):
         m = ConversionManager()
         cb = MagicMock()
-        ui = _ui(on_complete=cb)
-        ui.gui_instance.root.after.side_effect = lambda _d, fn: fn()
-        with patch('src.conversion.messagebox') as mock_box:
-            m.handle_completion(_req(), ui, [], 0)
+        view = _view(on_complete=cb)
+        m.handle_completion(_req(), view, [], 0)
         cb.assert_called_once_with(True)
-        mock_box.showinfo.assert_not_called()
+        self.assertEqual(view.notices, [])
 
     def test_monitor_progress_returns_early_without_a_process(self):
         """The guard must survive the signature change -- monitor_progress runs
         on a worker thread and cancel_conversion can null self.process."""
         m = ConversionManager()
         m.process = None
-        m.monitor_progress(_req(), _ui(), 10.0)  # must not raise
+        m.monitor_progress(_req(), _view(), 10.0)  # must not raise
 
 
 class TestConversionManager(unittest.TestCase):
@@ -167,7 +131,7 @@ class TestConversionManager(unittest.TestCase):
 
     @patch('src.conversion.get_video_properties')
     @patch('src.conversion.subprocess.Popen')
-    def test_start_conversion_success(self, mock_popen, mock_get_props):
+    def test_start_success(self, mock_popen, mock_get_props):
         mock_get_props.return_value = {
             "width": 1920,
             "height": 1080,
@@ -188,175 +152,101 @@ class TestConversionManager(unittest.TestCase):
         mock_process.wait.return_value = 0
         mock_popen.return_value = mock_process
 
-        # Create a mocked GUI instance with a 'root' attribute
-        mock_gui = MagicMock()
-        mock_gui.root = MagicMock()
-        mock_gui.root.after = MagicMock()
-
-        progress_var = MagicMock()
-        interactable_elements = []
-        cancel_button = MagicMock()
-
         manager = ConversionManager()
-        manager.start_conversion(
-            'input.mp4',
-            'output.mkv',
-            2.2,
-            False,
-            progress_var,
-            interactable_elements,
-            mock_gui,
-            False,
-            cancel_button
-        )
+        manager.start(_req(input_path='input.mp4', output_path='output.mkv',
+                           gamma=2.2), _view())
 
         self.assertIsNotNone(manager.process)
         mock_popen.assert_called_once()
         mock_get_props.assert_called_once_with(os.path.abspath('input.mp4'))
 
-    @patch('src.conversion.messagebox.showinfo')  # Mock the showinfo popup
     @patch('src.conversion.subprocess.Popen')
-    def test_cancel_conversion(self, mock_popen, mock_showinfo):
+    def test_cancel_conversion(self, mock_popen):
         mock_process = MagicMock()
         mock_popen.return_value = mock_process
 
-        # Create a mock GUI instance with a 'root' attribute
-        mock_gui = MagicMock()
-        mock_gui.root = MagicMock()  # cleanup captures real destroy before the mock below
-        mock_gui.root.after = MagicMock()
-        mock_gui.root.destroy = MagicMock()
-
-        interactable_elements = []
-        cancel_button = MagicMock()
-
         manager = ConversionManager()
         manager.process = mock_process
-        manager._ui = _ui(gui_instance=mock_gui,
-                          interactable_elements=interactable_elements,
-                          cancel_button=cancel_button)
+        view = _view()
+        manager._view = view
         manager.cancel_conversion()
-
-        # Execute the scheduled callbacks
-        for call in mock_gui.root.after.call_args_list:
-            call[0][1]()  # Execute the callback function
 
         mock_process.terminate.assert_called_once()
         self.assertTrue(manager.cancelled)
-        mock_showinfo.assert_called_once_with("Cancelled", "Video conversion has been cancelled.")
+        self.assertEqual(view.notices, [Notice.info(
+            "Cancelled", "Video conversion has been cancelled.")])
 
-    @patch('src.conversion.messagebox.showwarning')
     @patch('src.conversion.get_video_properties')
-    def test_start_conversion_invalid_paths(self, mock_get_props, mock_showwarning):  # Swapped argument order
-        """Test start_conversion with invalid input or output paths."""
+    def test_start_rejects_invalid_paths(self, mock_get_props):
+        """Test start with invalid input or output paths."""
         manager = ConversionManager()
-        mock_gui = MagicMock()
-        mock_gui.root = MagicMock()
-        mock_gui.root.after = MagicMock()
-        progress_var = MagicMock()
-        interactable_elements = []
-        cancel_button = MagicMock()
+        view = _view()
 
-        manager.start_conversion('', 'output.mkv', 2.2, False, progress_var, interactable_elements, mock_gui, False, cancel_button)
-        mock_showwarning.assert_called_once_with(
-            "Warning", "Please select both an input file and specify an output file."
-        )
+        manager.start(_req(input_path=''), view)
+        self.assertEqual(view.notices, [Notice.warning(
+            "Warning", "Please select both an input file and specify an output file.")])
 
-        mock_showwarning.reset_mock()
-        manager.start_conversion('input.mp4', '', 2.2, False, progress_var, interactable_elements, mock_gui, False, cancel_button)
-        self.assertEqual(mock_showwarning.call_count, 1)
-        mock_showwarning.assert_called_with(
-            "Warning", "Please select both an input file and specify an output file."
-        )
-        
+        view = _view()
+        manager.start(_req(output_path=''), view)
+        self.assertEqual(view.notices, [Notice.warning(
+            "Warning", "Please select both an input file and specify an output file.")])
+
         # Verify get_video_properties was never called at the end
         mock_get_props.assert_not_called()
 
     @patch('src.utils.FFMPEG_EXECUTABLE', 'ffmpeg')  # Patch FFMPEG_EXECUTABLE to be a string
-    @patch('src.conversion.messagebox.showwarning')  # Mock the showwarning popup
     @patch('src.conversion.get_video_properties')
-    def test_start_conversion_no_properties(self, mock_get_props, mock_showwarning):
-        """Test start_conversion when get_video_properties returns None."""
+    def test_start_no_properties(self, mock_get_props):
+        """Test start when get_video_properties returns None."""
         mock_get_props.return_value = None
         manager = ConversionManager()
-        mock_gui = MagicMock()
-        mock_gui.root = MagicMock()
-        mock_gui.root.after = MagicMock()
-        progress_var = MagicMock()
-        interactable_elements = []
-        cancel_button = MagicMock()
+        view = _view()
 
         input_path = 'input.mp4'
 
-        manager.start_conversion(input_path, 'output.mkv', 2.2, False, progress_var,
-                               interactable_elements, mock_gui, False, cancel_button)
-        mock_showwarning.assert_called_once_with(
-            "Warning", "Failed to retrieve video properties."
-        )
+        manager.start(_req(input_path=input_path, output_path='output.mkv',
+                           gamma=2.2), view)
+        self.assertEqual(view.notices, [Notice.warning(
+            "Warning", "Failed to retrieve video properties.")])
         self.assertIsNone(manager.process)
         mock_get_props.assert_called_once_with(os.path.abspath(input_path))
 
-    @patch('src.conversion.messagebox.showinfo')  # Mock the showinfo popup
-    @patch('src.conversion.webbrowser.open')
-    def test_handle_completion_success(self, mock_webbrowser_open, mock_showinfo):
+    def test_handle_completion_success(self):
         """Test handle_completion for a successful conversion."""
         manager = ConversionManager()
         error_messages = []
+        view = _view()
 
-        # Create a mock GUI instance with a 'root' attribute
-        mock_gui = MagicMock()
-        mock_gui.root = MagicMock()
-        mock_gui.root.after = MagicMock(side_effect=lambda delay, func: func())
+        manager.handle_completion(
+            _req(output_path='output.mkv', open_after_conversion=True),
+            view, error_messages, 0
+        )
 
-        cancel_button = MagicMock()
-        cancel_button.grid_remove = MagicMock()
+        self.assertEqual(view.notices, [Notice.info(
+            "Success", "Conversion complete! Output saved to: output.mkv")])
+        self.assertEqual(view.opened, ['output.mkv'])
+        self.assertEqual(view.inputs_enabled, [True])
+        self.assertEqual(view.cancel_visible, [False])
 
-        with patch.object(manager, 'enable_ui') as mock_enable_ui:
-            manager.handle_completion(
-                _req(output_path='output.mkv', open_after_conversion=True),
-                ConversionUI(gui_instance=mock_gui, progress_var=MagicMock(),
-                             interactable_elements=[], cancel_button=cancel_button),
-                error_messages, 0
-            )
-
-            mock_showinfo.assert_called_once_with(
-                "Success", "Conversion complete! Output saved to: output.mkv"
-            )
-            mock_webbrowser_open.assert_called_once_with('output.mkv')
-            mock_enable_ui.assert_called_once_with([])
-            cancel_button.grid_remove.assert_called_once()
-
-    @patch('src.conversion.messagebox.showerror')  # Mock the showerror popup
-    def test_handle_completion_failure(self, mock_showerror):
+    def test_handle_completion_failure(self):
         """Test handle_completion for a failed conversion."""
         manager = ConversionManager()
         error_messages = ['error message']
-
-        # Create a mock GUI instance with a 'root' attribute
-        mock_gui = MagicMock()
-        mock_gui.root = MagicMock()
-        mock_gui.root.after = MagicMock(side_effect=lambda delay, func: func())
-
-        cancel_button = MagicMock()
-        cancel_button.grid_remove = MagicMock()
+        view = _view()
 
         manager.cancelled = False  # Ensure it's not cancelled
 
-        with patch.object(manager, 'enable_ui') as mock_enable_ui:
-            manager.handle_completion(
-                _req(output_path='output.mkv', open_after_conversion=False),
-                ConversionUI(gui_instance=mock_gui, progress_var=MagicMock(),
-                             interactable_elements=[], cancel_button=cancel_button),
-                error_messages, 1
-            )
+        manager.handle_completion(
+            _req(output_path='output.mkv', open_after_conversion=False),
+            view, error_messages, 1
+        )
 
-            mock_showerror.assert_called_once_with(
-                "Error", f"Conversion failed with code 1\nerror message"
-            )
-            mock_enable_ui.assert_called_once_with([])
-            cancel_button.grid_remove.assert_called_once()
+        self.assertEqual(view.notices, [Notice.error(
+            "Error", "Conversion failed with code 1\nerror message")])
+        self.assertEqual(view.inputs_enabled, [True])
+        self.assertEqual(view.cancel_visible, [False])
 
-    @patch('src.conversion.messagebox.showerror')
-    def test_handle_completion_truncates_long_error_output(self, mock_showerror):
+    def test_handle_completion_truncates_long_error_output(self):
         """Error dialog must show only the last 50 stderr lines, not all of them.
 
         ffmpeg emits progress lines for every decoded frame; for a long
@@ -368,23 +258,14 @@ class TestConversionManager(unittest.TestCase):
         spam = [f"frame={i} fps=30 time=00:00:{i:02d}.00" for i in range(190)]
         real_errors = ["Error: something went wrong", "Error: codec not found"]
         error_messages = spam + real_errors
+        view = _view()
 
-        mock_gui = MagicMock()
-        mock_gui.root = MagicMock()
-        mock_gui.root.after = MagicMock(side_effect=lambda delay, func: func())
-        cancel_button = MagicMock()
-        cancel_button.grid_remove = MagicMock()
+        manager.handle_completion(
+            _req(output_path='out.mkv', open_after_conversion=False),
+            view, error_messages, 1
+        )
 
-        with patch.object(manager, 'enable_ui'):
-            manager.handle_completion(
-                _req(output_path='out.mkv', open_after_conversion=False),
-                ConversionUI(gui_instance=mock_gui, progress_var=MagicMock(),
-                             interactable_elements=[], cancel_button=cancel_button),
-                error_messages, 1
-            )
-
-        call_args = mock_showerror.call_args[0]
-        shown_text = call_args[1]
+        shown_text = view.notices[0].body
         # Strip the "Conversion failed with code X" header line
         content_lines = shown_text.split('\n')[1:]
         self.assertLessEqual(len(content_lines), 50,
@@ -392,53 +273,49 @@ class TestConversionManager(unittest.TestCase):
         self.assertIn("Error: something went wrong", shown_text)
         self.assertIn("Error: codec not found", shown_text)
 
-    @patch('src.conversion.messagebox.showwarning')
-    def test_verify_paths(self, mock_showwarning):
+    def test_verify_paths(self):
         """Test verify_paths method with various inputs."""
         manager = ConversionManager()
-        self.assertFalse(manager.verify_paths('', 'output.mkv'))
-        mock_showwarning.assert_called_once_with(
-            "Warning", "Please select both an input file and specify an output file."
-        )
+        view = _view()
+        self.assertFalse(manager.verify_paths('', 'output.mkv', view))
+        self.assertEqual(view.notices, [Notice.warning(
+            "Warning", "Please select both an input file and specify an output file.")])
 
-        mock_showwarning.reset_mock()
-        self.assertFalse(manager.verify_paths('input.mp4', ''))
-        mock_showwarning.assert_called_once_with(
-            "Warning", "Please select both an input file and specify an output file."
-        )
+        view = _view()
+        self.assertFalse(manager.verify_paths('input.mp4', '', view))
+        self.assertEqual(view.notices, [Notice.warning(
+            "Warning", "Please select both an input file and specify an output file.")])
 
-        mock_showwarning.reset_mock()
-        self.assertTrue(manager.verify_paths('input.mp4', 'output.mkv'))
-        mock_showwarning.assert_not_called()
+        view = _view()
+        self.assertTrue(manager.verify_paths('input.mp4', 'output.mkv', view))
+        self.assertEqual(view.notices, [])
 
-    @patch('src.conversion.messagebox.showwarning')
-    def test_verify_paths_rejects_same_input_and_output(self, mock_showwarning):
+    def test_verify_paths_rejects_same_input_and_output(self):
         """Output path must not resolve to the same file as the input -- ffmpeg
         would read and overwrite the source simultaneously, corrupting it."""
         manager = ConversionManager()
-        self.assertFalse(manager.verify_paths('video.mp4', 'video.mp4'))
-        mock_showwarning.assert_called_once_with(
-            "Warning", "Input and output file cannot be the same."
-        )
+        view = _view()
+        self.assertFalse(manager.verify_paths('video.mp4', 'video.mp4', view))
+        self.assertEqual(view.notices, [Notice.warning(
+            "Warning", "Input and output file cannot be the same.")])
 
-        mock_showwarning.reset_mock()
-        self.assertFalse(manager.verify_paths('./video.mp4', 'video.mp4'))
-        mock_showwarning.assert_called_once_with(
-            "Warning", "Input and output file cannot be the same."
-        )
+        view = _view()
+        self.assertFalse(manager.verify_paths('./video.mp4', 'video.mp4', view))
+        self.assertEqual(view.notices, [Notice.warning(
+            "Warning", "Input and output file cannot be the same.")])
 
     @unittest.skipUnless(sys.platform == 'win32', "NTFS case-insensitivity is Windows-only")
-    @patch('src.conversion.messagebox.showwarning')
-    def test_verify_paths_rejects_case_variant_of_same_file(self, mock_showwarning):
+    def test_verify_paths_rejects_case_variant_of_same_file(self):
         """NTFS is case-insensitive, so 'movie.mp4' and 'Movie.mp4' are the
         same file on disk. os.path.abspath alone doesn't normalize case, so
         without normcase this guard would pass and ffmpeg (-y) would read and
         write the same file at once, corrupting the source."""
         manager = ConversionManager()
-        self.assertFalse(manager.verify_paths('C:/videos/movie.mp4', 'C:/videos/Movie.mp4'))
-        mock_showwarning.assert_called_once_with(
-            "Warning", "Input and output file cannot be the same."
-        )
+        view = _view()
+        self.assertFalse(
+            manager.verify_paths('C:/videos/movie.mp4', 'C:/videos/Movie.mp4', view))
+        self.assertEqual(view.notices, [Notice.warning(
+            "Warning", "Input and output file cannot be the same.")])
 
     def test_parse_time(self):
         """Test parse_time method."""
@@ -446,35 +323,6 @@ class TestConversionManager(unittest.TestCase):
         self.assertEqual(manager.parse_time('01:30:15.50'), 5415.5)
         self.assertEqual(manager.parse_time('00:00:00.00'), 0.0)
         self.assertEqual(manager.parse_time('10:20:30.40'), 37230.4)
-
-    @patch('src.conversion.messagebox.showwarning')
-    def test_disable_enable_ui(self, mock_showwarning):
-        """Test disable_ui and enable_ui methods."""
-        elements = [MagicMock(), MagicMock()]
-        manager = ConversionManager()
-
-        manager.disable_ui(elements)
-        for element in elements:
-            element.config.assert_called_with(state="disabled")
-
-        manager.enable_ui(elements)
-        for element in elements:
-            element.config.assert_called_with(state="normal")
-
-    def test_enable_ui_restores_comboboxes_to_readonly_not_normal(self):
-        """format_combobox/quality_mode_combobox are built with
-        state='readonly' specifically so users can't type into them --
-        format_var.get() flows straight into the output filename. Restoring
-        them to 'normal' on conversion completion would make that string
-        user-editable and let a typo become the literal output extension."""
-        combobox = MagicMock(spec=ttk.Combobox)
-        button = MagicMock(spec=ttk.Button)
-        manager = ConversionManager()
-
-        manager.enable_ui([combobox, button])
-
-        combobox.config.assert_called_once_with(state="readonly")
-        button.config.assert_called_once_with(state="normal")
 
     @patch('src.conversion.subprocess.Popen')
     def test_start_ffmpeg_process_non_windows(self, mock_popen):
@@ -539,7 +387,7 @@ class TestConversionManager(unittest.TestCase):
         }
         cmd = manager.construct_ffmpeg_command(
             _req(input_path='input.mp4', output_path='output.mkv', gamma=2.2,
-                 use_gpu=True), properties
+                 use_gpu=True), properties, _view()
         )
         self.assertIn('-hwaccel', cmd)
         self.assertIn('cuda', cmd)
@@ -561,7 +409,8 @@ class TestConversionManager(unittest.TestCase):
         expected_filter = FFMPEG_CONVERT_FILTER.format(
             gamma=gamma, tonemapper=tonemapper, lut_path=get_lut_filter_path())
         cmd = manager.construct_ffmpeg_command(
-            _req(input_path='input.mp4', output_path='output.mkv', gamma=gamma), properties)
+            _req(input_path='input.mp4', output_path='output.mkv', gamma=gamma),
+            properties, _view())
         expected_cmd = [
             FFMPEG_EXECUTABLE, '-loglevel', 'info',
             '-i', os.path.normpath('input.mp4'),
@@ -585,9 +434,11 @@ class TestConversionManager(unittest.TestCase):
         ]
         self.assertEqual(cmd, expected_cmd)
 
+    _UNSUPPORTED_PLATFORM_NOTICE = Notice.warning(
+        "Warning", "GPU acceleration is not supported on this platform.")
+
     @patch('src.conversion.platform.system', return_value='Darwin')
-    @patch('src.conversion.messagebox.showwarning')
-    def test_construct_command_gpu_unsupported_platform(self, mock_warn, _plat):
+    def test_construct_command_gpu_unsupported_platform(self, _plat):
         """On non-Windows/Linux, requesting GPU warns and falls back to CPU."""
         manager = ConversionManager()
         manager._gpu_encoder = 'h264_nvenc'
@@ -596,15 +447,15 @@ class TestConversionManager(unittest.TestCase):
             "duration": 120.0, "audio_codec": "aac", "audio_bit_rate": 128000,
             "subtitle_streams": [],
         }
-        cmd = manager.construct_ffmpeg_command(_req(gamma=2.2, use_gpu=True), props)
-        mock_warn.assert_called_once()
+        view = _view()
+        cmd = manager.construct_ffmpeg_command(_req(gamma=2.2, use_gpu=True), props, view)
+        self.assertEqual(view.notices, [self._UNSUPPORTED_PLATFORM_NOTICE])
         self.assertIn('libx264', cmd)
         self.assertNotIn('h264_nvenc', cmd)
         self.assertNotIn('-hwaccel', cmd)
 
     @patch('src.conversion.platform.system', return_value='Darwin')
-    @patch('src.conversion.messagebox.showwarning')
-    def test_construct_command_qsv_unsupported_platform(self, mock_warn, _plat):
+    def test_construct_command_qsv_unsupported_platform(self, _plat):
         """On non-Windows/Linux, h264_qsv warns and falls back to CPU encoder."""
         manager = ConversionManager()
         manager._gpu_encoder = 'h264_qsv'
@@ -613,15 +464,15 @@ class TestConversionManager(unittest.TestCase):
             "duration": 120.0, "audio_codec": "aac", "audio_bit_rate": 128000,
             "subtitle_streams": [],
         }
-        cmd = manager.construct_ffmpeg_command(_req(gamma=2.2, use_gpu=True), props)
-        mock_warn.assert_called_once()
+        view = _view()
+        cmd = manager.construct_ffmpeg_command(_req(gamma=2.2, use_gpu=True), props, view)
+        self.assertEqual(view.notices, [self._UNSUPPORTED_PLATFORM_NOTICE])
         self.assertIn('libx264', cmd)
         self.assertNotIn('h264_qsv', cmd)
         self.assertNotIn('-hwaccel', cmd)
 
     @patch('src.conversion.platform.system', return_value='Darwin')
-    @patch('src.conversion.messagebox.showwarning')
-    def test_construct_command_amf_unsupported_platform(self, mock_warn, _plat):
+    def test_construct_command_amf_unsupported_platform(self, _plat):
         """On non-Windows/Linux, h264_amf warns and falls back to CPU encoder."""
         manager = ConversionManager()
         manager._gpu_encoder = 'h264_amf'
@@ -630,14 +481,14 @@ class TestConversionManager(unittest.TestCase):
             "duration": 120.0, "audio_codec": "aac", "audio_bit_rate": 128000,
             "subtitle_streams": [],
         }
-        cmd = manager.construct_ffmpeg_command(_req(gamma=2.2, use_gpu=True), props)
-        mock_warn.assert_called_once()
+        view = _view()
+        cmd = manager.construct_ffmpeg_command(_req(gamma=2.2, use_gpu=True), props, view)
+        self.assertEqual(view.notices, [self._UNSUPPORTED_PLATFORM_NOTICE])
         self.assertIn('libx264', cmd)
         self.assertNotIn('h264_amf', cmd)
 
     @patch('src.conversion.platform.system', return_value='Darwin')
-    @patch('src.conversion.messagebox.showwarning')
-    def test_construct_command_unknown_encoder_unsupported_platform(self, mock_warn, _plat):
+    def test_construct_command_unknown_encoder_unsupported_platform(self, _plat):
         """On non-Windows/Linux, an unrecognised GPU encoder warns and falls back to CPU."""
         manager = ConversionManager()
         manager._gpu_encoder = 'h264_unknown_gpu'
@@ -646,8 +497,9 @@ class TestConversionManager(unittest.TestCase):
             "duration": 120.0, "audio_codec": "aac", "audio_bit_rate": 128000,
             "subtitle_streams": [],
         }
-        cmd = manager.construct_ffmpeg_command(_req(gamma=2.2, use_gpu=True), props)
-        mock_warn.assert_called_once()
+        view = _view()
+        cmd = manager.construct_ffmpeg_command(_req(gamma=2.2, use_gpu=True), props, view)
+        self.assertEqual(view.notices, [self._UNSUPPORTED_PLATFORM_NOTICE])
         self.assertIn('libx264', cmd)
         self.assertNotIn('h264_unknown_gpu', cmd)
 
@@ -660,27 +512,27 @@ class TestConversionManager(unittest.TestCase):
     def test_quality_sets_crf_for_cpu(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            _req(gamma=2.2, quality=19), self._QUALITY_PROPS)
+            _req(gamma=2.2, quality=19), self._QUALITY_PROPS, _view())
         self.assertEqual(cmd[cmd.index('-crf') + 1], '19')
 
     def test_quality_default_is_23(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            _req(gamma=2.2), self._QUALITY_PROPS)
+            _req(gamma=2.2), self._QUALITY_PROPS, _view())
         self.assertEqual(cmd[cmd.index('-crf') + 1], '23')
 
     def test_quality_sets_cq_for_nvenc(self):
         manager = ConversionManager()
         manager._gpu_encoder = 'h264_nvenc'
         cmd = manager.construct_ffmpeg_command(
-            _req(gamma=2.2, use_gpu=True, quality=18), self._QUALITY_PROPS)
+            _req(gamma=2.2, use_gpu=True, quality=18), self._QUALITY_PROPS, _view())
         self.assertEqual(cmd[cmd.index('-cq') + 1], '18')
 
     def test_quality_sets_global_quality_for_qsv(self):
         manager = ConversionManager()
         manager._gpu_encoder = 'h264_qsv'
         cmd = manager.construct_ffmpeg_command(
-            _req(gamma=2.2, use_gpu=True, quality=27), self._QUALITY_PROPS)
+            _req(gamma=2.2, use_gpu=True, quality=27), self._QUALITY_PROPS, _view())
         self.assertEqual(cmd[cmd.index('-global_quality') + 1], '27')
 
     @patch('src.conversion.platform.system', return_value='Windows')
@@ -688,7 +540,7 @@ class TestConversionManager(unittest.TestCase):
         manager = ConversionManager()
         manager._gpu_encoder = 'h264_amf'
         cmd = manager.construct_ffmpeg_command(
-            _req(gamma=2.2, use_gpu=True, quality=22), self._QUALITY_PROPS)
+            _req(gamma=2.2, use_gpu=True, quality=22), self._QUALITY_PROPS, _view())
         self.assertIn('h264_amf', cmd)
         self.assertEqual(cmd[cmd.index('-qp_i') + 1], '22')
         self.assertEqual(cmd[cmd.index('-qp_p') + 1], '22')
@@ -722,47 +574,42 @@ class TestConversionManager(unittest.TestCase):
              patch('src.conversion.vulkan_libplacebo_available', return_value=False):
             self.assertFalse(manager.is_gpu_acceleration_available())
 
-    @patch('src.conversion.messagebox.showwarning')
     @patch('src.conversion.subprocess.Popen')
     @patch('src.conversion.get_video_properties')
-    def test_start_conversion_zero_duration_aborts(self, mock_get_props, mock_popen, mock_showwarning):
+    def test_start_zero_duration_aborts(self, mock_get_props, mock_popen):
         """A zero-duration file must abort before the monitor thread can divide by zero."""
         mock_get_props.return_value = {
             "width": 1920, "height": 1080, "bit_rate": 4000000,
             "codec_name": 'h264', "frame_rate": 30.0, "audio_codec": 'aac',
             "audio_bit_rate": 128000, "duration": 0, "subtitle_streams": []
         }
-        mock_gui = MagicMock()
-        progress_var = MagicMock()
+        view = _view()
 
         manager = ConversionManager()
-        manager.start_conversion('input.mp4', 'output.mkv', 2.2, False,
-                                 progress_var, [], mock_gui, False, MagicMock())
+        manager.start(_req(input_path='input.mp4', output_path='output.mkv',
+                           gamma=2.2), view)
 
-        mock_showwarning.assert_called_once()
-        self.assertIn("duration", mock_showwarning.call_args[0][1].lower())
+        self.assertEqual(len(view.notices), 1)
+        self.assertIn("duration", view.notices[0].body.lower())
         mock_popen.assert_not_called()  # never launched ffmpeg
         self.assertIsNone(manager.process)
 
 
-class TestCancelUsesStoredUI(unittest.TestCase):
+class TestCancelUsesStoredView(unittest.TestCase):
 
     def test_cancel_terminates_and_restores_ui(self):
         m = ConversionManager()
         proc = MagicMock()
         m.process = proc
-        gui = MagicMock()
-        btn = MagicMock()
-        m._ui = ConversionUI(gui_instance=gui, progress_var=MagicMock(),
-                             interactable_elements=[], cancel_button=btn)
-        with patch('src.conversion.messagebox'):
-            m.cancel_conversion()
+        view = _view()
+        m._view = view
+        m.cancel_conversion()
         proc.terminate.assert_called_once()
         self.assertIs(m.cancelled, True)
-        btn.grid_remove.assert_called_once()
+        self.assertEqual(view.cancel_visible, [False])
 
     def test_cancel_before_any_conversion_is_a_no_op(self):
-        """_ui is None until the first conversion starts."""
+        """_view is None until the first conversion starts."""
         m = ConversionManager()
         m.cancel_conversion()  # must not raise
         self.assertIs(m.cancelled, True)
@@ -777,63 +624,48 @@ class TestBatchCompletionHook(unittest.TestCase):
         "duration": 10.0, "subtitle_streams": [],
     }
 
-    def _gui(self):
-        gui = MagicMock()
-        gui.root.after = MagicMock(side_effect=lambda delay, func: func())
-        return gui
-
-    @patch('src.conversion.messagebox')
-    @patch('src.conversion.webbrowser.open')
-    def test_on_complete_called_instead_of_dialog_on_success(self, mock_open, mock_mb):
+    def test_on_complete_called_instead_of_dialog_on_success(self):
         manager = ConversionManager()
         done = MagicMock()
-        ui = ConversionUI(gui_instance=self._gui(), progress_var=MagicMock(),
-                          interactable_elements=[], cancel_button=MagicMock(),
-                          on_complete=done)
-        manager.handle_completion(_req(output_path='out.mkv'), ui, [], 0)
+        view = _view(on_complete=done)
+        manager.handle_completion(_req(output_path='out.mkv'), view, [], 0)
         done.assert_called_once_with(True)
-        mock_mb.showinfo.assert_not_called()  # no per-file success dialog
+        self.assertEqual(view.notices, [])  # no per-file success dialog
+        self.assertEqual(view.opened, [])
 
-    @patch('src.conversion.messagebox')
-    def test_on_complete_called_with_false_on_failure(self, mock_mb):
+    def test_on_complete_called_with_false_on_failure(self):
         manager = ConversionManager()
         manager.cancelled = False
         done = MagicMock()
-        ui = ConversionUI(gui_instance=self._gui(), progress_var=MagicMock(),
-                          interactable_elements=[], cancel_button=MagicMock(),
-                          on_complete=done)
-        manager.handle_completion(_req(output_path='out.mkv'), ui, ['err'], 1)
+        view = _view(on_complete=done)
+        manager.handle_completion(_req(output_path='out.mkv'), view, ['err'], 1)
         done.assert_called_once_with(False)
-        mock_mb.showerror.assert_not_called()  # no per-file error dialog
+        self.assertEqual(view.notices, [])  # no per-file error dialog
 
-    @patch('src.conversion.messagebox')
-    def test_on_complete_does_not_enable_ui_between_files(self, mock_mb):
+    def test_on_complete_does_not_enable_ui_between_files(self):
         # Between queued files the UI must stay disabled and the cancel button shown.
         manager = ConversionManager()
         done = MagicMock()
-        cancel = MagicMock()
-        ui = ConversionUI(gui_instance=self._gui(), progress_var=MagicMock(),
-                          interactable_elements=['e'], cancel_button=cancel,
-                          on_complete=done)
-        with patch.object(manager, 'enable_ui') as mock_enable:
-            manager.handle_completion(_req(output_path='out.mkv'), ui, [], 0)
-        mock_enable.assert_not_called()
-        cancel.grid_remove.assert_not_called()
+        view = _view(on_complete=done)
+        manager.handle_completion(_req(output_path='out.mkv'), view, [], 0)
+        self.assertEqual(view.inputs_enabled, [])
+        self.assertEqual(view.cancel_visible, [])
 
-class TestStartConversionSignalsFailureOnEarlyReturn(unittest.TestCase):
-    """Every guard in start_conversion that bails out before launching ffmpeg
-    must still report failure to the caller: return False, and -- when an
-    on_complete callback was supplied (the batch/queue path) -- call it with
-    False. Without this, a batch item that hits one of these guards is left
-    stuck at 'Converting' forever (nothing ever advances the queue), and a
-    single-file caller has no way to tell the attempt never started.
+class TestStartSignalsFailureOnEarlyReturn(unittest.TestCase):
+    """Every guard in start that bails out before launching ffmpeg must still
+    report failure to the caller: return False, and -- when an on_complete
+    callback was supplied (the batch/queue path) -- call it with False.
+    Without this, a batch item that hits one of these guards is left stuck at
+    'Converting' forever (nothing ever advances the queue), and a single-file
+    caller has no way to tell the attempt never started.
 
-    In batch mode these guards must also not pop a blocking messagebox --
-    _start_next_batch_item does no pre-validation of its own, so any of
-    these guards is reachable mid-unattended-batch-run; a modal dialog
-    nobody's watching for stalls the whole queue until someone clicks it,
-    defeating "queue it and walk away" semantics. Interactive (single-file)
-    mode keeps the dialog, since a human is right there to see it."""
+    Each guard also hands the view exactly one Notice. Whether that Notice
+    becomes a blocking modal or a log line is the view's decision, not this
+    module's -- _start_next_batch_item does no pre-validation of its own, so
+    any of these guards is reachable mid-unattended-batch-run, and a modal
+    nobody's watching for stalls the whole queue until someone clicks it.
+    BatchConversionView is what turns these into log lines; see
+    test/tk_conversion_view_test.py."""
 
     _PROPS = {
         "width": 1920, "height": 1080, "bit_rate": 4000000, "codec_name": 'h264',
@@ -841,54 +673,41 @@ class TestStartConversionSignalsFailureOnEarlyReturn(unittest.TestCase):
         "duration": 120.0, "subtitle_streams": [],
     }
 
-    def _assert_guard_signals_failure(self, *args, **kwargs):
-        """Common shape shared by every early-return guard: start_conversion
-        returns False and calls on_complete(False) without popping a dialog."""
+    def _assert_guard_signals_failure(self, request):
+        """Common shape shared by every early-return guard: start returns
+        False, calls on_complete(False), and notifies the view exactly once."""
         manager = ConversionManager()
         done = MagicMock()
-        result = manager.start_conversion(*args, on_complete=done, **kwargs)
+        view = _view(on_complete=done)
+        result = manager.start(request, view)
         self.assertFalse(result)
         done.assert_called_once_with(False)
+        self.assertEqual(len(view.notices), 1)
 
-    @patch('src.conversion.messagebox.showwarning')
-    def test_invalid_paths_signals_failure(self, mock_warn):
+    def test_invalid_paths_signals_failure(self):
+        self._assert_guard_signals_failure(_req(input_path=''))
+
+    def test_bit_depth_incompatibility_signals_failure(self):
         self._assert_guard_signals_failure(
-            '', 'output.mkv', 2.2, False, MagicMock(), [], MagicMock(), False, MagicMock())
-        mock_warn.assert_not_called()  # batch mode: no blocking dialog
+            _req(output_path='out.m4v', bit_depth=10))
 
-    @patch('src.conversion.messagebox.showwarning')
-    def test_bit_depth_incompatibility_signals_failure(self, mock_warn):
-        self._assert_guard_signals_failure(
-            'in.mp4', 'out.m4v', 2.2, False, MagicMock(), [], MagicMock(), False, MagicMock(),
-            bit_depth=10)
-        mock_warn.assert_not_called()  # batch mode: no blocking dialog
-
-    @patch('src.conversion.messagebox.showwarning')
     @patch('src.conversion.get_video_properties', return_value=None)
-    def test_missing_properties_signals_failure(self, mock_props, mock_warn):
-        self._assert_guard_signals_failure(
-            'in.mp4', 'out.mkv', 2.2, False, MagicMock(), [], MagicMock(), False, MagicMock())
-        mock_warn.assert_not_called()  # batch mode: no blocking dialog
+    def test_missing_properties_signals_failure(self, mock_props):
+        self._assert_guard_signals_failure(_req())
 
-    @patch('src.conversion.messagebox.showwarning')
     @patch('src.conversion.get_video_properties')
-    def test_zero_duration_signals_failure(self, mock_props, mock_warn):
+    def test_zero_duration_signals_failure(self, mock_props):
         mock_props.return_value = dict(self._PROPS, duration=0)
-        self._assert_guard_signals_failure(
-            'in.mp4', 'out.mkv', 2.2, False, MagicMock(), [], MagicMock(), False, MagicMock())
-        mock_warn.assert_not_called()  # batch mode: no blocking dialog
+        self._assert_guard_signals_failure(_req())
 
-    @patch('src.conversion.messagebox.showwarning')
-    def test_early_return_without_on_complete_does_not_crash(self, mock_warn):
+    def test_early_return_without_on_complete_does_not_crash(self):
         """The single-file path passes no on_complete -- the None default
-        must not be called, and (unlike batch mode) the dialog still shows
-        since a human is present to see it."""
+        must not be called, and the guard's notice still reaches the view."""
         manager = ConversionManager()
-        result = manager.start_conversion(
-            '', 'output.mkv', 2.2, False, MagicMock(), [], MagicMock(),
-            False, MagicMock())
+        view = _view()
+        result = manager.start(_req(input_path=''), view)
         self.assertFalse(result)
-        mock_warn.assert_called_once()
+        self.assertEqual(len(view.notices), 1)
 
     @patch('src.conversion.subprocess.Popen')
     @patch('src.conversion.get_video_properties')
@@ -897,12 +716,8 @@ class TestStartConversionSignalsFailureOnEarlyReturn(unittest.TestCase):
         proc = MagicMock()
         proc.stderr = iter([])
         mock_popen.return_value = proc
-        mock_gui = MagicMock()
-        mock_gui.root.after = MagicMock()
         manager = ConversionManager()
-        result = manager.start_conversion(
-            'in.mp4', 'out.mkv', 2.2, False, MagicMock(), [], mock_gui,
-            False, MagicMock())
+        result = manager.start(_req(), _view())
         self.assertTrue(result)
 
 
@@ -978,7 +793,7 @@ class TestGpuEncoderCommandConstruction(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = encoder
         return m.construct_ffmpeg_command(
-            _req(use_gpu=True), props or self._BASE_PROPS)
+            _req(use_gpu=True), props or self._BASE_PROPS, _view())
 
     def test_amf_encoder_used_and_no_hwaccel(self):
         cmd = self._cmd('h264_amf')
@@ -996,7 +811,7 @@ class TestGpuEncoderCommandConstruction(unittest.TestCase):
     def test_nvenc_encoder_used_with_cuda_hwaccel(self):
         m = ConversionManager()
         m._gpu_encoder = 'h264_nvenc'
-        cmd = m.construct_ffmpeg_command(_req(use_gpu=True), self._BASE_PROPS)
+        cmd = m.construct_ffmpeg_command(_req(use_gpu=True), self._BASE_PROPS, _view())
         self.assertIn('h264_nvenc', cmd)
         self.assertIn('cuda', cmd)
         self.assertIn('-hwaccel', cmd)
@@ -1027,7 +842,7 @@ class TestGpuEncoderCommandConstruction(unittest.TestCase):
         # _gpu_encoder starts None (fresh __init__, settings loaded with gpu_accel=True)
         self.assertIsNone(m._gpu_encoder)
         with patch.object(m, 'detect_gpu_encoder', return_value='h264_nvenc') as mock_detect:
-            cmd = m.construct_ffmpeg_command(_req(use_gpu=True), self._BASE_PROPS)
+            cmd = m.construct_ffmpeg_command(_req(use_gpu=True), self._BASE_PROPS, _view())
         mock_detect.assert_called_once()
         self.assertIn('h264_nvenc', cmd)
 
@@ -1059,27 +874,27 @@ class TestBitDepthPixelFormat(unittest.TestCase):
 
     def test_eight_bit_appends_yuv420p(self):
         manager = ConversionManager()
-        cmd = manager.construct_ffmpeg_command(_req(gamma=2.2), self._PROPS)
+        cmd = manager.construct_ffmpeg_command(_req(gamma=2.2), self._PROPS, _view())
         self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p')
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'libx264')
 
     def test_ten_bit_appends_yuv420p10le_and_keeps_libx264(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            _req(gamma=2.2, bit_depth=10), self._PROPS)
+            _req(gamma=2.2, bit_depth=10), self._PROPS, _view())
         self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p10le')
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'libx264')
 
     def test_bit_depth_defaults_to_eight(self):
         """Omitting bit_depth entirely must not change the existing 8-bit behavior."""
         manager = ConversionManager()
-        cmd = manager.construct_ffmpeg_command(_req(gamma=2.2), self._PROPS)
+        cmd = manager.construct_ffmpeg_command(_req(gamma=2.2), self._PROPS, _view())
         self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p')
 
     def test_twelve_bit_switches_to_libx265_and_yuv420p12le(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            _req(gamma=2.2, bit_depth=12), self._PROPS)
+            _req(gamma=2.2, bit_depth=12), self._PROPS, _view())
         self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p12le')
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'libx265')
 
@@ -1089,7 +904,7 @@ class TestBitDepthPixelFormat(unittest.TestCase):
         veryfast/film'). It must never leak onto the libx265 path."""
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            _req(gamma=2.2, bit_depth=12), self._PROPS)
+            _req(gamma=2.2, bit_depth=12), self._PROPS, _view())
         self.assertNotIn('-tune', cmd)
 
     def test_twelve_bit_forces_cpu_even_when_gpu_requested(self):
@@ -1099,7 +914,7 @@ class TestBitDepthPixelFormat(unittest.TestCase):
         manager = ConversionManager()
         manager._gpu_encoder = 'h264_nvenc'
         cmd = manager.construct_ffmpeg_command(
-            _req(gamma=2.2, use_gpu=True, bit_depth=12), self._PROPS)
+            _req(gamma=2.2, use_gpu=True, bit_depth=12), self._PROPS, _view())
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'libx265')
         self.assertNotIn('-hwaccel', cmd)
 
@@ -1124,7 +939,7 @@ class TestHEVCSourcePreservation(unittest.TestCase):
     def test_hevc_source_cpu_path_uses_libx265_at_eight_bit(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            _req(input_path='in.mkv', gamma=2.2), self._HEVC_PROPS)
+            _req(input_path='in.mkv', gamma=2.2), self._HEVC_PROPS, _view())
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'libx265')
         self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p')
         self.assertNotIn('-tune', cmd)
@@ -1134,14 +949,14 @@ class TestHEVCSourcePreservation(unittest.TestCase):
         the source codec, not a blanket switch to HEVC for everyone."""
         manager = ConversionManager()
         props = dict(self._HEVC_PROPS, codec_name='h264')
-        cmd = manager.construct_ffmpeg_command(_req(gamma=2.2), props)
+        cmd = manager.construct_ffmpeg_command(_req(gamma=2.2), props, _view())
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'libx264')
 
     def test_hevc_source_gpu_path_swaps_to_hevc_nvenc_at_eight_bit(self):
         manager = ConversionManager()
         manager._gpu_encoder = 'h264_nvenc'
         cmd = manager.construct_ffmpeg_command(
-            _req(input_path='in.mkv', gamma=2.2, use_gpu=True), self._HEVC_PROPS)
+            _req(input_path='in.mkv', gamma=2.2, use_gpu=True), self._HEVC_PROPS, _view())
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'hevc_nvenc')
         self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p')
 
@@ -1150,7 +965,7 @@ class TestHEVCSourcePreservation(unittest.TestCase):
         manager._gpu_encoder = 'h264_nvenc'
         props = dict(self._HEVC_PROPS, codec_name='h264')
         cmd = manager.construct_ffmpeg_command(
-            _req(gamma=2.2, use_gpu=True), props)
+            _req(gamma=2.2, use_gpu=True), props, _view())
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'h264_nvenc')
 
 
@@ -1180,21 +995,21 @@ class TestHEVCContainerTag(unittest.TestCase):
     def test_twelve_bit_libx265_mp4_gets_hvc1_tag(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            _req(output_path='out.mp4', gamma=2.2, bit_depth=12), self._PROPS)
+            _req(output_path='out.mp4', gamma=2.2, bit_depth=12), self._PROPS, _view())
         self.assertEqual(self._tag_value(cmd), 'hvc1')
 
     def test_hevc_source_eight_bit_mp4_gets_hvc1_tag(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
             _req(input_path='in.mkv', output_path='out.mp4', gamma=2.2),
-            self._HEVC_PROPS)
+            self._HEVC_PROPS, _view())
         self.assertEqual(self._tag_value(cmd), 'hvc1')
 
     def test_hevc_source_mov_gets_hvc1_tag(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
             _req(input_path='in.mkv', output_path='out.mov', gamma=2.2),
-            self._HEVC_PROPS)
+            self._HEVC_PROPS, _view())
         self.assertEqual(self._tag_value(cmd), 'hvc1')
 
     def test_gpu_hevc_encoder_mp4_gets_hvc1_tag(self):
@@ -1204,20 +1019,20 @@ class TestHEVCContainerTag(unittest.TestCase):
         manager._gpu_encoder = 'h264_nvenc'
         cmd = manager.construct_ffmpeg_command(
             _req(output_path='out.mp4', gamma=2.2, use_gpu=True, bit_depth=10),
-            self._PROPS)
+            self._PROPS, _view())
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'hevc_nvenc')
         self.assertEqual(self._tag_value(cmd), 'hvc1')
 
     def test_mkv_output_gets_no_tag(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            _req(input_path='in.mkv', gamma=2.2, bit_depth=12), self._HEVC_PROPS)
+            _req(input_path='in.mkv', gamma=2.2, bit_depth=12), self._HEVC_PROPS, _view())
         self.assertNotIn('-tag:v', cmd)
 
     def test_h264_output_mp4_gets_no_tag(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            _req(output_path='out.mp4', gamma=2.2), self._PROPS)
+            _req(output_path='out.mp4', gamma=2.2), self._PROPS, _view())
         self.assertNotIn('-tag:v', cmd)
 
 
@@ -1244,7 +1059,7 @@ class TestBitDepthHardwareEncoderMapping(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = encoder
         return m.construct_ffmpeg_command(
-            _req(use_gpu=True, bit_depth=bit_depth), self._BASE_PROPS)
+            _req(use_gpu=True, bit_depth=bit_depth), self._BASE_PROPS, _view())
 
     def test_nvenc_maps_to_hevc_nvenc_p010le(self):
         cmd = self._cmd('h264_nvenc', bit_depth=10)
@@ -1305,22 +1120,17 @@ class TestBitDepthContainerGuardrail(unittest.TestCase):
         # An 8-bit .m4v output is perfectly normal; only >8-bit is the problem.
         self.assertIsNone(self.manager.validate_bit_depth_output('legacy.m4v', 8))
 
-    @patch('src.conversion.messagebox.showwarning')
     @patch('src.conversion.subprocess.Popen')
     @patch('src.conversion.get_video_properties')
-    def test_start_conversion_blocks_before_launching_ffmpeg(
-            self, mock_get_props, mock_popen, mock_showwarning):
+    def test_start_blocks_before_launching_ffmpeg(self, mock_get_props, mock_popen):
         """The GUI/batch entry point must warn and bail out -- never hand an
         invalid 10-bit + .m4v combination to subprocess.Popen."""
-        mock_gui = MagicMock()
-        progress_var = MagicMock()
-
         manager = ConversionManager()
-        manager.start_conversion(
-            'input.mp4', 'output.m4v', 2.2, False,
-            progress_var, [], mock_gui, False, MagicMock(), bit_depth=10)
+        view = _view()
+        manager.start(_req(input_path='input.mp4', output_path='output.m4v',
+                           gamma=2.2, bit_depth=10), view)
 
-        mock_showwarning.assert_called_once()
+        self.assertEqual(len(view.notices), 1)
         mock_popen.assert_not_called()
         mock_get_props.assert_not_called()  # bail out before even probing the file
         self.assertIsNone(manager.process)
@@ -1334,21 +1144,16 @@ class TestBitDepthContainerGuardrail(unittest.TestCase):
         otherwise every control is permanently stuck disabled with no way to
         recover short of restarting the app."""
         manager = ConversionManager()
-        mock_gui = MagicMock()
-        progress_var = MagicMock()
-        cancel_button = MagicMock()
-        elements = [MagicMock(), MagicMock()]
+        view = _view()
 
         with patch.object(manager, 'construct_ffmpeg_command',
                            side_effect=ValueError('boom')):
             with self.assertRaises(ValueError):
-                manager.start_conversion(
-                    'in.mp4', 'out.mp4', 1.0, False,
-                    progress_var, elements, mock_gui, False, cancel_button)
+                manager.start(_req(input_path='in.mp4', output_path='out.mp4'),
+                              view)
 
-        for el in elements:
-            el.config.assert_any_call(state='normal')
-        cancel_button.grid_remove.assert_called_once()
+        self.assertEqual(view.inputs_enabled, [False, True])
+        self.assertEqual(view.cancel_visible, [True, False])
 
 
 class TestContainerStreamArgs(unittest.TestCase):
@@ -1413,7 +1218,7 @@ class TestLibplaceboCommandConstruction(unittest.TestCase):
         m._gpu_encoder = 'h264_nvenc'
         cmd = m.construct_ffmpeg_command(
             _req(output_path='out.mp4', gamma=2.2, use_gpu=True, tonemapper='Hable'),
-            self._PROPS)
+            self._PROPS, _view())
         joined = ' '.join(cmd)
         self.assertIn('-init_hw_device', cmd)
         self.assertIn('vulkan=vk:0', cmd)
@@ -1430,7 +1235,7 @@ class TestLibplaceboCommandConstruction(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = 'h264_nvenc'
         cmd = ' '.join(m.construct_ffmpeg_command(
-            _req(output_path='out.mp4', use_gpu=True), self._PROPS))
+            _req(output_path='out.mp4', use_gpu=True), self._PROPS, _view()))
         self.assertNotIn('libplacebo', cmd)
         self.assertIn('zscale', cmd)
 
@@ -1438,7 +1243,7 @@ class TestLibplaceboCommandConstruction(unittest.TestCase):
     def test_cpu_path_when_gpu_toggle_off(self, _avail):
         m = ConversionManager()
         cmd = ' '.join(m.construct_ffmpeg_command(
-            _req(output_path='out.mp4'), self._PROPS))
+            _req(output_path='out.mp4'), self._PROPS, _view()))
         self.assertNotIn('libplacebo', cmd)
         self.assertIn('zscale', cmd)
         self.assertIn('libx264', cmd)
@@ -1460,7 +1265,7 @@ class TestGpuOnlyTonemapperSafetyNet(unittest.TestCase):
         m = ConversionManager()
         with self.assertRaises(ValueError) as ctx:
             m.construct_ffmpeg_command(
-                _req(use_gpu=True, tonemapper='BT.2390', bit_depth=12), self._PROPS)
+                _req(use_gpu=True, tonemapper='BT.2390', bit_depth=12), self._PROPS, _view())
         message = str(ctx.exception)
         self.assertIn('bt.2390', message)
         self.assertIn('GPU', message)
@@ -1471,7 +1276,7 @@ class TestGpuOnlyTonemapperSafetyNet(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = 'h264_nvenc'
         cmd = ' '.join(m.construct_ffmpeg_command(
-            _req(output_path='out.mp4', use_gpu=True, tonemapper='BT.2390'), self._PROPS))
+            _req(output_path='out.mp4', use_gpu=True, tonemapper='BT.2390'), self._PROPS, _view()))
         self.assertIn('tonemapping=bt.2390', cmd)
 
     @patch('src.conversion.vulkan_cuda_interop_available', return_value=False)
@@ -1480,7 +1285,7 @@ class TestGpuOnlyTonemapperSafetyNet(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = 'h264_nvenc'
         cmd = ' '.join(m.construct_ffmpeg_command(
-            _req(output_path='out.mp4', use_gpu=True, tonemapper='Spline'), self._PROPS))
+            _req(output_path='out.mp4', use_gpu=True, tonemapper='Spline'), self._PROPS, _view()))
         self.assertIn('tonemapping=spline', cmd)
 
 
@@ -1500,7 +1305,7 @@ class TestCudaVulkanInteropPath(unittest.TestCase):
         m._gpu_encoder = 'h264_nvenc'
         cmd = m.construct_ffmpeg_command(
             _req(input_path='in.mkv', output_path='out.mp4', use_gpu=True,
-                 tonemapper='mobius'), self._PROPS)
+                 tonemapper='mobius'), self._PROPS, _view())
         joined = ' '.join(cmd)
         self.assertIn('cuda=cu:0', joined)
         self.assertIn('vulkan=vk@cu', joined)
@@ -1517,7 +1322,7 @@ class TestCudaVulkanInteropPath(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = 'h264_nvenc'
         cmd = m.construct_ffmpeg_command(
-            _req(input_path='in.mkv', output_path='out.mp4', use_gpu=True), self._PROPS)
+            _req(input_path='in.mkv', output_path='out.mp4', use_gpu=True), self._PROPS, _view())
         joined = ' '.join(cmd)
         self.assertIn('vulkan=vk:0', joined)
         self.assertNotIn('vulkan=vk@cu', joined)
@@ -1531,7 +1336,7 @@ class TestCudaVulkanInteropPath(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = 'h264_amf'
         cmd = ' '.join(m.construct_ffmpeg_command(
-            _req(input_path='in.mkv', output_path='out.mp4', use_gpu=True), self._PROPS))
+            _req(input_path='in.mkv', output_path='out.mp4', use_gpu=True), self._PROPS, _view()))
         self.assertNotIn('cuda=cu:0', cmd)
         self.assertIn('vulkan=vk:0', cmd)
         self.assertIn('format=p010,hwupload', cmd)
@@ -1543,7 +1348,7 @@ class TestCudaVulkanInteropPath(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = 'h264_qsv'
         cmd = ' '.join(m.construct_ffmpeg_command(
-            _req(input_path='in.mkv', output_path='out.mp4', use_gpu=True), self._PROPS))
+            _req(input_path='in.mkv', output_path='out.mp4', use_gpu=True), self._PROPS, _view()))
         self.assertNotIn('cuda=cu:0', cmd)
         self.assertIn('vulkan=vk:0', cmd)
 
@@ -1552,7 +1357,7 @@ class TestCudaVulkanInteropPath(unittest.TestCase):
     def test_interop_not_used_when_gpu_disabled(self, _avail, _interop):
         m = ConversionManager()
         cmd = ' '.join(m.construct_ffmpeg_command(
-            _req(input_path='in.mkv', output_path='out.mp4'), self._PROPS))
+            _req(input_path='in.mkv', output_path='out.mp4'), self._PROPS, _view()))
         self.assertNotIn('cuda=cu:0', cmd)
         self.assertIn('zscale', cmd)
 
@@ -1564,7 +1369,7 @@ class TestCudaVulkanInteropPath(unittest.TestCase):
         m._gpu_encoder = 'h264_nvenc'
         cmd = ' '.join(m.construct_ffmpeg_command(
             _req(input_path='in.mkv', output_path='out.mp4', gamma=2.2, use_gpu=True,
-                 tonemapper='Hable'), self._PROPS))
+                 tonemapper='Hable'), self._PROPS, _view()))
         self.assertIn('tonemapping=hable', cmd)
         self.assertIn('peak_detect=1', cmd)
         self.assertIn('eq=gamma=2.2', cmd)
@@ -1578,7 +1383,7 @@ class TestCudaVulkanInteropPath(unittest.TestCase):
         m = ConversionManager()
         m._gpu_encoder = 'h264_nvenc'
         cmd = ' '.join(m.construct_ffmpeg_command(
-            _req(input_path='in.mkv', output_path='out.mp4', use_gpu=True), self._PROPS))
+            _req(input_path='in.mkv', output_path='out.mp4', use_gpu=True), self._PROPS, _view()))
         self.assertIn('hwdownload', cmd)
         self.assertIn('lut3d=file=', cmd)
         self.assertNotIn('hwmap=reverse=1:derive_device=cuda', cmd)
@@ -1592,7 +1397,7 @@ class TestCudaVulkanInteropPath(unittest.TestCase):
         m._gpu_encoder = 'h264_nvenc'
         cmd = ' '.join(m.construct_ffmpeg_command(
             _req(input_path='in.mkv', output_path='out.mp4', use_gpu=True,
-                 lut_enabled=False), self._PROPS))
+                 lut_enabled=False), self._PROPS, _view()))
         self.assertIn('hwmap=reverse=1:derive_device=cuda', cmd)
         self.assertNotIn('lut3d=file=', cmd)
 
@@ -1604,7 +1409,7 @@ class TestCudaVulkanInteropPath(unittest.TestCase):
         m._gpu_encoder = 'h264_nvenc'
         cmd = ' '.join(m.construct_ffmpeg_command(
             _req(input_path='in.mkv', output_path='out.mp4', use_gpu=True,
-                 lut_enabled=False), self._PROPS))
+                 lut_enabled=False), self._PROPS, _view()))
         self.assertNotIn('lut3d=file=', cmd)
         self.assertIn('format=p010,hwupload', cmd)
 
@@ -1628,12 +1433,6 @@ class TestMonitorProgressCancellationRace(unittest.TestCase):
         This case is RED today and turns GREEN once a stable local reference
         (proc = self.process) is captured at worker-thread entry.
     """
-
-    def _make_gui(self) -> MagicMock:
-        gui = MagicMock()
-        # Leave root.after as a plain MagicMock so _handle callbacks are recorded
-        # but never executed — we only care that monitor_progress itself doesn't crash.
-        return gui
 
     def test_process_nulled_between_loop_end_and_wait(self) -> None:
         """Race (b): AttributeError must not occur when self.process is cleared
@@ -1663,8 +1462,7 @@ class TestMonitorProgressCancellationRace(unittest.TestCase):
         try:
             manager.monitor_progress(
                 _req(output_path='out.mkv', open_after_conversion=False, gamma=2.2),
-                _ui(gui_instance=self._make_gui(), interactable_elements=[],
-                    cancel_button=MagicMock()),
+                _view(),
                 10.0,
             )
         except AttributeError as exc:
@@ -1696,8 +1494,7 @@ class TestMonitorProgressCancellationRace(unittest.TestCase):
         try:
             manager.monitor_progress(
                 _req(output_path='out.mkv', open_after_conversion=False, gamma=2.2),
-                _ui(gui_instance=self._make_gui(), interactable_elements=[],
-                    cancel_button=MagicMock()),
+                _view(),
                 10.0,
             )
         except AttributeError as exc:
@@ -1730,21 +1527,27 @@ class TestMonitorProgressCancellationRace(unittest.TestCase):
         mock_proc.returncode = 0
         manager.process = mock_proc
 
-        gui = MagicMock()
-        captured = {}
-        gui.root.after = MagicMock(
-            side_effect=lambda delay, func: captured.setdefault('cb', func))
+        class DeferringView(RecordingConversionView):
+            """Queues scheduled callbacks instead of running them inline, which
+            is the only way to hold the window open between monitor_progress
+            finishing and the handler actually running."""
 
-        with patch('src.conversion.messagebox'):
-            manager.monitor_progress(
-                _req(output_path='out.mkv', open_after_conversion=False, gamma=2.2),
-                _ui(gui_instance=gui, interactable_elements=[], cancel_button=MagicMock(),
-                    on_complete=done),
-                10.0)
-            # cancel_conversion races in right after monitor_progress decided
-            # the process succeeded, but before the scheduled handler runs.
-            manager.process = None
-            captured['cb']()
+            def __init__(self, **kwargs) -> None:
+                super().__init__(**kwargs)
+                self.deferred: list = []
+
+            def schedule(self, fn) -> None:
+                self.deferred.append(fn)
+
+        view = DeferringView(on_complete=done)
+        manager.monitor_progress(
+            _req(output_path='out.mkv', open_after_conversion=False, gamma=2.2),
+            view, 10.0)
+        # cancel_conversion races in right after monitor_progress decided
+        # the process succeeded, but before the scheduled handler runs.
+        manager.process = None
+        for callback in view.deferred:
+            callback()
 
         done.assert_called_once_with(True)
 
@@ -1757,11 +1560,6 @@ class TestGpuErrorDetectionFalsePositive(unittest.TestCase):
     failure (bad codec, full disk) get misdiagnosed as a GPU error and
     silently retried on CPU, doubling the work and hiding the real cause."""
 
-    def _gui(self):
-        gui = MagicMock()
-        gui.root.after = MagicMock(side_effect=lambda delay, func: func())
-        return gui
-
     def _run(self, stderr_lines, returncode=1):
         manager = ConversionManager()
         manager.cancelled = False
@@ -1769,16 +1567,14 @@ class TestGpuErrorDetectionFalsePositive(unittest.TestCase):
         mock_proc.stderr = iter(stderr_lines)
         mock_proc.returncode = returncode
         manager.process = mock_proc
-        gui = self._gui()
-        # The false-positive cases fall through to the real handle_completion
-        # (correctly showing the genuine error instead of retrying) -- mock
-        # messagebox so that doesn't pop a real, click-blocking dialog here.
-        with patch.object(manager, '_retry_with_cpu') as mock_retry, \
-             patch('src.conversion.messagebox'):
+        # The false-positive cases fall through to the real handle_completion,
+        # which correctly reports the genuine error instead of retrying -- the
+        # recording view collects that notice rather than rendering it.
+        with patch.object(manager, '_retry_with_cpu') as mock_retry:
             manager.monitor_progress(
                 _req(output_path='out.mkv', open_after_conversion=False, gamma=2.2,
                      use_gpu=True),
-                _ui(gui_instance=gui, interactable_elements=[], cancel_button=MagicMock()),
+                _view(),
                 10.0)
         return mock_retry
 
@@ -1835,7 +1631,7 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
     def test_pro_dovi_audio_is_untouched_copy(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            _req(input_path='in.mkv', licensed=True), self._dovi_props())
+            _req(input_path='in.mkv', licensed=True), self._dovi_props(), _view())
         self.assertEqual(cmd[cmd.index('-c:a') + 1], 'copy')
         self.assertIn('0:a?', cmd)     # every audio stream mapped
         self.assertNotIn('-ac', cmd)   # multi-channel layout untouched
@@ -1844,14 +1640,14 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
     def test_free_dovi_audio_forces_two_channel_stereo(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            _req(input_path='in.mkv'), self._dovi_props())
+            _req(input_path='in.mkv'), self._dovi_props(), _view())
         self.assertEqual(cmd[cmd.index('-c:a') + 1], 'aac')
         self.assertEqual(cmd[cmd.index('-ac') + 1], '2')
 
     def test_free_dovi_audio_restricted_to_first_stream(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            _req(input_path='in.mkv'), self._dovi_props())
+            _req(input_path='in.mkv'), self._dovi_props(), _view())
         self.assertIn('0:a:0?', cmd)
         self.assertNotIn('0:a?', cmd)
 
@@ -1860,7 +1656,7 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         the safe one for a premium gate."""
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            _req(input_path='in.mkv'), self._dovi_props())
+            _req(input_path='in.mkv'), self._dovi_props(), _view())
         self.assertEqual(cmd[cmd.index('-c:a') + 1], 'aac')
         self.assertEqual(cmd[cmd.index('-ac') + 1], '2')
 
@@ -1871,7 +1667,7 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         props = self._dovi_props()
         props['is_dolby_vision'] = False
         props['dovi_profile'] = None
-        cmd = manager.construct_ffmpeg_command(_req(input_path='in.mkv'), props)
+        cmd = manager.construct_ffmpeg_command(_req(input_path='in.mkv'), props, _view())
         self.assertEqual(cmd[cmd.index('-c:a') + 1], 'copy')
         self.assertIn('0:a?', cmd)
         self.assertNotIn('-ac', cmd)
@@ -1883,80 +1679,78 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
             _req(input_path='in.mkv', output_path='out.mp4', licensed=True),
-            self._dovi_props(audio='truehd'))
+            self._dovi_props(audio='truehd'), _view())
         self.assertEqual(cmd[cmd.index('-c:a') + 1], 'aac')
         self.assertNotIn('-ac', cmd)
         self.assertIn('0:a?', cmd)
 
     # ── Video: RPU-aware tonemapping per DoVi profile ───────────────────────
 
-    @patch('src.conversion.messagebox.showinfo')
-    def test_dovi_profile5_uses_rpu_aware_libplacebo_even_on_cpu(self, mock_info):
+    def test_dovi_profile5_uses_rpu_aware_libplacebo_even_on_cpu(self):
         """Profile 5 (IPTPQc2) has no HDR10-compatible base layer — the zscale
         chain would render wrong colors. When libplacebo is available it must
         be used (it applies the DoVi RPU) even with the GPU toggle off."""
         manager = ConversionManager()
         with patch('src.conversion.vulkan_libplacebo_available', return_value=True):
             cmd = manager.construct_ffmpeg_command(
-                _req(input_path='in.mkv', licensed=True), self._dovi_props(profile=5))
+                _req(input_path='in.mkv', licensed=True), self._dovi_props(profile=5), _view())
         fc = cmd[cmd.index('-filter_complex') + 1]
         self.assertIn('libplacebo', fc)
         self.assertIn('-init_hw_device', cmd)   # Vulkan device for the filter
         self.assertIn('libx265', cmd)           # encode itself stays on CPU
 
-    @patch('src.conversion.messagebox.showwarning')
-    def test_dovi_profile5_without_libplacebo_falls_back_to_cpu_chain(self, mock_warn):
+    def test_dovi_profile5_without_libplacebo_falls_back_to_cpu_chain(self):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
-            _req(input_path='in.mkv', licensed=True), self._dovi_props(profile=5))
+            _req(input_path='in.mkv', licensed=True), self._dovi_props(profile=5), _view())
         fc = cmd[cmd.index('-filter_complex') + 1]
         self.assertIn('zscale', fc)
         self.assertNotIn('libplacebo', fc)
 
-    @patch('src.conversion.messagebox.showwarning')
-    def test_dovi_profile5_without_libplacebo_warns_about_wrong_colors(self, mock_warn):
+    def test_dovi_profile5_without_libplacebo_warns_about_wrong_colors(self):
         """The zscale fallback for profile 5 has no RPU applied and renders
         wrong colors (green/purple cast per the code's own comment) -- the
         conversion must not exit silently with no indication anything is off."""
         manager = ConversionManager()
+        view = _view()
         manager.construct_ffmpeg_command(
-            _req(input_path='in.mkv', licensed=True), self._dovi_props(profile=5))
-        mock_warn.assert_called_once()
-        warning_text = mock_warn.call_args[0][1].lower()
-        self.assertIn('dolby vision', warning_text)
+            _req(input_path='in.mkv', licensed=True), self._dovi_props(profile=5), view)
+        self.assertEqual(len(view.notices), 1)
+        self.assertEqual(view.notices[0].kind, 'warning')
+        self.assertIn('dolby vision', view.notices[0].body.lower())
 
-    @patch('src.conversion.messagebox.showinfo')
-    @patch('src.conversion.messagebox.showwarning')
-    def test_dovi_profile5_with_libplacebo_does_not_warn(self, mock_warn, mock_info):
+    def test_dovi_profile5_with_libplacebo_does_not_warn(self):
         """When libplacebo IS available, the RPU is correctly applied --
         no warning should fire (an info notice fires instead; see
         test_dovi_profile5_override_notifies_when_gpu_toggle_off)."""
         manager = ConversionManager()
+        view = _view()
         with patch('src.conversion.vulkan_libplacebo_available', return_value=True):
             manager.construct_ffmpeg_command(
-                _req(input_path='in.mkv', licensed=True), self._dovi_props(profile=5))
-        mock_warn.assert_not_called()
+                _req(input_path='in.mkv', licensed=True), self._dovi_props(profile=5), view)
+        self.assertEqual([n for n in view.notices if n.kind == 'warning'], [])
 
-    @patch('src.conversion.messagebox.showinfo')
-    def test_dovi_profile5_override_notifies_when_gpu_toggle_off(self, mock_info):
+    def test_dovi_profile5_override_notifies_when_gpu_toggle_off(self):
         """The RPU override silently ignores the "Enable GPU Acceleration"
         checkbox -- without a notice, a user who left it unchecked (expecting
         pure CPU conversion) has no way to know GPU tonemapping ran anyway."""
         manager = ConversionManager()
+        view = _view()
         with patch('src.conversion.vulkan_libplacebo_available', return_value=True):
             manager.construct_ffmpeg_command(
-                _req(input_path='in.mkv', licensed=True), self._dovi_props(profile=5))
-        mock_info.assert_called_once()
-        info_text = mock_info.call_args[0][1].lower()
+                _req(input_path='in.mkv', licensed=True), self._dovi_props(profile=5), view)
+        self.assertEqual(len(view.notices), 1)
+        self.assertEqual(view.notices[0].kind, 'info')
+        info_text = view.notices[0].body.lower()
         self.assertIn('dolby vision', info_text)
         self.assertIn('gpu acceleration', info_text)
 
-    @patch('src.conversion.messagebox.showinfo')
-    def test_dovi_profile5_no_override_notice_when_gpu_toggle_already_on(self, mock_info):
+    def test_dovi_profile5_no_override_notice_when_gpu_toggle_already_on(self):
         """use_gpu=True means libplacebo runs because the user asked for GPU
         acceleration, not because of the profile-5 override -- nothing
         surprising happened, so no notice should fire."""
         manager = ConversionManager()
+        view = _view()
         # Alone among these tests this one passes use_gpu=True, which sends
         # construct_ffmpeg_command through detect_gpu_encoder() -> real
         # `ffmpeg -encoders` plus `nvidia-smi`. That made it the slowest
@@ -1965,8 +1759,8 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
                 patch.object(manager, 'detect_gpu_encoder', return_value='h264_nvenc'):
             manager.construct_ffmpeg_command(
                 _req(input_path='in.mkv', use_gpu=True, licensed=True),
-                self._dovi_props(profile=5))
-        mock_info.assert_not_called()
+                self._dovi_props(profile=5), view)
+        self.assertEqual(view.notices, [])
 
     def test_dovi_profile8_keeps_standard_hdr10_cpu_chain(self):
         """Profiles 7/8 carry an HDR10-compatible base layer, so the existing
@@ -1975,7 +1769,7 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         manager = ConversionManager()
         with patch('src.conversion.vulkan_libplacebo_available', return_value=True):
             cmd = manager.construct_ffmpeg_command(
-                _req(input_path='in.mkv', licensed=True), self._dovi_props(profile=8))
+                _req(input_path='in.mkv', licensed=True), self._dovi_props(profile=8), _view())
         fc = cmd[cmd.index('-filter_complex') + 1]
         self.assertIn('zscale', fc)
         self.assertNotIn('libplacebo', fc)
@@ -1983,31 +1777,26 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
     # ── licensed flag plumbing ──────────────────────────────────────────────
 
     @patch('src.conversion.get_video_properties')
-    def test_start_conversion_threads_licensed_flag(self, mock_props):
+    def test_start_threads_licensed_flag(self, mock_props):
         mock_props.return_value = self._dovi_props()
         manager = ConversionManager()
-        mock_gui = MagicMock()
         with patch.object(manager, 'construct_ffmpeg_command',
                           return_value=['ffmpeg']) as mock_build, \
              patch.object(manager, 'start_ffmpeg_process', return_value=MagicMock()), \
              patch.object(manager, 'monitor_progress'):
-            manager.start_conversion(
-                'in.mkv', 'out.mkv', 1.0, False, MagicMock(), [], mock_gui,
-                False, MagicMock(), licensed=True)
+            manager.start(_req(input_path='in.mkv', licensed=True), _view())
         self.assertIs(mock_build.call_args.args[0].licensed, True)
 
-    def test_start_conversion_threads_quality_mode(self):
+    def test_start_threads_quality_mode(self):
         manager = ConversionManager()
-        mock_gui = MagicMock()
         with patch('src.conversion.get_video_properties',
                    return_value={'duration': 10.0, 'bit_rate': 4000000}), \
              patch.object(manager, 'construct_ffmpeg_command',
                           return_value=['ffmpeg']) as mock_build, \
              patch.object(manager, 'start_ffmpeg_process', return_value=MagicMock()), \
              patch.object(manager, 'monitor_progress'):
-            manager.start_conversion(
-                'in.mkv', 'out.mkv', 1.0, False, MagicMock(), [], mock_gui,
-                False, MagicMock(), quality=30000, quality_mode='bitrate')
+            manager.start(_req(input_path='in.mkv', quality=30000,
+                               quality_mode='bitrate'), _view())
         self.assertEqual(mock_build.call_args.args[0].quality_mode, 'bitrate')
 
 
@@ -2033,7 +1822,7 @@ class TestBitrateModeCommandConstruction(unittest.TestCase):
             m._gpu_encoder = encoder
         return m.construct_ffmpeg_command(
             _req(use_gpu=use_gpu, quality=quality, quality_mode=quality_mode),
-            self._BASE_PROPS)
+            self._BASE_PROPS, _view())
 
     def test_nvenc_bitrate_mode_has_no_cq_flag(self):
         cmd = self._cmd('h264_nvenc', use_gpu=True, quality=20000)
@@ -2073,7 +1862,7 @@ class TestBitrateModeCommandConstruction(unittest.TestCase):
         props = {**self._BASE_PROPS, 'codec_name': 'hevc'}
         m = ConversionManager()
         cmd = m.construct_ffmpeg_command(
-            _req(quality=20000, quality_mode='bitrate'), props)
+            _req(quality=20000, quality_mode='bitrate'), props, _view())
         self.assertIn('libx265', cmd)
         self.assertNotIn('-crf', cmd)
         self.assertEqual(cmd[cmd.index('-b:v') + 1], '20000000')
@@ -2085,21 +1874,17 @@ class TestBitrateModeCommandConstruction(unittest.TestCase):
         self.assertNotIn('-b:v', cmd)
 
 
-class TestStartConversionBuildsRequest(unittest.TestCase):
-    """start_conversion's signature is frozen (src/pro/ calls it), so it must
-    assemble the request itself from its parameters."""
+class TestStartBuildsRequest(unittest.TestCase):
+    """start(request, view) stashes the request and the view it was handed."""
 
-    def _start(self, manager, **kwargs):
-        mock_gui = MagicMock()
+    def _start(self, manager, view=None, **kwargs):
         with patch('src.conversion.get_video_properties',
                    return_value={'duration': 10.0, 'bit_rate': 4000000}), \
              patch.object(manager, 'construct_ffmpeg_command', return_value=['ffmpeg']), \
              patch.object(manager, 'start_ffmpeg_process', return_value=MagicMock()), \
              patch.object(manager, 'monitor_progress'):
-            manager.start_conversion(
-                'in.mkv', 'out.mkv', 2.2, True, MagicMock(), [], mock_gui,
-                False, MagicMock(), **kwargs)
-        return mock_gui
+            manager.start(_req(input_path='in.mkv', gamma=2.2, use_gpu=True,
+                               **kwargs), view if view is not None else _view())
 
     def test_request_captures_every_encode_setting(self):
         m = ConversionManager()
@@ -2118,42 +1903,29 @@ class TestStartConversionBuildsRequest(unittest.TestCase):
         self.assertIs(r.lut_enabled, False)
 
     def test_request_stores_absolute_paths(self):
-        """start_conversion abspath()s both paths before use; the request must
-        hold the resolved paths so a retry re-encodes the same files."""
+        """start abspath()s both paths before use; the request must hold the
+        resolved paths so a retry re-encodes the same files."""
         m = ConversionManager()
         self._start(m)
         self.assertTrue(os.path.isabs(m._request.input_path))
         self.assertTrue(os.path.isabs(m._request.output_path))
 
-    def test_ui_captures_handles_and_on_complete(self):
+    def test_view_carries_the_callers_on_complete(self):
         m = ConversionManager()
         cb = MagicMock()
-        self._start(m, on_complete=cb)
-        self.assertIs(m._ui.on_complete, cb)
-        self.assertIsNotNone(m._ui.gui_instance)
-        self.assertIsNotNone(m._ui.cancel_button)
+        view = _view(on_complete=cb)
+        self._start(m, view=view)
+        self.assertIs(m._view, view)
+        self.assertIs(view.on_complete, cb)
 
-    def test_request_and_ui_start_as_none(self):
+    def test_request_and_view_start_as_none(self):
         m = ConversionManager()
         self.assertIsNone(m._request)
-        self.assertIsNone(m._ui)
-
-    def test_start_conversion_delegates_to_start(self):
-        """start_conversion is only an adapter; _start carries the logic and is
-        what _retry_with_cpu re-enters."""
-        m = ConversionManager()
-        with patch.object(m, '_start', return_value=True) as mock_start:
-            result = m.start_conversion(
-                'in.mkv', 'out.mkv', 2.2, True, MagicMock(), [], MagicMock(),
-                False, MagicMock(), tonemapper='hable')
-        self.assertIs(result, True)
-        request, ui = mock_start.call_args.args
-        self.assertEqual(request.tonemapper, 'hable')
-        self.assertIsNone(ui.on_complete)
+        self.assertIsNone(m._view)
 
 
 class TestRetryUsesTheRequest(unittest.TestCase):
-    """Uses the module-level _req()/_ui() helpers from Task 1."""
+    """Uses the module-level _req()/_view() helpers."""
 
     def test_cpu_retry_uses_original_paths_not_current_widgets(self):
         """BEHAVIOR CHANGE: the retry re-encodes what the failed run was
@@ -2162,13 +1934,9 @@ class TestRetryUsesTheRequest(unittest.TestCase):
         m = ConversionManager()
         request = _req(input_path='original_in.mkv',
                        output_path='original_out.mp4', use_gpu=True)
-        ui = _ui()
-        ui.gui_instance.input_path_var.get.return_value = 'CHANGED_in.mkv'
-        ui.gui_instance.output_path_var.get.return_value = 'CHANGED_out.mp4'
-        with patch.object(m, '_start') as mock_start, \
-             patch('src.conversion.messagebox.showwarning'):
-            m._retry_with_cpu(request, ui)
-        sent = mock_start.call_args.args[0]
+        m.start = MagicMock()
+        m._retry_with_cpu(request, _view())
+        sent = m.start.call_args.args[0]
         self.assertEqual(sent.input_path, 'original_in.mkv')
         self.assertEqual(sent.output_path, 'original_out.mp4')
 
@@ -2178,10 +1946,9 @@ class TestRetryUsesTheRequest(unittest.TestCase):
         request = _req(use_gpu=True, quality=30000, quality_mode='bitrate',
                        bit_depth=10, licensed=True, lut_enabled=False,
                        tonemapper='hable')
-        with patch.object(m, '_start') as mock_start, \
-             patch('src.conversion.messagebox.showwarning'):
-            m._retry_with_cpu(request, _ui())
-        sent = mock_start.call_args.args[0]
+        m.start = MagicMock()
+        m._retry_with_cpu(request, _view())
+        sent = m.start.call_args.args[0]
         self.assertIs(sent.use_gpu, False)
         self.assertEqual(sent.quality, 30000)
         self.assertEqual(sent.quality_mode, 'bitrate')
@@ -2196,20 +1963,21 @@ class TestRetryUsesTheRequest(unittest.TestCase):
         m = ConversionManager()
         request = _req(use_gpu=True, tonemapper='bt.2390')
         cb = MagicMock()
-        with patch.object(m, '_start', side_effect=ValueError('needs GPU')), \
-             patch('src.conversion.messagebox'):
-            m._retry_with_cpu(request, _ui(on_complete=cb))
+        m.start = MagicMock(side_effect=ValueError('needs GPU'))
+        m._retry_with_cpu(request, _view(on_complete=cb))
         cb.assert_called_once_with(False)
 
     def test_cpu_retry_writes_back_gpu_accel_off(self):
-        """gpu_accel_var.set(False) alone doesn't fire the checkbutton's
-        command= callback, so the batch item would keep a stale gpu_accel=True."""
+        """The fallback must be persisted, not just displayed -- the view owns
+        both halves now."""
         m = ConversionManager()
-        request = _req(use_gpu=True)
-        ui = _ui()
-        with patch.object(m, '_start'), patch('src.conversion.messagebox.showwarning'):
-            m._retry_with_cpu(request, ui)
-        ui.gui_instance._write_back_current_settings.assert_called_once()
+        m.start = MagicMock()
+        view = _view()
+        m._retry_with_cpu(_req(use_gpu=True), view)
+        self.assertEqual(view.gpu_fallbacks, 1)
+        self.assertEqual(view.notices, [Notice.warning(
+            "GPU Acceleration Failed",
+            "GPU acceleration failed. Switching to CPU encoding.")])
 
     def test_cpu_retry_uses_the_request_it_was_handed_not_self_request(self):
         """FINDING 1 regression pin: monitor_progress hands _retry_with_cpu a
@@ -2228,11 +1996,9 @@ class TestRetryUsesTheRequest(unittest.TestCase):
         m._request = _req(input_path='other_in.mkv',
                           output_path='other_out.mp4', use_gpu=True,
                           tonemapper='mobius')
-        ui = _ui()
-        with patch.object(m, '_start') as mock_start, \
-             patch('src.conversion.messagebox.showwarning'):
-            m._retry_with_cpu(handed_request, ui)
-        sent = mock_start.call_args.args[0]
+        m.start = MagicMock()
+        m._retry_with_cpu(handed_request, _view())
+        sent = m.start.call_args.args[0]
         self.assertEqual(sent.input_path, 'handed_in.mkv')
         self.assertEqual(sent.output_path, 'handed_out.mp4')
         self.assertEqual(sent.tonemapper, 'hable')
@@ -2248,7 +2014,51 @@ class TestNoLooseStateRemains(unittest.TestCase):
         for name in ('use_gpu', '_quality', '_quality_mode', '_bit_depth',
                      '_lut_enabled', '_licensed', '_on_complete'):
             self.assertFalse(hasattr(m, name),
-                             msg=f'{name} should have been folded into _request/_ui')
+                             msg=f'{name} should have been folded into _request/_view')
+
+
+class TestStartTakesARequestAndAView(unittest.TestCase):
+    """The 16-parameter start_conversion is gone; start(request, view) is the
+    only way in, and the retry re-enters through it."""
+
+    def test_start_conversion_no_longer_exists(self):
+        self.assertFalse(
+            hasattr(ConversionManager, 'start_conversion'),
+            msg='start_conversion survived; four of its parameters now live '
+                'inside the view, so keeping it would pass the same widgets '
+                'twice')
+
+    def test_the_manager_no_longer_touches_widgets_itself(self):
+        for gone in ('disable_ui', 'enable_ui'):
+            with self.subTest(method=gone):
+                self.assertFalse(
+                    hasattr(ConversionManager, gone),
+                    msg=f'{gone} survived; callers use '
+                        f'view.set_inputs_enabled(bool) now')
+
+    @patch('src.conversion.get_video_properties')
+    @patch('src.conversion.subprocess.Popen')
+    def test_start_normalizes_paths_and_launches(self, mock_popen, mock_props):
+        mock_props.return_value = dict(_PROPS, duration=120.0)
+        mock_popen.return_value = MagicMock(stderr=iter([]))
+        manager = ConversionManager()
+        view = RecordingConversionView()
+
+        self.assertIs(manager.start(_req(input_path='in.mp4'), view), True)
+
+        mock_props.assert_called_once_with(os.path.abspath('in.mp4'))
+        self.assertEqual(manager._request.input_path, os.path.abspath('in.mp4'))
+        self.assertIs(manager._view, view)
+
+    def test_start_leaves_a_blank_path_falsy_so_the_guard_still_fires(self):
+        """os.path.abspath('') resolves to the cwd, which is truthy -- an
+        unguarded normalization here would silently stop the "both paths
+        given" check from ever firing."""
+        manager = ConversionManager()
+        view = RecordingConversionView()
+        self.assertIs(manager.start(_req(input_path=''), view), False)
+        self.assertEqual(view.notices, [Notice.warning(
+            "Warning", "Please select both an input file and specify an output file.")])
 
 
 if __name__ == '__main__':

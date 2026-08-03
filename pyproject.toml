@@ -1,0 +1,70 @@
+# Tool configuration for HDR-to-SDR.
+#
+# There is deliberately no [project] table. This is a PyInstaller desktop app,
+# never built as a wheel or installed with pip, and [project] mandates a
+# `version` key -- which would become a *third* place the app version lives,
+# alongside APP_VERSION in src/updater.py and AppVersion in installer.iss. Those
+# two already have to be bumped together for a release; a third would be one
+# more chance to ship a mislabelled installer. Dependencies stay in
+# requirements.txt / requirements-dev.txt, which is what CI and the build script
+# actually install from.
+#
+# Consolidated here from .coveragerc and pyrightconfig.json (audit item 8).
+# Both tools prefer their dedicated file over this one, so neither may come
+# back without this file's settings moving with it --
+# test/project_config_test.py enforces that.
+
+[tool.coverage.run]
+source = ["src"]
+
+[tool.coverage.report]
+show_missing = true
+# CI-visible coverage (sample videos are gitignored, so smoke tests skip) sits
+# at ~92%. The 90% floor guards against regressions with a small buffer so a
+# single skipped/removed test doesn't flap the build.
+fail_under = 90
+# main.pyw is the TkinterDnD + mainloop bootstrap: it can only run under a real
+# display with the packaged app, so it is intentionally not unit-tested.
+# src/pro/ is a separate private git repository with its own 198-test suite
+# covering it thoroughly (98%); omitting it here ensures public coverage
+# measures only public code, making local and CI measurements consistent (both
+# ~97% when src/pro/ is omitted).
+omit = [
+    "src/main.pyw",
+    "src/pro/*",
+]
+
+[tool.pyright]
+# Production code (src/) is held to a clean bar: 0 errors, enforced here and in
+# CI. test/ is checked too -- CI runs bare `pyright`, so this include list is
+# what decides the scope.
+# src/ has no __init__.py (implicit namespace package). Tests import it as
+# `src.gui` while the src modules import each other bare (`from utils import
+# ...`), so both the project root and src/ must be on the import path.
+include = ["src", "test"]
+exclude = ["**/.venv", "**/__pycache__", "build", "dist"]
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "standard"
+# Pinned rather than inherited from whatever interpreter the .venv happens to
+# hold, so the analysis target matches the single version README declares and
+# CI runs. Without this, recreating .venv on a different Python silently
+# changes what pyright accepts.
+pythonVersion = "3.13"
+extraPaths = [".", "src"]
+
+[[tool.pyright.executionEnvironments]]
+# Tests legitimately do things static typing can't express: monkeypatching
+# methods (gui._method = lambda ...), poking private attrs on bare
+# object.__new__ instances, and subscripting the dict|None / str|None that
+# mocked helpers return when the test knows the value is non-None. These
+# rules are noise in test/ only -- src/ keeps them on.
+root = "test"
+extraPaths = [".", "src", "HDR to SDR Website"]
+reportAttributeAccessIssue = "none"
+reportArgumentType = "none"
+reportCallIssue = "none"
+reportOptionalSubscript = "none"
+reportOptionalMemberAccess = "none"
+reportOptionalIterable = "none"
+reportTypedDictNotRequiredAccess = "none"

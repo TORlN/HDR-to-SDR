@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [ main ]
 
+# Single source for the Python version both jobs run on. It used to be a bare
+# literal repeated in each job, with nothing tying it to the version README
+# promises users. test/project_config_test.py fails if a job hardcodes one
+# again or if README stops matching this.
+env:
+  PYTHON_VERSION: '3.13'
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -16,7 +23,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.13'
+        python-version: ${{ env.PYTHON_VERSION }}
 
     - name: Install dependencies
       run: |
@@ -24,7 +31,6 @@ jobs:
         sudo apt-get install -y xvfb ffmpeg  # Install Xvfb and ffmpeg
         python -m pip install --upgrade pip
         pip install -r requirements.txt -r requirements-dev.txt
-        pip install coverage==7.14.1
 
     # test/smoke_test.py matches '*_test.py' so it's already part of this
     # discovery run. Its small fixtures under test/smoke_test_videos/ are
@@ -42,7 +48,7 @@ jobs:
       run: |
         xvfb-run -a python -m coverage run -m unittest discover -s test -p '*_test.py' -t .
 
-    - name: Coverage report (fails under threshold in .coveragerc)
+    - name: Coverage report (fails under the floor in pyproject.toml)
       run: |
         python -m coverage report
 
@@ -55,19 +61,19 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.13'
+        python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Install dependencies into .venv (pyrightconfig.json resolves imports there)
+    - name: Install dependencies into .venv (pyproject.toml resolves imports there)
       run: |
         python -m venv .venv
         ./.venv/bin/python -m pip install --upgrade pip
         ./.venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt
 
-    # No `src` argument: bare pyright takes its scope from pyrightconfig.json's
+    # No `src` argument: bare pyright takes its scope from pyproject.toml's
     # include (src + test), so test/ is gated too. It used to be checked by
     # nobody, and drifted -- a reportOptionalCall in gui_integration_test.py
     # sat there until it was found by running pyright without the argument.
-    # test/ keeps its relaxed rule set (see pyrightconfig.json); this gates the
+    # test/ keeps its relaxed rule set (see pyproject.toml); this gates the
     # errors those relaxations don't cover.
     #
     # Safe despite src/pro/ being absent here (gitignored, separate private

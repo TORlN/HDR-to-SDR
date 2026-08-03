@@ -1,2 +1,9 @@
+# Runtime dependencies. Both are exact pins and both declare zero
+# dependencies of their own (`pip show` reports an empty Requires:), so this
+# file already resolves to exactly two packages -- there is nothing for a
+# lockfile to pin that isn't pinned here.
+# test/project_config_test.py holds that assumption: adding a third runtime
+# dependency fails until someone confirms it is dependency-free too, or
+# introduces a real lockfile.
 pillow==12.2.0
 tkinterdnd2==0.5.0

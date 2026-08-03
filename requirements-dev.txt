@@ -1,4 +1,16 @@
-pyinstaller>=6.21.0
+# Exact pins, not floors. These decide what CI runs and what the signed
+# installer contains, so a floating spec changes the shipped artifact with no
+# commit to point at. `pytest>=8.0.0` had already drifted to an installed
+# 9.1.1 -- a whole major version -- before this was pinned.
+# test/project_config_test.py fails the build if any of these loosens.
+pyinstaller==6.21.0
+# PyInstaller's own dependency, pinned here on purpose: it supplies the hooks
+# that decide which packages get bundled, so an unpinned bump can change the
+# contents of a release build without touching pyinstaller itself.
+pyinstaller-hooks-contrib==2026.6
 pyright==1.1.411
-pytest>=8.0.0
-boto3>=1.34.0
+pytest==9.1.1
+boto3==1.43.34
+# Was installed by its own `pip install` line in the CI workflow, which put a
+# dev dependency somewhere nobody looks for one. It enforces the coverage floor.
+coverage==7.14.1

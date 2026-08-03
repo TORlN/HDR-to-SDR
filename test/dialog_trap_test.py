@@ -83,6 +83,33 @@ class TestBlockingDialogsAreTrapped(unittest.TestCase):
                             False),
                     msg='tkinter.commondialog.Dialog.show is not trapped')
 
+    def test_legacy_filedialog_classes_are_trapped(self):
+        """The legacy FileDialog, LoadFileDialog, and SaveFileDialog classes
+        do not inherit from commondialog.Dialog. They use .go() as their
+        blocking entry point. LoadFileDialog and SaveFileDialog inherit from
+        FileDialog and do not override .go(), so trapping FileDialog.go is the
+        single chokepoint. Use non-invoking marker check (same as for functions)
+        to avoid calling .go() in the test itself."""
+        legacy_classes = [
+            tkinter.filedialog.FileDialog,
+            tkinter.filedialog.LoadFileDialog,
+            tkinter.filedialog.SaveFileDialog,
+        ]
+        for cls in legacy_classes:
+            with self.subTest(dialog=f'{cls.__module__}.{cls.__name__}'):
+                # Verify it has the go method
+                self.assertTrue(
+                    hasattr(cls, 'go'),
+                    msg=f'{cls.__module__}.{cls.__name__} no longer has a .go() '
+                        f'method')
+                # Verify FileDialog.go is trapped (will affect all subclasses)
+                # Use non-invoking marker check: assert the trapped method has
+                # the is_dialog_trap marker.
+                self.assertTrue(
+                    getattr(tkinter.filedialog.FileDialog.go, 'is_dialog_trap',
+                            False),
+                    msg='tkinter.filedialog.FileDialog.go is not trapped')
+
     def test_the_trap_message_names_the_offender(self):
         """The failure has to say what to patch, or the next person sees a
         bare AssertionError from inside tkinter and starts guessing."""

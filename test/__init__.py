@@ -53,7 +53,6 @@ for _module, _names in _BLOCKING_DIALOGS:
 # Trap the Dialog.show method on commondialog.Dialog, which is the single
 # chokepoint for all modern blocking dialog classes: messagebox.Message,
 # filedialog.Open/SaveAs/Directory, colorchooser.Chooser.
-_original_dialog_show = tkinter.commondialog.Dialog.show
 
 
 def _trapped_dialog_show(self, **options):
@@ -67,3 +66,19 @@ def _trapped_dialog_show(self, **options):
 
 _trapped_dialog_show.is_dialog_trap = True  # type: ignore[reportFunctionMemberAccess]
 tkinter.commondialog.Dialog.show = _trapped_dialog_show
+
+# Trap the go method on FileDialog, the chokepoint for legacy blocking dialog
+# classes: FileDialog, LoadFileDialog, SaveFileDialog (which inherit from
+# FileDialog and do not override go).
+
+
+def _trapped_filedialog_go(self):
+    raise AssertionError(
+        f'UNMOCKED BLOCKING DIALOG: {self.__class__.__module__}.'
+        f'{self.__class__.__name__}.go() -- this would have opened a real '
+        f'modal window and hung the run until someone clicked it. Patch it '
+        f'in the test, or route it through a view the test can record.')
+
+
+_trapped_filedialog_go.is_dialog_trap = True  # type: ignore[reportFunctionMemberAccess]
+tkinter.filedialog.FileDialog.go = _trapped_filedialog_go

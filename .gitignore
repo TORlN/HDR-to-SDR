@@ -54,6 +54,12 @@ htmlcov/
 claude/
 .claude
 
+# Agent instruction files never belong in the public repo -- ARCHITECTURE.md
+# and CLAUDE.md live in the private src/pro/ repo and cover both repos as one
+# system. test/architecture_test.py asserts this rule is still here, so the
+# prohibition is mechanical rather than remembered.
+CLAUDE.md
+
 # Script files
 *.sh
 *.bat

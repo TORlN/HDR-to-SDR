@@ -36,6 +36,7 @@ from _no_external import (  # noqa: E402
     drain_after_timers, no_real_dialogs, no_real_subprocess,
     pending_after_scripts,
 )
+from _tk_probe import probe  # noqa: E402
 
 
 # One Tk instance shared across the entire module.  Creating and destroying a
@@ -43,21 +44,17 @@ from _no_external import (  # noqa: E402
 # is unreliable when the system's Tcl installation is incomplete (e.g. a
 # Python 3.13 install missing init.tcl at the expected path).  Keeping one
 # interpreter alive for the whole run avoids all reinit.
-_probe_root: "TkinterDnD.Tk | None" = None
+def _make_probe_root() -> "TkinterDnD.Tk":
+    root = TkinterDnD.Tk()
+    root.withdraw()
+    return root
 
 
-def _tk_available() -> bool:
-    global _probe_root
-    try:
-        _probe_root = TkinterDnD.Tk()
-        _probe_root.withdraw()
-        return True
-    except Exception:
-        return False
-
-
-_TK_OK = _tk_available()
-_SKIP = "no Tk display available (need a desktop session or xvfb)"
+# _tk_probe carries the skip/fail decision: it reports why Tk was unavailable
+# instead of discarding the exception, and turns the skip into a hard error
+# under HDR_REQUIRE_TK so CI cannot go green with these 126 tests unrun.
+_probe_root, _SKIP = probe(_make_probe_root)
+_TK_OK = _probe_root is not None
 
 
 class _SyncThread:

@@ -32,6 +32,13 @@ jobs:
     # real ffmpeg pipeline here instead of skipping -- the large real-world
     # captures in the project root stay gitignored and skip on CI.
     - name: Run tests with coverage
+      env:
+        # Without this, an xvfb that failed to start would skip ~120 GUI tests
+        # instead of failing -- a skip is not an error, so the build would go
+        # green with the entire GUI suite unexecuted. Setting it makes a
+        # missing display fatal here, while local runs on a machine with no
+        # desktop session still skip. See test/_tk_probe.py.
+        HDR_REQUIRE_TK: '1'
       run: |
         xvfb-run -a python -m coverage run -m unittest discover -s test -p '*_test.py' -t .
 

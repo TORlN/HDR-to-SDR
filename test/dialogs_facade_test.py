@@ -8,13 +8,15 @@ import os
 import sys
 import tkinter as tk
 import unittest
-from typing import Optional
 from unittest.mock import patch
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 _SRC = os.path.join(_ROOT, 'src')
 sys.path.insert(0, _ROOT)
 sys.path.insert(0, _SRC)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from _tk_probe import probe  # noqa: E402
 
 
 def _reload_dialogs_without_pro():
@@ -41,36 +43,32 @@ def _reload_dialogs_without_pro():
         return importlib.reload(dialogs)
 
 
-_root: Optional[tk.Tk] = None
+def _make_root() -> tk.Tk:
+    root = tk.Tk()
+    root.withdraw()
+    # Every reference to _root elsewhere in this file is explicit
+    # (dialogs._LicenseDialog(_root)), so this probe never needs to be
+    # tkinter's implicit default root. Release the claim: this module
+    # sorts alphabetically before gui_integration_test.py (whose own
+    # module-level _probe_root legitimately needs to become the default
+    # root) and, unlike a per-test Tk() that gets destroyed in tearDown,
+    # this root lives for the whole test run -- left unreleased, it would
+    # permanently squat tkinter._default_root, silently binding any
+    # later file's implicit-master Variable (e.g. gui.py's own
+    # `tk.StringVar(value=...)` calls) to the wrong Tcl interpreter than
+    # the widgets it's supposed to control. Confirmed by reproducing
+    # test_clicking_twelve_bit_radio_refreshes_info_label_live's failure
+    # with this omitted, and its pass with this in place.
+    if tk._default_root is root:
+        tk._default_root = None
+    return root
 
 
-def _tk_available() -> bool:
-    global _root
-    try:
-        _root = tk.Tk()
-        _root.withdraw()
-        # Every reference to _root elsewhere in this file is explicit
-        # (dialogs._LicenseDialog(_root)), so this probe never needs to be
-        # tkinter's implicit default root. Release the claim: this module
-        # sorts alphabetically before gui_integration_test.py (whose own
-        # module-level _probe_root legitimately needs to become the default
-        # root) and, unlike a per-test Tk() that gets destroyed in tearDown,
-        # this root lives for the whole test run -- left unreleased, it would
-        # permanently squat tkinter._default_root, silently binding any
-        # later file's implicit-master Variable (e.g. gui.py's own
-        # `tk.StringVar(value=...)` calls) to the wrong Tcl interpreter than
-        # the widgets it's supposed to control. Confirmed by reproducing
-        # test_clicking_twelve_bit_radio_refreshes_info_label_live's failure
-        # with this omitted, and its pass with this in place.
-        if tk._default_root is _root:
-            tk._default_root = None
-        return True
-    except Exception:
-        return False
-
-
-_TK_OK = _tk_available()
-_SKIP = "no Tk display available (need a desktop session or xvfb)"
+# _tk_probe carries the skip/fail decision: it reports why Tk was unavailable
+# instead of discarding the exception, and turns the skip into a hard error
+# under HDR_REQUIRE_TK so CI cannot go green with these tests unrun.
+_root, _SKIP = probe(_make_root)
+_TK_OK = _root is not None
 
 
 @unittest.skipUnless(_TK_OK, _SKIP)

@@ -14,22 +14,29 @@ _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 _SRC = os.path.join(_ROOT, 'src')
 sys.path.insert(0, _ROOT)
 sys.path.insert(0, _SRC)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from _tk_probe import available  # noqa: E402
 
 
-def _tk_available() -> bool:
-    """Probe whether Tk can be initialized (requires a display or xvfb)."""
-    try:
-        from tkinterdnd2 import TkinterDnD
-        root = TkinterDnD.Tk()
-        root.withdraw()
-        root.destroy()
-        return True
-    except Exception:
-        return False
+def _probe_tk() -> None:
+    """Prove Tk can be initialized (requires a display or xvfb).
+
+    The root is destroyed immediately and nothing here reuses it: unlike
+    gui_integration_test's module-level root, every test in this file builds
+    its own root so it can construct a GUI against a freshly-reloaded copy of
+    gui.py. Hence `available` rather than `probe` -- there is no root to keep.
+    """
+    from tkinterdnd2 import TkinterDnD
+    root = TkinterDnD.Tk()
+    root.withdraw()
+    root.destroy()
 
 
-_TK_OK = _tk_available()
-_SKIP = "no Tk display available (need a desktop session or xvfb)"
+# _tk_probe carries the skip/fail decision: it reports why Tk was unavailable
+# instead of discarding the exception, and turns the skip into a hard error
+# under HDR_REQUIRE_TK so CI cannot go green with these tests unrun.
+_TK_OK, _SKIP = available(_probe_tk)
 
 
 def _load_gui_without_pro():

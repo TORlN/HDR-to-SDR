@@ -6,7 +6,13 @@ __pycache__/
 *.pyo
 *.pyd
 *.exe
+
+# Large media: HDR source captures and test footage, none of which belongs in
+# git. The small committed smoke-test fixtures are un-ignored at the bottom of
+# this file, which must stay after these two rules so the negation isn't
+# re-shadowed.
 *.mp4
+*.mkv
 
 # Virtual environment
 .venv/
@@ -57,19 +63,17 @@ claude/
 # Signing credentials are NOT in here -- they live in signing/metadata.json,
 # which stays ignored via the signing/ rule below.
 !build_installer.bat
-*.gitignore
 *.ps1
-video.mkv
+
+# Local scratch — one-off experiments, debug captures and superseded assets
+# that accumulated in the project root. Listed by exact name, not by pattern,
+# so a real project file can never be swallowed by a broad rule.
 error.png
-.gitignore
-Shōgun S01e01 Anjin.mkv
-.gitignore
-mock_license.py
-make_comparison.py
 comparison.png
-*.mkv
 old_icon.ico
 old_icon.png
+mock_license.py
+make_comparison.py
 
 # Secrets — never commit
 src/_secrets.py

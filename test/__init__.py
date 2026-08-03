@@ -1,7 +1,9 @@
 import logging
 import tkinter.colorchooser
+import tkinter.commondialog
 import tkinter.filedialog
 import tkinter.messagebox
+import tkinter.simpledialog
 
 # The suite deliberately drives many error/failure paths (bad codecs, GPU
 # fallback, unserializable settings, etc.). Those paths log at WARNING/ERROR,
@@ -24,10 +26,11 @@ _BLOCKING_DIALOGS = (
     (tkinter.messagebox, ('showinfo', 'showwarning', 'showerror', 'askyesno',
                           'askquestion', 'askokcancel', 'askretrycancel',
                           'askyesnocancel')),
-    (tkinter.filedialog, ('askopenfilename', 'askopenfilenames',
+    (tkinter.filedialog, ('askopenfilename', 'askopenfilenames', 'askopenfiles',
                           'asksaveasfilename', 'askdirectory', 'askopenfile',
                           'asksaveasfile')),
     (tkinter.colorchooser, ('askcolor',)),
+    (tkinter.simpledialog, ('askstring', 'askinteger', 'askfloat')),
 )
 
 
@@ -38,6 +41,7 @@ def _dialog_trap(where: str):
             f'opened a real modal window and hung the run until someone '
             f'clicked it. Patch it in the test, or route it through a view '
             f'the test can record.')
+    _blocked.is_dialog_trap = True  # type: ignore[reportFunctionMemberAccess]
     return _blocked
 
 
@@ -45,3 +49,21 @@ for _module, _names in _BLOCKING_DIALOGS:
     for _name in _names:
         if hasattr(_module, _name):
             setattr(_module, _name, _dialog_trap(f'{_module.__name__}.{_name}'))
+
+# Trap the Dialog.show method on commondialog.Dialog, which is the single
+# chokepoint for all modern blocking dialog classes: messagebox.Message,
+# filedialog.Open/SaveAs/Directory, colorchooser.Chooser.
+_original_dialog_show = tkinter.commondialog.Dialog.show
+
+
+def _trapped_dialog_show(self, **options):
+    raise AssertionError(
+        f'UNMOCKED BLOCKING DIALOG: {self.__class__.__module__}.'
+        f'{self.__class__.__name__}.show{(options,)!r} -- this would have '
+        f'opened a real modal window and hung the run until someone '
+        f'clicked it. Patch it in the test, or route it through a view '
+        f'the test can record.')
+
+
+_trapped_dialog_show.is_dialog_trap = True  # type: ignore[reportFunctionMemberAccess]
+tkinter.commondialog.Dialog.show = _trapped_dialog_show

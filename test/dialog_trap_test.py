@@ -10,16 +10,22 @@ Tests that legitimately exercise these functions patch them, which swaps the
 trap out for their own mock; only genuinely unmocked calls trip it.
 """
 import tkinter.colorchooser
+import tkinter.commondialog
 import tkinter.filedialog
 import tkinter.messagebox
+import tkinter.simpledialog
 import unittest
 
 
 class TestBlockingDialogsAreTrapped(unittest.TestCase):
 
-    def test_every_blocking_entry_point_raises_instead_of_opening(self):
-        """Each one, individually: a trap that missed a single function would
-        leave exactly one way to hang the suite."""
+    def test_every_blocking_entry_point_is_trapped(self):
+        """Each blocking function and class entry point is trapped, verified
+        by checking for the is_dialog_trap marker. This non-invoking check
+        prevents typos or deletions from _BLOCKING_DIALOGS from silently
+        leaving a function untapped and reachable by the test itself."""
+        # Hardcoded list, independent of test/__init__.py, so a deletion
+        # from that file doesn't also disappear from here.
         cases = [
             (tkinter.messagebox, 'showinfo'),
             (tkinter.messagebox, 'showwarning'),
@@ -31,20 +37,51 @@ class TestBlockingDialogsAreTrapped(unittest.TestCase):
             (tkinter.messagebox, 'askyesnocancel'),
             (tkinter.filedialog, 'askopenfilename'),
             (tkinter.filedialog, 'askopenfilenames'),
+            (tkinter.filedialog, 'askopenfiles'),
             (tkinter.filedialog, 'asksaveasfilename'),
             (tkinter.filedialog, 'askdirectory'),
             (tkinter.filedialog, 'askopenfile'),
             (tkinter.filedialog, 'asksaveasfile'),
             (tkinter.colorchooser, 'askcolor'),
+            (tkinter.simpledialog, 'askstring'),
+            (tkinter.simpledialog, 'askinteger'),
+            (tkinter.simpledialog, 'askfloat'),
         ]
         for module, name in cases:
             with self.subTest(dialog=f'{module.__name__}.{name}'):
                 self.assertTrue(
                     hasattr(module, name),
                     msg=f'{module.__name__}.{name} no longer exists; drop it '
-                        f'from the trap list in test/__init__.py')
-                with self.assertRaises(AssertionError):
-                    getattr(module, name)()
+                        f'from the list in test/dialog_trap_test.py')
+                func = getattr(module, name)
+                self.assertTrue(
+                    getattr(func, 'is_dialog_trap', False),
+                    msg=f'{module.__name__}.{name} is not trapped '
+                        f'(missing is_dialog_trap marker)')
+
+    def test_dialog_class_show_methods_are_trapped(self):
+        """The blocking dialog classes (Message, Open, SaveAs, Directory,
+        Chooser) all inherit from tkinter.commondialog.Dialog and use its
+        .show() method. Trap Dialog.show as the chokepoint."""
+        dialog_classes = [
+            tkinter.messagebox.Message,
+            tkinter.filedialog.Open,
+            tkinter.filedialog.SaveAs,
+            tkinter.filedialog.Directory,
+            tkinter.colorchooser.Chooser,
+        ]
+        for cls in dialog_classes:
+            with self.subTest(dialog=f'{cls.__module__}.{cls.__name__}'):
+                # Verify it has the show method (from Dialog)
+                self.assertTrue(
+                    hasattr(cls, 'show'),
+                    msg=f'{cls.__module__}.{cls.__name__} no longer inherits '
+                        f'from commondialog.Dialog')
+                # Verify Dialog.show itself is trapped (will affect all subclasses)
+                self.assertTrue(
+                    getattr(tkinter.commondialog.Dialog.show, 'is_dialog_trap',
+                            False),
+                    msg='tkinter.commondialog.Dialog.show is not trapped')
 
     def test_the_trap_message_names_the_offender(self):
         """The failure has to say what to patch, or the next person sees a

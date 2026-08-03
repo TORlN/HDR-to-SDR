@@ -14,6 +14,7 @@ import os
 import sys
 import types
 import unittest
+from typing import Any, Callable
 from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
@@ -62,11 +63,37 @@ class _SyncThread:
     instead of on a real worker thread -- lets tests assert on the result of
     a backgrounded call without sleeping/polling for a real thread to finish."""
 
-    def __init__(self, target=None, daemon=None, **_kw):
+    # `target` is required, unlike threading.Thread's optional one: every site
+    # that patches this in passes it, and a stand-in with nothing to run is a
+    # mistake worth catching at construction rather than as a bare
+    # "'NoneType' object is not callable" inside start().
+    def __init__(self, target: Callable[[], Any], daemon=None, **_kw):
         self._target = target
 
     def start(self) -> None:
         self._target()
+
+
+class TestSyncThread(unittest.TestCase):
+    """_SyncThread's own contract, which every download test leans on.
+
+    Needs no display, so it stays outside the Tk-gated classes below.
+    """
+
+    def test_start_runs_the_target_inline(self):
+        calls = []
+        _SyncThread(target=lambda: calls.append('ran')).start()
+        self.assertEqual(calls, ['ran'],
+                         msg='start() must run the target synchronously, not '
+                             'defer it to a real thread')
+
+    def test_a_targetless_stand_in_is_rejected_at_construction(self):
+        # Every site that patches this in passes target=; without the
+        # requirement a targetless instance stays silent until .start(),
+        # where it fails as a bare "'NoneType' object is not callable" with
+        # nothing pointing back at the stand-in.
+        with self.assertRaises(TypeError):
+            _SyncThread(daemon=True)  # type: ignore[call-arg]
 
 
 @unittest.skipUnless(_TK_OK, _SKIP)

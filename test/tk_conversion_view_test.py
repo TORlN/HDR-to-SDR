@@ -149,9 +149,14 @@ class TestBatchConversionView(unittest.TestCase):
         # is checked in Logger.isEnabledFor before assertLogs' own handler
         # ever sees the record), which would otherwise defeat assertLogs
         # below regardless of what notify() does. Re-enable for the duration
-        # of this one test only, then restore the suite-wide setting.
+        # of this one test only, then restore whatever was in place -- read,
+        # not assumed: `discover -s ./test` never runs test/__init__.py, so
+        # a hard-coded CRITICAL here would silence every later test in that
+        # invocation. The cleanup is registered before the risky `with`
+        # block so the level is restored even if the body raises.
+        previous_disable = logging.root.manager.disable
+        self.addCleanup(logging.disable, previous_disable)
         logging.disable(logging.NOTSET)
-        self.addCleanup(logging.disable, logging.CRITICAL)
         with patch('src.tk_conversion_view.messagebox') as box, \
                 self.assertLogs(level=logging.ERROR) as captured:
             view.notify(Notice.warning('GPU Acceleration Failed', 'switching'))
@@ -160,6 +165,32 @@ class TestBatchConversionView(unittest.TestCase):
         box.showerror.assert_not_called()
         self.assertIn('GPU Acceleration Failed', captured.output[0])
         self.assertIn('switching', captured.output[0])
+
+    def test_the_logging_test_restores_whatever_it_found(self):
+        """The test above has to lift the suite-wide logging.disable to use
+        assertLogs. Its cleanup must put back the level that was actually in
+        place, not a hard-coded CRITICAL: `unittest discover -s ./test` (no
+        -t) never runs test/__init__.py, so logging is NOT disabled going in
+        -- and a cleanup that assumes otherwise would globally silence every
+        test that runs after this one for the rest of that invocation."""
+        outer = logging.root.manager.disable
+        self.addCleanup(logging.disable, outer)
+
+        logging.disable(logging.NOTSET)  # stand in for the -s ./test run
+        result = unittest.TestResult()
+        TestBatchConversionView(
+            'test_batch_logs_instead_of_popping_a_modal').run(result)
+
+        self.assertEqual(
+            (result.errors, result.failures), ([], []),
+            msg='the inner test itself failed; fix that before reading the '
+                'restore assertion below')
+        self.assertEqual(
+            logging.root.manager.disable, logging.NOTSET,
+            msg=f'the logging test left the global disable level at '
+                f'{logging.root.manager.disable} instead of the NOTSET it '
+                f'found -- capture the level before changing it rather than '
+                f'hard-coding the one test/__init__.py happens to set')
 
     def test_batch_inherits_every_other_behavior(self):
         """It overrides exactly one method; a second override would mean

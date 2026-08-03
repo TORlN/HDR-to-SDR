@@ -17,7 +17,16 @@ say so in their docstrings.
 import os
 import socket
 import subprocess
+import sys
 from contextlib import contextmanager
+
+# Every GUI test loads this module, which makes it the highest-value place to
+# arm the blocking-dialog traps for a `discover -s ./test` run: that
+# invocation never imports test/__init__.py, so the traps armed there are
+# absent. Importing _dialog_trap more than once is a no-op by design.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import _dialog_trap  # noqa: E402,F401
 
 _LOOPBACK = frozenset(('127.0.0.1', '::1', 'localhost', ''))
 

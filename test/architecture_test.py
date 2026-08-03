@@ -13,6 +13,7 @@ src/pro/ARCHITECTURE.md.
 """
 import ast
 import os
+import tempfile
 import unittest
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -67,6 +68,26 @@ def _modules() -> dict:
     return found
 
 
+def _module_reached(dotted: str) -> str:
+    """The src-module name a dotted import target actually reaches.
+
+    A leading 'src.' collapses to its second component. src/ is a namespace
+    package with no __init__.py, so `import src.gui` names exactly the module
+    `import gui` does; the spelling resolves only because the tests put the
+    repo root on sys.path, and would not resolve at all in the frozen build.
+    Left un-collapsed it yields 'src', which is not a key in _modules(), so
+    every caller's `& set(modules)` filter silently drops it -- which is how
+    `from src.gui import HDRConverterGUI` in a src/ module would evade
+    test_only_the_entry_point_imports_gui, and `import src.pro.licensing`
+    TestProIsReachedOnlyThroughImportlib. Closed here symmetrically with the
+    pro guard's own _imports (commit 85beb68).
+    """
+    parts = dotted.split('.')
+    if parts[0] == 'src' and len(parts) > 1:
+        return parts[1]
+    return parts[0]
+
+
 def _imports(path: str) -> set:
     """Top-level package name of every import in *path*, nested ones included.
 
@@ -76,15 +97,23 @@ def _imports(path: str) -> set:
     otherwise let `def f(): from tkinter import messagebox` back into
     conversion.py. Relative imports are skipped: src/ is a namespace package
     with none, and node.module is None for them.
+
+    `from src import gui` names its target only in the alias list, so that
+    form is read from the aliases rather than from node.module.
     """
     with open(path, encoding='utf-8') as handle:
         tree = ast.parse(handle.read(), path)
     names = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            names.update(alias.name.split('.')[0] for alias in node.names)
+            names.update(_module_reached(alias.name) for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and not node.level:
-            names.add((node.module or '').split('.')[0])
+            module = node.module or ''
+            if module == 'src':
+                names.update(_module_reached(f'src.{alias.name}')
+                             for alias in node.names)
+            else:
+                names.add(_module_reached(module))
     return names
 
 
@@ -155,6 +184,43 @@ class TestImportsStayInsideTheAllowlist(unittest.TestCase):
                     'gui', _imports(path),
                     msg=f'{name} imports gui, which is the composition root, '
                         f'not a shared library')
+
+
+class TestImportsHelperSeesEverySrcPrefixedForm(unittest.TestCase):
+    """The same class of hole that was already closed on the pro side.
+
+    src/ is a namespace package with no __init__.py, so `from src.gui import
+    HDRConverterGUI` inside a src/ module names exactly the module `import
+    gui` does -- it resolves only because the tests put the repo root on
+    sys.path, and would not resolve at all in the frozen build. Left
+    un-collapsed it yields 'src', which is not a key in _modules(), so every
+    caller's `& set(modules)` filter drops it: that spelling evaded
+    test_only_the_entry_point_imports_gui outright, and `import
+    src.pro.licensing` evaded TestProIsReachedOnlyThroughImportlib the same
+    way.
+    """
+
+    def test_every_way_of_importing_through_src_is_visible(self):
+        source = (
+            "import src.gui\n"
+            "from src.gui import HDRConverterGUI\n"
+            "from src import gui\n"
+            "import src.pro.licensing\n"
+            "from src.pro.licensing import activate_license\n"
+            "import utils\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, 'synthetic.py')
+            with open(path, 'w', encoding='utf-8') as handle:
+                handle.write(source)
+            found = _imports(path)
+        self.assertEqual(
+            found, {'gui', 'pro', 'utils'},
+            msg=f'_imports() dropped a src.-prefixed edge -- got {found!r} '
+                f'for a file containing "import src.gui", "from src.gui '
+                f'import X", "from src import gui", "import '
+                f'src.pro.licensing" and "from src.pro.licensing import x"; '
+                f'none of them may collapse to the bare, unfiltered \'src\'')
 
 
 class TestProIsReachedOnlyThroughImportlib(unittest.TestCase):

@@ -153,12 +153,27 @@ class TestConversionManager(unittest.TestCase):
         mock_popen.return_value = mock_process
 
         manager = ConversionManager()
+        view = _view()
         manager.start(_req(input_path='input.mp4', output_path='output.mkv',
-                           gamma=2.2), _view())
+                           gamma=2.2), view)
 
         self.assertIsNotNone(manager.process)
         mock_popen.assert_called_once()
         mock_get_props.assert_called_once_with(os.path.abspath('input.mp4'))
+        # No assertion on view.cancel_visible here: start() spawns the monitor
+        # thread, whose handle_completion appends a False the moment the mock
+        # stderr iterator drains, so the list is racy. cancel_handler is not
+        # -- hiding the button passes on_cancel=None, which the view ignores.
+        #
+        # The on_cancel argument is the only thing wiring the Cancel button to
+        # anything; drop it and the button still appears, still looks live,
+        # and does nothing. assertEqual, not assertIs: every attribute access
+        # on a method mints a fresh bound-method object, so the two compare
+        # equal but are never identical.
+        self.assertEqual(
+            view.cancel_handler, manager.cancel_conversion,
+            msg='start() showed the Cancel button without handing the view a '
+                'handler -- the button would be inert')
 
     @patch('src.conversion.subprocess.Popen')
     def test_cancel_conversion(self, mock_popen):
@@ -175,6 +190,10 @@ class TestConversionManager(unittest.TestCase):
         self.assertTrue(manager.cancelled)
         self.assertEqual(view.notices, [Notice.info(
             "Cancelled", "Video conversion has been cancelled.")])
+        # Cancelling hands the window back to the drop handler, same as a
+        # normal completion does -- unconditionally, unlike the old hasattr
+        # dance it replaced.
+        self.assertEqual(view.drop_target_restored, 1)
 
     @patch('src.conversion.get_video_properties')
     def test_start_rejects_invalid_paths(self, mock_get_props):
@@ -227,6 +246,10 @@ class TestConversionManager(unittest.TestCase):
         self.assertEqual(view.opened, ['output.mkv'])
         self.assertEqual(view.inputs_enabled, [True])
         self.assertEqual(view.cancel_visible, [False])
+        # Always callable now (the old code guarded on hasattr), and a
+        # listed intentional behavior change of the port -- so assert it,
+        # or a dropped call leaves the window unable to accept drops again.
+        self.assertEqual(view.drop_target_restored, 1)
 
     def test_handle_completion_failure(self):
         """Test handle_completion for a failed conversion."""
@@ -245,6 +268,7 @@ class TestConversionManager(unittest.TestCase):
             "Error", "Conversion failed with code 1\nerror message")])
         self.assertEqual(view.inputs_enabled, [True])
         self.assertEqual(view.cancel_visible, [False])
+        self.assertEqual(view.drop_target_restored, 1)
 
     def test_handle_completion_truncates_long_error_output(self):
         """Error dialog must show only the last 50 stderr lines, not all of them.
@@ -607,6 +631,7 @@ class TestCancelUsesStoredView(unittest.TestCase):
         proc.terminate.assert_called_once()
         self.assertIs(m.cancelled, True)
         self.assertEqual(view.cancel_visible, [False])
+        self.assertEqual(view.drop_target_restored, 1)
 
     def test_cancel_before_any_conversion_is_a_no_op(self):
         """_view is None until the first conversion starts."""
@@ -617,12 +642,6 @@ class TestCancelUsesStoredView(unittest.TestCase):
 
 class TestBatchCompletionHook(unittest.TestCase):
     """An on_complete callback replaces the per-file dialog for batch (queue) runs."""
-
-    _PROPS = {
-        "width": 1920, "height": 1080, "bit_rate": 4000000, "codec_name": 'h264',
-        "frame_rate": 30.0, "audio_codec": 'aac', "audio_bit_rate": 128000,
-        "duration": 10.0, "subtitle_streams": [],
-    }
 
     def test_on_complete_called_instead_of_dialog_on_success(self):
         manager = ConversionManager()
@@ -642,7 +661,7 @@ class TestBatchCompletionHook(unittest.TestCase):
         done.assert_called_once_with(False)
         self.assertEqual(view.notices, [])  # no per-file error dialog
 
-    def test_on_complete_does_not_enable_ui_between_files(self):
+    def test_on_complete_does_not_re_enable_inputs_between_files(self):
         # Between queued files the UI must stay disabled and the cancel button shown.
         manager = ConversionManager()
         done = MagicMock()

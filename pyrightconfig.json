@@ -8,6 +8,11 @@
   "venvPath": ".",
   "venv": ".venv",
   "typeCheckingMode": "standard",
+  // Pinned rather than inherited from whatever interpreter the .venv happens to
+  // hold, so the analysis target matches the single version README declares and
+  // CI runs. Without this, recreating .venv on a different Python silently
+  // changes what pyright accepts.
+  "pythonVersion": "3.13",
   "extraPaths": [".", "src"],
 
   "executionEnvironments": [

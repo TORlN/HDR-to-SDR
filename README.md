@@ -14,7 +14,7 @@ The [latest release](https://github.com/TORlN/HDR-to-SDR/releases) is free to do
 - **GPU/CPU dual pipeline**: tonemapping runs on the GPU via libplacebo (Vulkan) when available, falling back to a pure-CPU ffmpeg filter chain — GPU tonemapping roughly halves conversion time on capable hardware.
 - **Real color science**: gamut conversion runs through a generated BT.2020→BT.709 3D LUT (tetrahedral interpolation) instead of approximate gamma math, on both the CPU and GPU paths.
 - **Dolby Vision (profile 5) RPU handling**, automatic hardware encoder detection (NVENC / AMF / QSV) with CPU fallback, and a licensing system built on HMAC-signed, hardware-locked offline license tokens.
-- **Tested and typed**: 21 test modules run against Python 3.10–3.13 (headless, via Xvfb, to exercise the real Tkinter GUI) on every push, gated by a 90% coverage floor and a zero-error `pyright` pass on `src/`.
+- **Tested and typed**: 21 test modules run against Python 3.13 (headless, via Xvfb, to exercise the real Tkinter GUI) on every push, gated by a 90% coverage floor and a zero-error `pyright` pass on `src/`.
 - **Signed, installable releases**: PyInstaller build + Inno Setup installer, code-signed via Azure Trusted Signing, with an in-app auto-updater.
 
 ## Features
@@ -89,7 +89,7 @@ icon, and generate a fresh installer `AppId`. See `TRADEMARK.md`.
 
 ## Requirements
 
-- Python 3.10 or newer (tested on 3.10–3.13)
+- Python 3.13 (the only version CI tests against; older versions are unsupported)
 - FFmpeg (`ffmpeg` and `ffprobe` on your PATH, or bundled alongside the app)
 - GPU acceleration is optional. GPU tonemapping needs an ffmpeg build with libplacebo (Vulkan); GPU encoding is supported on NVIDIA (`h264_nvenc`), AMD (`h264_amf`), and Intel (`h264_qsv`) hardware. The app degrades gracefully to CPU when either is unavailable.
 

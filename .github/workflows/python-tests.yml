@@ -63,6 +63,16 @@ jobs:
         ./.venv/bin/python -m pip install --upgrade pip
         ./.venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt
 
-    - name: Type-check src/ (must be 0 errors; pyrightconfig.json keeps test/ relaxed)
+    # No `src` argument: bare pyright takes its scope from pyrightconfig.json's
+    # include (src + test), so test/ is gated too. It used to be checked by
+    # nobody, and drifted -- a reportOptionalCall in gui_integration_test.py
+    # sat there until it was found by running pyright without the argument.
+    # test/ keeps its relaxed rule set (see pyrightconfig.json); this gates the
+    # errors those relaxations don't cover.
+    #
+    # Safe despite src/pro/ being absent here (gitignored, separate private
+    # repo): every pro import in src/ goes through importlib.import_module, so
+    # pyright never resolves pro statically and its absence changes nothing.
+    - name: Type-check src/ and test/ (must be 0 errors)
       run: |
-        ./.venv/bin/python -m pyright src
+        ./.venv/bin/python -m pyright

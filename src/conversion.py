@@ -43,6 +43,19 @@ class ConversionRequest:
     lut_enabled: bool = True
 
 
+@dataclass(frozen=True)
+class ConversionRun:
+    """The request and view for the most recently started conversion.
+
+    Bundled together because start() always sets both at once; keeping
+    them as one object instead of two loose attributes makes that pairing
+    structural rather than a convention two separate assignments have to
+    maintain by hand.
+    """
+    request: ConversionRequest
+    view: ConversionView
+
+
 class ConversionManager:
     def __init__(self) -> None:
         self.process: subprocess.Popen[str] | None = None

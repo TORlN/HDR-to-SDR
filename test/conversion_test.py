@@ -14,7 +14,7 @@ from PIL import Image
 from src.utils import FFMPEG_CONVERT_FILTER, get_lut_filter_path
 from src.utils import FFMPEG_EXECUTABLE  # Import FFMPEG_EXECUTABLE
 from dataclasses import FrozenInstanceError, replace
-from src.conversion import ConversionRequest
+from src.conversion import ConversionRequest, ConversionRun
 from conversion_view import Notice   # bare: same class src.conversion builds
 from _recording_view import RecordingConversionView
 
@@ -40,6 +40,21 @@ def _req(**overrides) -> ConversionRequest:
 def _view(**overrides) -> RecordingConversionView:
     """A view that records instead of rendering; see test/_recording_view.py."""
     return RecordingConversionView(**overrides)
+
+
+class TestConversionRun(unittest.TestCase):
+
+    def test_bundles_request_and_view(self):
+        request = _req()
+        view = _view()
+        run = ConversionRun(request=request, view=view)
+        self.assertIs(run.request, request)
+        self.assertIs(run.view, view)
+
+    def test_is_frozen(self):
+        run = ConversionRun(request=_req(), view=_view())
+        with self.assertRaises(FrozenInstanceError):
+            run.request = _req(input_path='other.mp4')
 
 
 class TestConversionRequest(unittest.TestCase):

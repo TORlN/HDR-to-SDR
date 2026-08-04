@@ -38,10 +38,12 @@ Three sharp edges, each documented at the code that resolves them:
 """
 from __future__ import annotations
 
+import platform
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
 from conversion_view import Notice
+from utils import VULKAN_DEVICE_ARGS, VULKAN_CUDA_DEVICE_ARGS
 
 
 class RequestLike(Protocol):
@@ -134,3 +136,83 @@ def _tonemap_plan(request: RequestLike, properties: 'dict[str, Any]',
 
     return TonemapPlan(use_gpu=use_gpu, dovi_needs_rpu=dovi_needs_rpu,
                        use_libplacebo=use_libplacebo, notices=notices)
+
+
+@dataclass(frozen=True)
+class GpuPlan:
+    active_encoder: 'str | None'
+    pre_input_args: 'list[str]'
+    use_cuda_interop: bool
+    notices: 'list[Notice]'
+
+
+_UNSUPPORTED_PLATFORM_NOTICE = Notice.warning(
+    "Warning", "GPU acceleration is not supported on this platform.")
+
+
+def _gpu_device_args(plan: TonemapPlan,
+                     resolve_gpu_encoder: 'Callable[[], str | None]',
+                     resolve_cuda_interop_available: 'Callable[[], bool]') -> GpuPlan:
+    """GPU vendor dispatch plus the device-setup args that must precede -i.
+
+    plan.use_gpu already reflects the 12-bit override _tonemap_plan applies
+    -- a 12-bit GPU-requested conversion reaches here with use_gpu already
+    False, so resolve_gpu_encoder (which may run a real detect_gpu_encoder()
+    subprocess probe) is never called on that path. See the module
+    docstring's GPU-probe-laziness note.
+
+    resolve_cuda_interop_available is a parameter for the same reason
+    resolve_gpu_encoder is -- see this task's file-level note -- and its
+    call stays exactly where the original inline code's
+    vulkan_cuda_interop_available() call was, inside the same short-circuit
+    expression, so it is still skipped whenever plan.use_libplacebo is
+    False or active_encoder isn't 'h264_nvenc'."""
+    current_platform = platform.system().lower()
+    active_encoder = None
+    pre_input_args: 'list[str]' = []
+    notices: 'list[Notice]' = []
+
+    if plan.use_gpu:
+        active_encoder = resolve_gpu_encoder()
+
+        if active_encoder == 'h264_nvenc':
+            if current_platform in ["windows", "linux"]:
+                if not plan.use_libplacebo:
+                    pre_input_args = ['-hwaccel', 'cuda', '-hwaccel_device', '0']
+            else:
+                notices.append(_UNSUPPORTED_PLATFORM_NOTICE)
+                active_encoder = None
+        elif active_encoder == 'h264_qsv':
+            if current_platform in ["windows", "linux"]:
+                if not plan.use_libplacebo:
+                    pre_input_args = ['-hwaccel', 'qsv']
+            else:
+                notices.append(_UNSUPPORTED_PLATFORM_NOTICE)
+                active_encoder = None
+        elif active_encoder == 'h264_amf':
+            if current_platform not in ["windows", "linux"]:
+                notices.append(_UNSUPPORTED_PLATFORM_NOTICE)
+                active_encoder = None
+            # AMF needs no separate hwaccel flag
+        elif active_encoder is not None:
+            notices.append(_UNSUPPORTED_PLATFORM_NOTICE)
+            active_encoder = None
+
+    # NVIDIA fast path: use CUDA->Vulkan interop so NVDEC handles decode on
+    # the GPU and feeds frames directly into libplacebo without a CPU detour.
+    # Other vendors (AMF, QSV) don't have CUDA; they fall back to CPU decode.
+    use_cuda_interop = (
+        plan.use_libplacebo
+        and active_encoder == 'h264_nvenc'
+        and resolve_cuda_interop_available()
+    )
+
+    # Device args go before -i. Interop path sets up linked cuda+vulkan
+    # devices and enables -hwaccel cuda; plain Vulkan path sets up vulkan only.
+    if use_cuda_interop:
+        pre_input_args = list(VULKAN_CUDA_DEVICE_ARGS)
+    elif plan.use_libplacebo:
+        pre_input_args = list(VULKAN_DEVICE_ARGS)
+
+    return GpuPlan(active_encoder=active_encoder, pre_input_args=pre_input_args,
+                   use_cuda_interop=use_cuda_interop, notices=notices)

@@ -162,6 +162,11 @@ class ConversionManager:
         'h264_qsv':   'hevc_qsv',
     }
 
+    def _resolve_gpu_encoder(self) -> 'str | None':
+        if self._gpu_encoder is None:
+            self._gpu_encoder = self.detect_gpu_encoder()
+        return self._gpu_encoder
+
     def construct_ffmpeg_command(self, request: ConversionRequest,
                                  properties: dict[str, Any],
                                  view: ConversionView) -> list[str]:
@@ -180,7 +185,6 @@ class ConversionManager:
             FFMPEG_EXECUTABLE,
             '-loglevel', 'info',
         ]
-        current_platform = platform.system().lower()
 
         tone = ffmpeg_command._tonemap_plan(request, properties, vulkan_libplacebo_available)
         use_gpu = tone.use_gpu
@@ -189,51 +193,13 @@ class ConversionManager:
         for notice in tone.notices:
             view.notify(notice)
 
-        # GPU acceleration setup — dispatch on whichever encoder was detected
-        active_encoder = None
-        if use_gpu:
-            if self._gpu_encoder is None:
-                self._gpu_encoder = self.detect_gpu_encoder()
-            active_encoder = self._gpu_encoder
-
-            if active_encoder == 'h264_nvenc':
-                if current_platform in ["windows", "linux"]:
-                    if not use_libplacebo:
-                        cmd += ['-hwaccel', 'cuda', '-hwaccel_device', '0']
-                else:
-                    view.notify(Notice.warning("Warning", "GPU acceleration is not supported on this platform."))
-                    active_encoder = None
-            elif active_encoder == 'h264_qsv':
-                if current_platform in ["windows", "linux"]:
-                    if not use_libplacebo:
-                        cmd += ['-hwaccel', 'qsv']
-                else:
-                    view.notify(Notice.warning("Warning", "GPU acceleration is not supported on this platform."))
-                    active_encoder = None
-            elif active_encoder == 'h264_amf':
-                if current_platform not in ["windows", "linux"]:
-                    view.notify(Notice.warning("Warning", "GPU acceleration is not supported on this platform."))
-                    active_encoder = None
-                # AMF needs no separate hwaccel flag
-            elif active_encoder is not None:
-                view.notify(Notice.warning("Warning", "GPU acceleration is not supported on this platform."))
-                active_encoder = None
-
-        # NVIDIA fast path: use CUDA→Vulkan interop so NVDEC handles decode on
-        # the GPU and feeds frames directly into libplacebo without a CPU detour.
-        # Other vendors (AMF, QSV) don't have CUDA; they fall back to CPU decode.
-        use_cuda_interop = (
-            use_libplacebo
-            and active_encoder == 'h264_nvenc'
-            and vulkan_cuda_interop_available()
-        )
-
-        # Device args go before -i. Interop path sets up linked cuda+vulkan
-        # devices and enables -hwaccel cuda; plain Vulkan path sets up vulkan only.
-        if use_cuda_interop:
-            cmd += VULKAN_CUDA_DEVICE_ARGS
-        elif use_libplacebo:
-            cmd += VULKAN_DEVICE_ARGS
+        gpu = ffmpeg_command._gpu_device_args(
+            tone, self._resolve_gpu_encoder, vulkan_cuda_interop_available)
+        active_encoder = gpu.active_encoder
+        use_cuda_interop = gpu.use_cuda_interop
+        cmd += gpu.pre_input_args
+        for notice in gpu.notices:
+            view.notify(notice)
 
         # Input file
         cmd += ['-i', os.path.normpath(input_path)]

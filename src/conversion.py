@@ -153,15 +153,6 @@ class ConversionManager:
             return False
         return True
 
-    # Hardware H.264 encoders can't do 10-bit at all; their HEVC counterparts
-    # can. Also used to preserve an already-HEVC source's codec on GPU (see
-    # the "want_hevc" dispatch below), not just the mandatory 10-bit case.
-    _HW_HEVC_ENCODER_MAP = {
-        'h264_nvenc': 'hevc_nvenc',
-        'h264_amf':   'hevc_amf',
-        'h264_qsv':   'hevc_qsv',
-    }
-
     def _resolve_gpu_encoder(self) -> 'str | None':
         if self._gpu_encoder is None:
             self._gpu_encoder = self.detect_gpu_encoder()
@@ -223,29 +214,8 @@ class ConversionManager:
         # swapped for their HEVC counterpart, which uses the semi-planar p010le
         # format instead of a 10-bit planar YUV format. 12-bit forces the CPU
         # path (see the use_gpu guard above), so it never reaches this swap.
-        codec_name = (properties.get('codec_name') or '').lower()
-        source_is_hevc = codec_name == 'hevc'
-
-        if bit_depth >= 12:
-            pix_fmt = 'yuv420p12le'
-        elif bit_depth == 10:
-            pix_fmt = 'yuv420p10le'
-        else:
-            pix_fmt = 'yuv420p'
-
-        # GPU: H.264 hardware encoders can't do 10-bit at all (mandatory
-        # swap); an already-HEVC source also swaps at 8-bit purely to
-        # preserve the source codec, since libx264/h264_* could otherwise
-        # handle 8-bit just fine.
-        if (bit_depth >= 10 or source_is_hevc) and active_encoder in self._HW_HEVC_ENCODER_MAP:
-            active_encoder = self._HW_HEVC_ENCODER_MAP[active_encoder]
-            if bit_depth == 10:
-                pix_fmt = 'p010le'
-
-        # CPU: libx264 tops out at 10-bit, so 12-bit must switch to libx265;
-        # an already-HEVC source also switches (preservation) even at 8/10-bit,
-        # where libx264 could otherwise still handle the bit depth.
-        want_libx265 = bit_depth >= 12 or source_is_hevc
+        codec_plan = ffmpeg_command._codec_and_pix_fmt(request, properties, active_encoder)
+        pix_fmt = codec_plan.pix_fmt
 
         # Encoding settings. In Constant Quality mode, `quality` is CRF for
         # libx264/5 or CQ/global_quality/QP for the GPU encoders (lower =
@@ -266,7 +236,7 @@ class ConversionManager:
         # libx264 tops out at 10-bit -- feeding it 12-bit silently downgrades to
         # yuv420p10le instead of erroring, so 12-bit (and HEVC-source
         # preservation in general) must switch codecs explicitly.
-        codec = active_encoder or ('libx265' if want_libx265 else 'libx264')
+        codec = codec_plan.codec
         # Per encoder: (args shared by both modes, Constant-Quality-only args,
         # Target-Bitrate-only args). The command is always
         # `-c:v <codec>` + shared + (bitrate-only + bitrate_rc_args | cq-only),
@@ -297,12 +267,8 @@ class ConversionManager:
         # is 'hev1', which QuickTime/Apple devices (and some Windows players)
         # refuse to recognize even though the stream is fine. Matroska has no
         # such codec tag, so MKV is left alone.
-        produces_hevc = (
-            active_encoder in self._HW_HEVC_ENCODER_MAP.values()
-            or (active_encoder is None and want_libx265)
-        )
         out_ext = os.path.splitext(output_path)[1].lower().lstrip('.')
-        if produces_hevc and out_ext in ('mp4', 'mov'):
+        if codec_plan.produces_hevc and out_ext in ('mp4', 'mov'):
             cmd += ['-tag:v', 'hvc1']
 
         # Common settings

@@ -298,5 +298,57 @@ class TestStreamMapArgs(unittest.TestCase):
         self.assertEqual(licensed.map_args, unlicensed.map_args)
 
 
+class TestCodecAndPixFmt(unittest.TestCase):
+
+    def test_default_cpu_8bit_h264_is_libx264_yuv420p(self):
+        plan = ffmpeg_command._codec_and_pix_fmt(_Req(), {'codec_name': 'h264'}, None)
+        self.assertEqual(plan.codec, 'libx264', msg=plan)
+        self.assertEqual(plan.pix_fmt, 'yuv420p', msg=plan)
+        self.assertFalse(plan.produces_hevc, msg=plan)
+
+    def test_ten_bit_cpu_uses_yuv420p10le_and_stays_libx264(self):
+        plan = ffmpeg_command._codec_and_pix_fmt(
+            _Req(bit_depth=10), {'codec_name': 'h264'}, None)
+        self.assertEqual(plan.codec, 'libx264', msg=plan)
+        self.assertEqual(plan.pix_fmt, 'yuv420p10le', msg=plan)
+
+    def test_twelve_bit_forces_libx265_and_yuv420p12le(self):
+        plan = ffmpeg_command._codec_and_pix_fmt(
+            _Req(bit_depth=12), {'codec_name': 'h264'}, None)
+        self.assertEqual(plan.codec, 'libx265', msg=plan)
+        self.assertEqual(plan.pix_fmt, 'yuv420p12le', msg=plan)
+        self.assertTrue(plan.produces_hevc, msg=plan)
+
+    def test_hevc_source_preserves_libx265_even_at_8bit_cpu(self):
+        plan = ffmpeg_command._codec_and_pix_fmt(
+            _Req(bit_depth=8), {'codec_name': 'hevc'}, None)
+        self.assertEqual(plan.codec, 'libx265', msg=plan)
+        self.assertTrue(plan.produces_hevc, msg=plan)
+
+    def test_ten_bit_hardware_encoder_swaps_to_hevc_variant_and_p010le(self):
+        plan = ffmpeg_command._codec_and_pix_fmt(
+            _Req(bit_depth=10), {'codec_name': 'h264'}, 'h264_nvenc')
+        self.assertEqual(plan.codec, 'hevc_nvenc', msg=plan)
+        self.assertEqual(plan.pix_fmt, 'p010le', msg=plan)
+        self.assertTrue(plan.produces_hevc, msg=plan)
+
+    def test_hevc_source_on_hardware_encoder_swaps_even_at_8bit(self):
+        """Preservation swap: an already-HEVC source swaps at 8-bit purely
+        to keep the source codec, though the H.264 hardware encoder could
+        otherwise handle 8-bit fine."""
+        plan = ffmpeg_command._codec_and_pix_fmt(
+            _Req(bit_depth=8), {'codec_name': 'hevc'}, 'h264_amf')
+        self.assertEqual(plan.codec, 'hevc_amf', msg=plan)
+        # Only bit_depth == 10 triggers the p010le swap -- 8-bit is unaffected.
+        self.assertEqual(plan.pix_fmt, 'yuv420p', msg=plan)
+        self.assertTrue(plan.produces_hevc, msg=plan)
+
+    def test_produces_hevc_false_for_plain_h264_hardware_encoder(self):
+        plan = ffmpeg_command._codec_and_pix_fmt(
+            _Req(bit_depth=8), {'codec_name': 'h264'}, 'h264_nvenc')
+        self.assertEqual(plan.codec, 'h264_nvenc', msg=plan)
+        self.assertFalse(plan.produces_hevc, msg=plan)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -314,3 +314,65 @@ def _stream_map_args(request: RequestLike, properties: 'dict[str, Any]') -> Stre
     return StreamArgs(map_args=audio_map_args + subtitle_map_args,
                       audio_codec_args=audio_codec_args,
                       subtitle_codec_args=subtitle_codec_args)
+
+
+# Hardware H.264 encoders can't do 10-bit at all; their HEVC counterparts
+# can. Also used to preserve an already-HEVC source's codec on GPU, not
+# just the mandatory 10-bit case.
+_HW_HEVC_ENCODER_MAP = {
+    'h264_nvenc': 'hevc_nvenc',
+    'h264_amf':   'hevc_amf',
+    'h264_qsv':   'hevc_qsv',
+}
+
+
+@dataclass(frozen=True)
+class CodecPlan:
+    codec: str
+    pix_fmt: str
+    produces_hevc: bool
+
+
+def _codec_and_pix_fmt(request: RequestLike, properties: 'dict[str, Any]',
+                       active_encoder: 'str | None') -> CodecPlan:
+    """Pixel format, the two H.264->HEVC preservation/mandatory swaps, and
+    codec selection -- including produces_hevc, computed here rather than
+    left for a caller to reconstruct from active_encoder plus want_libx265,
+    since active_encoder can be reassigned inside this same function by the
+    swap below and a caller holding the pre-swap value would compute the
+    wrong hvc1-tag decision (see the module docstring's HEVC-swap-ordering
+    note)."""
+    bit_depth = request.bit_depth
+    codec_name = (properties.get('codec_name') or '').lower()
+    source_is_hevc = codec_name == 'hevc'
+
+    # Output Color Depth: 10-bit (free) / 12-bit (Pro, CPU-only) avoids the
+    # banding that gradient-heavy HDR sources produce once crushed down to
+    # 8-bit.
+    if bit_depth >= 12:
+        pix_fmt = 'yuv420p12le'
+    elif bit_depth == 10:
+        pix_fmt = 'yuv420p10le'
+    else:
+        pix_fmt = 'yuv420p'
+
+    # GPU: H.264 hardware encoders can't do 10-bit at all (mandatory swap);
+    # an already-HEVC source also swaps at 8-bit purely to preserve the
+    # source codec, since libx264/h264_* could otherwise handle 8-bit fine.
+    if (bit_depth >= 10 or source_is_hevc) and active_encoder in _HW_HEVC_ENCODER_MAP:
+        active_encoder = _HW_HEVC_ENCODER_MAP[active_encoder]
+        if bit_depth == 10:
+            pix_fmt = 'p010le'
+
+    # CPU: libx264 tops out at 10-bit, so 12-bit must switch to libx265; an
+    # already-HEVC source also switches (preservation) even at 8/10-bit,
+    # where libx264 could otherwise still handle the bit depth.
+    want_libx265 = bit_depth >= 12 or source_is_hevc
+    codec = active_encoder or ('libx265' if want_libx265 else 'libx264')
+
+    produces_hevc = (
+        active_encoder in _HW_HEVC_ENCODER_MAP.values()
+        or (active_encoder is None and want_libx265)
+    )
+
+    return CodecPlan(codec=codec, pix_fmt=pix_fmt, produces_hevc=produces_hevc)

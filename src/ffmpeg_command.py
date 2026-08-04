@@ -38,6 +38,7 @@ Three sharp edges, each documented at the code that resolves them:
 """
 from __future__ import annotations
 
+import os
 import platform
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
@@ -241,3 +242,75 @@ def _filter_args(request: RequestLike, plan: TonemapPlan, gpu: GpuPlan) -> str:
         )
     return FFMPEG_CONVERT_FILTER.format(
         gamma=request.gamma, tonemapper=tonemapper, lut_path=get_lut_filter_path())
+
+
+_FREE_DOVI_AUDIO_ARGS = ['-c:a', 'aac', '-ac', '2', '-b:a', '192k']
+
+# Audio/subtitle codecs the MP4-family containers (.mp4/.m4v/.mov) accept
+# via stream copy. Anything else must be transcoded or dropped.
+_MP4_AUDIO_OK = {'aac', 'ac3', 'eac3', 'mp3', 'alac'}
+_TEXT_SUBTITLES = {'subrip', 'srt', 'ass', 'ssa', 'text', 'mov_text', 'webvtt'}
+_MP4_FAMILY = {'mp4', 'm4v', 'mov'}
+
+
+def _container_stream_args(
+    output_path: str, properties: 'dict[str, Any]'
+) -> 'tuple[list[str], list[str], list[str]]':
+    """Decide subtitle mapping and audio/subtitle codecs for the output
+    container.
+
+    Prefer lossless stream copy. For MP4-family containers, which can't copy
+    TrueHD/DTS audio or ASS/PGS subtitles, fall back to transcoding audio to
+    AAC and text subtitles to mov_text, and drop image subtitles (e.g. PGS)
+    that no MP4 codec can represent. Non-MP4 containers (notably MKV) keep
+    the original copy-everything behavior.
+
+    Returns (subtitle_map_args, audio_codec_args, subtitle_codec_args).
+    """
+    ext = os.path.splitext(output_path)[1].lower().lstrip('.')
+    if ext not in _MP4_FAMILY:
+        return (['-map', '0:s?'], ['-c:a', 'copy'], ['-c:s', 'copy'])
+
+    audio_codec = (properties.get('audio_codec') or '').lower()
+    if audio_codec and audio_codec not in _MP4_AUDIO_OK:
+        bit_rate = properties.get('audio_bit_rate') or 0
+        target_rate = str(min(int(bit_rate), 384000)) if bit_rate else '192k'
+        audio_codec_args = ['-c:a', 'aac', '-b:a', target_rate]
+    else:
+        audio_codec_args = ['-c:a', 'copy']
+
+    subtitle_map_args = []
+    for stream in properties.get('subtitle_streams', []):
+        if (stream.get('codec_name') or '').lower() in _TEXT_SUBTITLES:
+            subtitle_map_args += ['-map', f"0:{stream['index']}"]
+    subtitle_codec_args = ['-c:s', 'mov_text'] if subtitle_map_args else []
+
+    return (subtitle_map_args, audio_codec_args, subtitle_codec_args)
+
+
+@dataclass(frozen=True)
+class StreamArgs:
+    map_args: 'list[str]'
+    audio_codec_args: 'list[str]'
+    subtitle_codec_args: 'list[str]'
+
+
+def _stream_map_args(request: RequestLike, properties: 'dict[str, Any]') -> StreamArgs:
+    """Stream mapping plus the free/Pro Dolby Vision audio tier split.
+
+    Pro keeps the container-aware passthrough _container_stream_args decides
+    (lossless copy wherever the container allows, full multi-channel layout
+    always preserved). Free is restricted to the first audio stream,
+    downmixed to 2-channel stereo AAC, regardless of container."""
+    subtitle_map_args, audio_codec_args, subtitle_codec_args = \
+        _container_stream_args(request.output_path, properties)
+
+    if properties.get('is_dolby_vision') and not request.licensed:
+        audio_map_args = ['-map', '0:a:0?']
+        audio_codec_args = list(_FREE_DOVI_AUDIO_ARGS)
+    else:
+        audio_map_args = ['-map', '0:a?']
+
+    return StreamArgs(map_args=audio_map_args + subtitle_map_args,
+                      audio_codec_args=audio_codec_args,
+                      subtitle_codec_args=subtitle_codec_args)

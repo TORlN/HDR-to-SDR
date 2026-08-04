@@ -211,23 +211,11 @@ class ConversionManager:
             '-map', '[vout]'  # Map the filtered video output
         ]
 
-        # Map remaining streams. Audio is always mapped; subtitle mapping depends
-        # on the output container (see _container_stream_args).
-        subtitle_map_args, audio_codec_args, subtitle_codec_args = \
-            self._container_stream_args(output_path, properties)
-
-        # Dolby Vision audio tier split: Pro keeps the container-aware
-        # passthrough decided above (lossless copy wherever the container
-        # allows, full multi-channel layout always preserved). Free is
-        # explicitly restricted to the first audio stream, downmixed to
-        # 2-channel stereo AAC.
-        if properties.get('is_dolby_vision') and not licensed:
-            audio_map_args = ['-map', '0:a:0?']
-            audio_codec_args = list(self._FREE_DOVI_AUDIO_ARGS)
-        else:
-            audio_map_args = ['-map', '0:a?']   # Map all audio streams if they exist
-        cmd += audio_map_args
-        cmd += subtitle_map_args
+        # Map remaining streams. Audio is always mapped; subtitle mapping
+        # depends on the output container, and Free-tier Dolby Vision sources
+        # get an audio tier split (see ffmpeg_command._stream_map_args).
+        streams = ffmpeg_command._stream_map_args(request, properties)
+        cmd += streams.map_args
 
         # Output Color Depth: 10-bit (free) / 12-bit (Pro, CPU-only) avoids the
         # banding that gradient-heavy HDR sources produce once crushed down to
@@ -323,8 +311,8 @@ class ConversionManager:
             '-pix_fmt', pix_fmt,
             '-strict', '-2',
         ]
-        cmd += audio_codec_args      # copy, or transcode when container demands
-        cmd += subtitle_codec_args   # copy / mov_text / omitted
+        cmd += streams.audio_codec_args      # copy, or transcode when container demands
+        cmd += streams.subtitle_codec_args   # copy / mov_text / omitted
         cmd += [
             '-map_metadata', '0', # Copy all metadata
             '-movflags', '+faststart',  # Optimize for streaming playback
@@ -355,52 +343,6 @@ class ConversionManager:
                 "Choose MP4, MOV, or MKV instead."
             )
         return None
-
-    # Free-tier audio for Dolby Vision sources: first stream only, forced
-    # 2-channel stereo. AAC is safe in every output container we offer
-    # (MP4/MOV/MKV), so the downmix never needs container-specific handling.
-    _FREE_DOVI_AUDIO_ARGS = ['-c:a', 'aac', '-ac', '2', '-b:a', '192k']
-
-    # Audio/subtitle codecs that the MP4-family containers (.mp4/.m4v/.mov) accept
-    # via stream copy. Anything else must be transcoded or dropped.
-    _MP4_AUDIO_OK = {'aac', 'ac3', 'eac3', 'mp3', 'alac'}
-    _TEXT_SUBTITLES = {'subrip', 'srt', 'ass', 'ssa', 'text', 'mov_text', 'webvtt'}
-    _MP4_FAMILY = {'mp4', 'm4v', 'mov'}
-
-    def _container_stream_args(
-        self, output_path: str, properties: dict[str, Any]
-    ) -> tuple[list[str], list[str], list[str]]:
-        """Decide subtitle mapping and audio/subtitle codecs for the output container.
-
-        Prefer lossless stream copy. For MP4-family containers, which can't copy
-        TrueHD/DTS audio or ASS/PGS subtitles, fall back to transcoding audio to
-        AAC and text subtitles to mov_text, and drop image subtitles (e.g. PGS)
-        that no MP4 codec can represent. Non-MP4 containers (notably MKV) keep the
-        original copy-everything behavior.
-
-        Returns ``(subtitle_map_args, audio_codec_args, subtitle_codec_args)``.
-        """
-        ext = os.path.splitext(output_path)[1].lower().lstrip('.')
-        if ext not in self._MP4_FAMILY:
-            # MKV and friends accept the source streams as-is.
-            return (['-map', '0:s?'], ['-c:a', 'copy'], ['-c:s', 'copy'])
-
-        audio_codec = (properties.get('audio_codec') or '').lower()
-        if audio_codec and audio_codec not in self._MP4_AUDIO_OK:
-            bit_rate = properties.get('audio_bit_rate') or 0
-            target_rate = str(min(int(bit_rate), 384000)) if bit_rate else '192k'
-            audio_codec_args = ['-c:a', 'aac', '-b:a', target_rate]
-        else:
-            audio_codec_args = ['-c:a', 'copy']
-
-        # Map only subtitle streams MP4 can hold (text); drop image subs entirely.
-        subtitle_map_args = []
-        for stream in properties.get('subtitle_streams', []):
-            if (stream.get('codec_name') or '').lower() in self._TEXT_SUBTITLES:
-                subtitle_map_args += ['-map', f"0:{stream['index']}"]
-        subtitle_codec_args = ['-c:s', 'mov_text'] if subtitle_map_args else []
-
-        return (subtitle_map_args, audio_codec_args, subtitle_codec_args)
 
     def start_ffmpeg_process(self, cmd: list[str]) -> subprocess.Popen[str]:
         """Start the FFmpeg process without showing a console window."""

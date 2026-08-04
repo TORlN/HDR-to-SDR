@@ -222,5 +222,81 @@ class TestFilterArgs(unittest.TestCase):
         self.assertIn('tonemapping=bt.2390', filt, msg=filt)
 
 
+class TestContainerStreamArgs(unittest.TestCase):
+    """Container-aware audio/subtitle handling, moved here from
+    test/conversion_test.py's TestContainerStreamArgs -- this function is no
+    longer a ConversionManager method."""
+
+    def test_mkv_copies_everything(self):
+        props = {'audio_codec': 'truehd',
+                 'subtitle_streams': [{'codec_name': 'hdmv_pgs_subtitle', 'index': 2}]}
+        self.assertEqual(
+            ffmpeg_command._container_stream_args('out.mkv', props),
+            (['-map', '0:s?'], ['-c:a', 'copy'], ['-c:s', 'copy']))
+
+    def test_mp4_transcodes_truehd_and_keeps_only_text_subs(self):
+        props = {'audio_codec': 'truehd', 'audio_bit_rate': 0,
+                 'subtitle_streams': [
+                     {'codec_name': 'subrip', 'index': 3},
+                     {'codec_name': 'hdmv_pgs_subtitle', 'index': 2},
+                     {'codec_name': 'ass', 'index': 4},
+                 ]}
+        sub_map, audio, sub_codec = ffmpeg_command._container_stream_args('out.mp4', props)
+        self.assertEqual(sub_map, ['-map', '0:3', '-map', '0:4'])  # text subs only
+        self.assertEqual(audio, ['-c:a', 'aac', '-b:a', '192k'])    # no source bitrate
+        self.assertEqual(sub_codec, ['-c:s', 'mov_text'])
+
+    def test_mp4_caps_transcode_bitrate(self):
+        props = {'audio_codec': 'dts', 'audio_bit_rate': 1500000, 'subtitle_streams': []}
+        _, audio, _ = ffmpeg_command._container_stream_args('out.mp4', props)
+        self.assertEqual(audio, ['-c:a', 'aac', '-b:a', '384000'])
+
+    def test_mp4_copies_compatible_audio_and_drops_image_subs(self):
+        props = {'audio_codec': 'eac3', 'audio_bit_rate': 0,
+                 'subtitle_streams': [{'codec_name': 'hdmv_pgs_subtitle', 'index': 2}]}
+        sub_map, audio, sub_codec = ffmpeg_command._container_stream_args('out.mp4', props)
+        self.assertEqual(sub_map, [])          # image subs dropped
+        self.assertEqual(audio, ['-c:a', 'copy'])  # eac3 is mp4-legal
+        self.assertEqual(sub_codec, [])
+
+    def test_m4v_and_mov_behave_like_mp4(self):
+        props = {'audio_codec': 'truehd', 'audio_bit_rate': 0, 'subtitle_streams': []}
+        for path in ('out.m4v', 'out.MOV'):
+            _, audio, _ = ffmpeg_command._container_stream_args(path, props)
+            self.assertEqual(audio, ['-c:a', 'aac', '-b:a', '192k'])
+
+
+class TestStreamMapArgs(unittest.TestCase):
+
+    def test_mkv_licensed_non_dovi_maps_all_audio_first_then_subtitles(self):
+        props = {'audio_codec': 'aac',
+                 'subtitle_streams': [{'codec_name': 'subrip', 'index': 2}]}
+        streams = ffmpeg_command._stream_map_args(_Req(output_path='out.mkv'), props)
+        self.assertEqual(streams.map_args, ['-map', '0:a?', '-map', '0:s?'], msg=streams)
+
+    def test_dolby_vision_unlicensed_downmixes_to_free_tier(self):
+        props = {'is_dolby_vision': True, 'audio_codec': 'truehd',
+                 'subtitle_streams': []}
+        streams = ffmpeg_command._stream_map_args(
+            _Req(output_path='out.mkv', licensed=False), props)
+        self.assertEqual(streams.map_args, ['-map', '0:a:0?', '-map', '0:s?'], msg=streams)
+        self.assertEqual(streams.audio_codec_args,
+                         ['-c:a', 'aac', '-ac', '2', '-b:a', '192k'], msg=streams)
+
+    def test_dolby_vision_licensed_keeps_container_aware_passthrough(self):
+        props = {'is_dolby_vision': True, 'audio_codec': 'truehd',
+                 'subtitle_streams': []}
+        streams = ffmpeg_command._stream_map_args(
+            _Req(output_path='out.mkv', licensed=True), props)
+        self.assertEqual(streams.map_args, ['-map', '0:a?', '-map', '0:s?'], msg=streams)
+        self.assertEqual(streams.audio_codec_args, ['-c:a', 'copy'], msg=streams)
+
+    def test_non_dolby_vision_ignores_licensed_flag(self):
+        props = {'audio_codec': 'aac', 'subtitle_streams': []}
+        licensed = ffmpeg_command._stream_map_args(_Req(licensed=True), props)
+        unlicensed = ffmpeg_command._stream_map_args(_Req(licensed=False), props)
+        self.assertEqual(licensed.map_args, unlicensed.map_args)
+
+
 if __name__ == '__main__':
     unittest.main()

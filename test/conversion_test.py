@@ -1175,51 +1175,6 @@ class TestBitDepthContainerGuardrail(unittest.TestCase):
         self.assertEqual(view.cancel_visible, [True, False])
 
 
-class TestContainerStreamArgs(unittest.TestCase):
-    """Container-aware audio/subtitle handling in construct_ffmpeg_command."""
-
-    def setUp(self):
-        self.manager = ConversionManager()
-
-    def test_mkv_copies_everything(self):
-        props = {'audio_codec': 'truehd',
-                 'subtitle_streams': [{'codec_name': 'hdmv_pgs_subtitle', 'index': 2}]}
-        self.assertEqual(
-            self.manager._container_stream_args('out.mkv', props),
-            (['-map', '0:s?'], ['-c:a', 'copy'], ['-c:s', 'copy']))
-
-    def test_mp4_transcodes_truehd_and_keeps_only_text_subs(self):
-        props = {'audio_codec': 'truehd', 'audio_bit_rate': 0,
-                 'subtitle_streams': [
-                     {'codec_name': 'subrip', 'index': 3},
-                     {'codec_name': 'hdmv_pgs_subtitle', 'index': 2},
-                     {'codec_name': 'ass', 'index': 4},
-                 ]}
-        sub_map, audio, sub_codec = self.manager._container_stream_args('out.mp4', props)
-        self.assertEqual(sub_map, ['-map', '0:3', '-map', '0:4'])  # text subs only
-        self.assertEqual(audio, ['-c:a', 'aac', '-b:a', '192k'])    # no source bitrate
-        self.assertEqual(sub_codec, ['-c:s', 'mov_text'])
-
-    def test_mp4_caps_transcode_bitrate(self):
-        props = {'audio_codec': 'dts', 'audio_bit_rate': 1500000, 'subtitle_streams': []}
-        _, audio, _ = self.manager._container_stream_args('out.mp4', props)
-        self.assertEqual(audio, ['-c:a', 'aac', '-b:a', '384000'])
-
-    def test_mp4_copies_compatible_audio_and_drops_image_subs(self):
-        props = {'audio_codec': 'eac3', 'audio_bit_rate': 0,
-                 'subtitle_streams': [{'codec_name': 'hdmv_pgs_subtitle', 'index': 2}]}
-        sub_map, audio, sub_codec = self.manager._container_stream_args('out.mp4', props)
-        self.assertEqual(sub_map, [])          # image subs dropped
-        self.assertEqual(audio, ['-c:a', 'copy'])  # eac3 is mp4-legal
-        self.assertEqual(sub_codec, [])
-
-    def test_m4v_and_mov_behave_like_mp4(self):
-        props = {'audio_codec': 'truehd', 'audio_bit_rate': 0, 'subtitle_streams': []}
-        for path in ('out.m4v', 'out.MOV'):
-            _, audio, _ = self.manager._container_stream_args(path, props)
-            self.assertEqual(audio, ['-c:a', 'aac', '-b:a', '192k'])
-
-
 class TestLibplaceboCommandConstruction(unittest.TestCase):
     """The GPU tonemap path: libplacebo replaces the CPU zscale/tonemap chain."""
 

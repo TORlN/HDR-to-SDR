@@ -38,15 +38,17 @@ Three sharp edges, each documented at the code that resolves them:
 """
 from __future__ import annotations
 
+import logging
 import os
 import platform
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
-from conversion_view import Notice
+from conversion_view import ConversionView, Notice
 from utils import (VULKAN_DEVICE_ARGS, VULKAN_CUDA_DEVICE_ARGS,
                    build_libplacebo_filter, is_gpu_only_tonemapper,
-                   FFMPEG_CONVERT_FILTER, get_lut_filter_path)
+                   FFMPEG_CONVERT_FILTER, get_lut_filter_path,
+                   FFMPEG_EXECUTABLE)
 
 
 class RequestLike(Protocol):
@@ -423,3 +425,89 @@ def _encoder_rate_args(request: RequestLike, properties: 'dict[str, Any]',
     shared, cq_args, bitrate_args = encoder_args[codec.rsplit('_', 1)[-1]]
     return ['-c:v', codec] + shared + (
         bitrate_args + bitrate_rc_args if request.quality_mode == 'bitrate' else cq_args)
+
+
+@dataclass(frozen=True)
+class Probes:
+    """The three lazy capability checks build() needs, bundled so its own
+    signature doesn't re-explode into the kind of parameter list this
+    refactor exists to eliminate.
+
+    Each is a zero-arg callable the caller supplies -- this module never
+    imports vulkan_libplacebo_available, vulkan_cuda_interop_available, or
+    calls detect_gpu_encoder itself. Two reasons: it preserves their exact
+    pre-split call laziness (see the module docstring's GPU-probe-laziness
+    note -- eagerly resolving any of these would add a probe call, possibly
+    a real subprocess, on a path that has none today), and it is what keeps
+    the pre-existing test suite's patch('src.conversion.vulkan_libplacebo_available',
+    ...)-style mocks (roughly 30 call sites across test/conversion_test.py
+    and the Task 1 golden master) working unmodified -- conversion.py still
+    owns the real `from utils import ...` bindings those mocks target, and
+    merely passes the (possibly-mocked) names through as arguments. See
+    Task 2's file-level note for the full story, including why
+    platform.system() needs no equivalent field here."""
+    resolve_gpu_encoder: 'Callable[[], str | None]'
+    resolve_libplacebo_available: 'Callable[[], bool]'
+    resolve_cuda_interop_available: 'Callable[[], bool]'
+
+
+def build(request: RequestLike, properties: 'dict[str, Any]',
+         probes: Probes, view: ConversionView) -> 'list[str]':
+    """Construct the ffmpeg argv for one conversion.
+
+    The one impure function in this module: it owns view and decides
+    notice-emission order. Notices from _tonemap_plan and _gpu_device_args
+    are delivered immediately after each of those calls returns -- before
+    _filter_args runs, since _filter_args is the only helper that can raise
+    and a raise must never suppress a notice that a pre-split caller would
+    already have seen (the pre-split function emitted these notices inline,
+    textually before the equivalent of the _filter_args call)."""
+    tone = _tonemap_plan(request, properties, probes.resolve_libplacebo_available)
+    for notice in tone.notices:
+        view.notify(notice)
+
+    gpu = _gpu_device_args(tone, probes.resolve_gpu_encoder,
+                           probes.resolve_cuda_interop_available)
+    for notice in gpu.notices:
+        view.notify(notice)
+
+    filter_str = _filter_args(request, tone, gpu)  # may raise ValueError
+
+    cmd = [FFMPEG_EXECUTABLE, '-loglevel', 'info']
+    cmd += gpu.pre_input_args
+    cmd += ['-i', os.path.normpath(request.input_path)]
+    cmd += [
+        '-filter_complex', f'[0:v:0]{filter_str}[vout]',
+        '-map', '[vout]',
+    ]
+
+    streams = _stream_map_args(request, properties)
+    cmd += streams.map_args
+
+    codec_plan = _codec_and_pix_fmt(request, properties, gpu.active_encoder)
+    cmd += _encoder_rate_args(request, properties, codec_plan.codec)
+
+    # HEVC in MP4/MOV must be tagged 'hvc1': ffmpeg's default sample entry
+    # is 'hev1', which QuickTime/Apple devices (and some Windows players)
+    # refuse to recognize even though the stream is fine. Matroska has no
+    # such codec tag, so MKV is left alone.
+    out_ext = os.path.splitext(request.output_path)[1].lower().lstrip('.')
+    if codec_plan.produces_hevc and out_ext in ('mp4', 'mov'):
+        cmd += ['-tag:v', 'hvc1']
+
+    cmd += [
+        '-r', str(properties['frame_rate']),
+        '-pix_fmt', codec_plan.pix_fmt,
+        '-strict', '-2',
+    ]
+    cmd += streams.audio_codec_args      # copy, or transcode when container demands
+    cmd += streams.subtitle_codec_args   # copy / mov_text / omitted
+    cmd += [
+        '-map_metadata', '0',  # Copy all metadata
+        '-movflags', '+faststart',  # Optimize for streaming playback
+        os.path.normpath(request.output_path),
+        '-y'
+    ]
+
+    logging.debug(f"Constructed ffmpeg command: {' '.join(cmd)}")
+    return cmd

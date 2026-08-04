@@ -407,5 +407,65 @@ class TestEncoderRateArgs(unittest.TestCase):
         self.assertEqual(args[args.index('-b:v') + 1], '8000000', msg=args)
 
 
+class _RecordingView:
+    """Local to this file -- test/_recording_view.py's RecordingConversionView
+    implements the full ConversionView Protocol; build() only ever calls
+    .notify(), so a smaller double keeps this file's import list to what it
+    actually exercises."""
+    def __init__(self):
+        self.notices = []
+
+    def notify(self, notice):
+        self.notices.append(notice)
+
+
+class TestBuild(unittest.TestCase):
+    """All three Probes callables are always plain stub lambdas here, never
+    unittest.mock.patch -- build() (and everything it calls) takes them as
+    parameters rather than importing the underlying utils probes, so every
+    test in this class is fully deterministic regardless of this machine's
+    real GPU/Vulkan capability. See Task 2's file-level note for why."""
+
+    _PROPS = {'width': 1920, 'height': 1080, 'bit_rate': 4_000_000,
+              'codec_name': 'h264', 'frame_rate': 30.0, 'audio_codec': 'aac',
+              'audio_bit_rate': 128000, 'subtitle_streams': []}
+
+    def _probes(self, **overrides) -> ffmpeg_command.Probes:
+        base = dict(resolve_gpu_encoder=lambda: None,
+                    resolve_libplacebo_available=lambda: False,
+                    resolve_cuda_interop_available=lambda: False)
+        base.update(overrides)
+        return ffmpeg_command.Probes(**base)
+
+    def test_returns_a_complete_command_for_the_cpu_baseline(self):
+        view = _RecordingView()
+        cmd = ffmpeg_command.build(_Req(), self._PROPS, self._probes(), view)
+        self.assertIn('-i', cmd, msg=cmd)
+        self.assertIn('libx264', cmd, msg=cmd)
+        self.assertEqual(view.notices, [], msg=view.notices)
+
+    def test_notices_are_delivered_even_when_filter_args_raises(self):
+        """The core of the notice-before-raise guarantee: a Dolby Vision
+        profile-5 warning from _tonemap_plan must reach the view even
+        though _filter_args (called afterward) raises. resolve_libplacebo_available
+        is stubbed False so dovi_needs_rpu=True cannot flip use_libplacebo
+        True -- without that, the gpu-only tonemapper would take the
+        libplacebo path instead of raising."""
+        view = _RecordingView()
+        props = dict(self._PROPS, is_dolby_vision=True, dovi_profile=5)
+        with self.assertRaises(ValueError):
+            ffmpeg_command.build(
+                _Req(tonemapper='bt.2390'), props, self._probes(), view)
+        self.assertEqual(len(view.notices), 1, msg=view.notices)
+
+    def test_resolve_gpu_encoder_not_called_on_12bit_gpu_request(self):
+        view = _RecordingView()
+        def _forbidden():
+            raise AssertionError('must not be called')
+        ffmpeg_command.build(
+            _Req(use_gpu=True, bit_depth=12), self._PROPS,
+            self._probes(resolve_gpu_encoder=_forbidden), view)
+
+
 if __name__ == '__main__':
     unittest.main()

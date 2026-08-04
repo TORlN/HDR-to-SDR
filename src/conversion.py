@@ -9,14 +9,17 @@ from dataclasses import dataclass, replace
 from typing import Any
 from conversion_view import ConversionView, Notice
 import ffmpeg_command
-from utils import (get_video_properties, FFMPEG_CONVERT_FILTER,
-                   FFMPEG_EXECUTABLE,
-                   VULKAN_DEVICE_ARGS, VULKAN_CUDA_DEVICE_ARGS,
-                   build_libplacebo_filter, is_gpu_only_tonemapper,
+from utils import (get_video_properties, FFMPEG_EXECUTABLE,
                    vulkan_libplacebo_available, vulkan_cuda_interop_available,
-                   get_lut_filter_path,
                    _startupinfo as _utils_startupinfo)
-import platform
+import platform  # noqa: F401 -- unused directly, but `import platform` (not
+# `from platform import system`) must stay so `src.conversion.platform` still
+# resolves: test/conversion_test.py's @patch('src.conversion.platform.system',
+# ...) digs through this module's `platform` attribute to reach the one real,
+# globally-shared platform module that ffmpeg_command.py's own `platform.system()`
+# call (inside _gpu_device_args) actually reads. Deleting this import doesn't
+# just remove dead code -- it breaks those patches with an AttributeError
+# before the mocked value ever takes effect.
 
 
 @dataclass(frozen=True)
@@ -161,95 +164,12 @@ class ConversionManager:
     def construct_ffmpeg_command(self, request: ConversionRequest,
                                  properties: dict[str, Any],
                                  view: ConversionView) -> list[str]:
-        input_path = request.input_path
-        output_path = request.output_path
-        gamma = request.gamma
-        use_gpu = request.use_gpu
-        tonemapper = request.tonemapper
-        quality = request.quality
-        quality_mode = request.quality_mode
-        bit_depth = request.bit_depth
-        licensed = request.licensed
-        lut_enabled = request.lut_enabled
-
-        cmd = [
-            FFMPEG_EXECUTABLE,
-            '-loglevel', 'info',
-        ]
-
-        tone = ffmpeg_command._tonemap_plan(request, properties, vulkan_libplacebo_available)
-        use_gpu = tone.use_gpu
-        dovi_needs_rpu = tone.dovi_needs_rpu
-        use_libplacebo = tone.use_libplacebo
-        for notice in tone.notices:
-            view.notify(notice)
-
-        gpu = ffmpeg_command._gpu_device_args(
-            tone, self._resolve_gpu_encoder, vulkan_cuda_interop_available)
-        active_encoder = gpu.active_encoder
-        use_cuda_interop = gpu.use_cuda_interop
-        cmd += gpu.pre_input_args
-        for notice in gpu.notices:
-            view.notify(notice)
-
-        # Input file
-        cmd += ['-i', os.path.normpath(input_path)]
-
-        # The filter must be applied before mapping streams
-        filter_str = ffmpeg_command._filter_args(request, tone, gpu)
-        cmd += [
-            '-filter_complex', f'[0:v:0]{filter_str}[vout]',
-            '-map', '[vout]'  # Map the filtered video output
-        ]
-
-        # Map remaining streams. Audio is always mapped; subtitle mapping
-        # depends on the output container, and Free-tier Dolby Vision sources
-        # get an audio tier split (see ffmpeg_command._stream_map_args).
-        streams = ffmpeg_command._stream_map_args(request, properties)
-        cmd += streams.map_args
-
-        # Output Color Depth: 10-bit (free) / 12-bit (Pro, CPU-only) avoids the
-        # banding that gradient-heavy HDR sources produce once crushed down to
-        # 8-bit. Hardware H.264 encoders have no 10-bit mode at all, so they're
-        # swapped for their HEVC counterpart, which uses the semi-planar p010le
-        # format instead of a 10-bit planar YUV format. 12-bit forces the CPU
-        # path (see the use_gpu guard above), so it never reaches this swap.
-        codec_plan = ffmpeg_command._codec_and_pix_fmt(request, properties, active_encoder)
-        pix_fmt = codec_plan.pix_fmt
-
-        # Encoding settings. In Constant Quality mode, `quality` is CRF for
-        # libx264/5 or CQ/global_quality/QP for the GPU encoders (lower =
-        # better). In Target Bitrate mode, `quality` is the user's chosen
-        # kbps value; T/maxrate/bufsize are its "target average, capped
-        # burst" ffmpeg args, standard on every encoder here (GPU or CPU).
-        codec = codec_plan.codec
-        cmd += ffmpeg_command._encoder_rate_args(request, properties, codec)
-
-        # HEVC in MP4/MOV must be tagged 'hvc1': ffmpeg's default sample entry
-        # is 'hev1', which QuickTime/Apple devices (and some Windows players)
-        # refuse to recognize even though the stream is fine. Matroska has no
-        # such codec tag, so MKV is left alone.
-        out_ext = os.path.splitext(output_path)[1].lower().lstrip('.')
-        if codec_plan.produces_hevc and out_ext in ('mp4', 'mov'):
-            cmd += ['-tag:v', 'hvc1']
-
-        # Common settings
-        cmd += [
-            '-r', str(properties['frame_rate']),
-            '-pix_fmt', pix_fmt,
-            '-strict', '-2',
-        ]
-        cmd += streams.audio_codec_args      # copy, or transcode when container demands
-        cmd += streams.subtitle_codec_args   # copy / mov_text / omitted
-        cmd += [
-            '-map_metadata', '0', # Copy all metadata
-            '-movflags', '+faststart',  # Optimize for streaming playback
-            os.path.normpath(output_path),
-            '-y'
-        ]
-
-        logging.debug(f"Constructed ffmpeg command: {' '.join(cmd)}")
-        return cmd
+        probes = ffmpeg_command.Probes(
+            resolve_gpu_encoder=self._resolve_gpu_encoder,
+            resolve_libplacebo_available=vulkan_libplacebo_available,
+            resolve_cuda_interop_available=vulkan_cuda_interop_available,
+        )
+        return ffmpeg_command.build(request, properties, probes, view)
 
     # .m4v is Apple's legacy "iPod video" MPEG-4 profile: it predates HEVC/10-bit
     # entirely and only ever allowed 8-bit H.264 Baseline/Main/High. Unlike plain

@@ -8,6 +8,7 @@ import logging
 from dataclasses import dataclass, replace
 from typing import Any
 from conversion_view import ConversionView, Notice
+import ffmpeg_command
 from utils import (get_video_properties, FFMPEG_CONVERT_FILTER,
                    FFMPEG_EXECUTABLE,
                    VULKAN_DEVICE_ARGS, VULKAN_CUDA_DEVICE_ARGS,
@@ -175,53 +176,18 @@ class ConversionManager:
         licensed = request.licensed
         lut_enabled = request.lut_enabled
 
-        # No hardware encoder (any vendor/generation) has a 12-bit HEVC profile
-        # in its API -- it's a fixed silicon limitation, not a driver gap.
-        # 12-bit always forces the full CPU pipeline (tonemap + encode).
-        if bit_depth >= 12:
-            use_gpu = False
-
         cmd = [
             FFMPEG_EXECUTABLE,
             '-loglevel', 'info',
         ]
         current_platform = platform.system().lower()
 
-        # GPU tonemapping (libplacebo/Vulkan) is the big win: it offloads the
-        # single-threaded CPU tonemap that otherwise bottlenecks the whole
-        # pipeline. Gated on the same "GPU acceleration" toggle plus a one-time
-        # capability probe; falls back to the CPU tonemap chain when unavailable.
-        #
-        # Dolby Vision profile 5 (IPTPQc2) is the exception to the toggle: it
-        # has no HDR10-compatible base layer, so the zscale chain decodes to
-        # wrong colors (green/purple cast). libplacebo applies the DoVi RPU
-        # during tonemapping (apply_dovi defaults on), so when it's available
-        # it is used for profile 5 even in CPU mode — only the tonemap runs on
-        # the GPU; encoding still follows the encoder dispatch below. Profiles
-        # 7/8 carry an HDR10-compatible base layer and are already handled
-        # correctly by the standard chain.
-        dovi_needs_rpu = bool(properties.get('is_dolby_vision')
-                             and properties.get('dovi_profile') == 5)
-        use_libplacebo = (use_gpu or dovi_needs_rpu) and vulkan_libplacebo_available()
-        if dovi_needs_rpu and not use_libplacebo:
-            view.notify(Notice.warning(
-                "Warning",
-                "This Dolby Vision (profile 5) source has no HDR10-compatible "
-                "base layer and requires GPU tonemapping to render correctly, "
-                "which isn't available on this system. The output colors may "
-                "look wrong (green/purple cast)."))
-        elif dovi_needs_rpu and not use_gpu:
-            # use_gpu is False here, so without this notice the override is
-            # silent -- a user who unchecked "Enable GPU Acceleration"
-            # expecting a pure-CPU run has no way to know GPU tonemapping ran
-            # anyway (only the tonemap step; encoding still follows the
-            # encoder dispatch below, so it stays on the CPU encoder).
-            view.notify(Notice.info(
-                "Dolby Vision Profile 5",
-                "This Dolby Vision (profile 5) source has no HDR10-compatible "
-                "base layer, so GPU tonemapping is being used to render its "
-                "colors correctly even though \"Enable GPU Acceleration\" is "
-                "unchecked. Encoding itself still runs on the CPU."))
+        tone = ffmpeg_command._tonemap_plan(request, properties, vulkan_libplacebo_available)
+        use_gpu = tone.use_gpu
+        dovi_needs_rpu = tone.dovi_needs_rpu
+        use_libplacebo = tone.use_libplacebo
+        for notice in tone.notices:
+            view.notify(notice)
 
         # GPU acceleration setup — dispatch on whichever encoder was detected
         active_encoder = None

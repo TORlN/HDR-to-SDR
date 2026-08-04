@@ -61,8 +61,7 @@ class ConversionManager:
         self.process: subprocess.Popen[str] | None = None
         self.cancelled: bool = False
         self._gpu_encoder: str | None = None
-        self._request: ConversionRequest | None = None
-        self._view: ConversionView | None = None
+        self._run: ConversionRun | None = None
 
     def start(self, request: ConversionRequest, view: ConversionView) -> bool:
         """Public entry point. The only way to begin a conversion.
@@ -102,8 +101,7 @@ class ConversionManager:
             self._reject(incompatibility, view)
             return _abort_before_start()
 
-        self._request = request
-        self._view = view
+        self._run = ConversionRun(request=request, view=view)
         self.cancelled = False
 
         properties = get_video_properties(request.input_path)
@@ -275,9 +273,10 @@ class ConversionManager:
         The retry derives its request from the original with replace() rather
         than re-reading the GUI: a path edited mid-conversion used to redirect
         the retry to a different file. *request* is the snapshot monitor_progress
-        was handed for this run, not self._request -- self._request can already
-        belong to a different, later-started conversion by the time this
-        after(0) callback fires (e.g. cancel + immediately start another file).
+        was handed for this run, not self._run.request -- self._run.request can
+        already belong to a different, later-started conversion by the time
+        this after(0) callback fires (e.g. cancel + immediately start another
+        file).
         """
         view.on_gpu_fallback()
         view.notify(Notice.warning(
@@ -346,7 +345,7 @@ class ConversionManager:
 
     def cancel_conversion(self) -> None:
         self.cancelled = True
-        view = self._view
+        view = self._run.view if self._run else None
         if self.process and view is not None:
             self.process.terminate()
             self.process = None

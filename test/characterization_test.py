@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../s
 from PIL import Image
 
 from _recording_view import RecordingConversionView
-from src.conversion import ConversionManager, ConversionRequest
+from src.conversion import ConversionManager, ConversionRequest, ConversionRun
 from src.utils import (
     get_maxcll,
     get_video_properties,
@@ -210,7 +210,7 @@ class TestMonitorProgress(unittest.TestCase):
         request = self._req(use_gpu=True, tonemapper='hable')
         # start would normally have stashed this on the manager before
         # monitor_progress's worker thread ever runs.
-        manager._request = request
+        manager._run = ConversionRun(request=request, view=view)
 
         manager.monitor_progress(request, view, 90.0)
 

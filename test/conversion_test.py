@@ -198,7 +198,7 @@ class TestConversionManager(unittest.TestCase):
         manager = ConversionManager()
         manager.process = mock_process
         view = _view()
-        manager._view = view
+        manager._run = ConversionRun(request=_req(), view=view)
         manager.cancel_conversion()
 
         mock_process.terminate.assert_called_once()
@@ -641,7 +641,7 @@ class TestCancelUsesStoredView(unittest.TestCase):
         proc = MagicMock()
         m.process = proc
         view = _view()
-        m._view = view
+        m._run = ConversionRun(request=_req(), view=view)
         m.cancel_conversion()
         proc.terminate.assert_called_once()
         self.assertIs(m.cancelled, True)
@@ -1879,7 +1879,7 @@ class TestStartBuildsRequest(unittest.TestCase):
         m = ConversionManager()
         self._start(m, tonemapper='hable', quality=30000, quality_mode='bitrate',
                     bit_depth=10, licensed=True, lut_enabled=False)
-        r = m._request
+        r = m._run.request
         self.assertEqual(r.input_path, os.path.abspath('in.mkv'))
         self.assertEqual(r.output_path, os.path.abspath('out.mkv'))
         self.assertEqual(r.gamma, 2.2)
@@ -1896,21 +1896,20 @@ class TestStartBuildsRequest(unittest.TestCase):
         resolved paths so a retry re-encodes the same files."""
         m = ConversionManager()
         self._start(m)
-        self.assertTrue(os.path.isabs(m._request.input_path))
-        self.assertTrue(os.path.isabs(m._request.output_path))
+        self.assertTrue(os.path.isabs(m._run.request.input_path))
+        self.assertTrue(os.path.isabs(m._run.request.output_path))
 
     def test_view_carries_the_callers_on_complete(self):
         m = ConversionManager()
         cb = MagicMock()
         view = _view(on_complete=cb)
         self._start(m, view=view)
-        self.assertIs(m._view, view)
+        self.assertIs(m._run.view, view)
         self.assertIs(view.on_complete, cb)
 
-    def test_request_and_view_start_as_none(self):
+    def test_run_starts_as_none(self):
         m = ConversionManager()
-        self.assertIsNone(m._request)
-        self.assertIsNone(m._view)
+        self.assertIsNone(m._run)
 
 
 class TestRetryUsesTheRequest(unittest.TestCase):
@@ -1968,23 +1967,26 @@ class TestRetryUsesTheRequest(unittest.TestCase):
             "GPU Acceleration Failed",
             "GPU acceleration failed. Switching to CPU encoding.")])
 
-    def test_cpu_retry_uses_the_request_it_was_handed_not_self_request(self):
+    def test_cpu_retry_uses_the_request_it_was_handed_not_self_run_request(self):
         """FINDING 1 regression pin: monitor_progress hands _retry_with_cpu a
         per-run snapshot. If _retry_with_cpu ever went back to reading
-        self._request instead, a cancel-then-immediately-start-another-file
+        self._run.request instead, a cancel-then-immediately-start-another-file
         race would let the retry silently re-encode the WRONG (currently
         running) conversion's request -- two ffmpeg processes writing the
-        same '-y' output path. self._request is set to a different request
-        than the one handed to _retry_with_cpu to prove the handed one wins."""
+        same '-y' output path. self._run.request is set to a different
+        request than the one handed to _retry_with_cpu to prove the handed
+        one wins."""
         m = ConversionManager()
         handed_request = _req(input_path='handed_in.mkv',
                               output_path='handed_out.mp4', use_gpu=True,
                               tonemapper='hable')
         # Simulates conversion B already having started and overwritten
-        # self._request by the time A's retry callback runs.
-        m._request = _req(input_path='other_in.mkv',
-                          output_path='other_out.mp4', use_gpu=True,
-                          tonemapper='mobius')
+        # self._run by the time A's retry callback runs.
+        m._run = ConversionRun(
+            request=_req(input_path='other_in.mkv',
+                        output_path='other_out.mp4', use_gpu=True,
+                        tonemapper='mobius'),
+            view=_view())
         m.start = MagicMock()
         m._retry_with_cpu(handed_request, _view())
         sent = m.start.call_args.args[0]
@@ -2036,8 +2038,8 @@ class TestStartTakesARequestAndAView(unittest.TestCase):
         self.assertIs(manager.start(_req(input_path='in.mp4'), view), True)
 
         mock_props.assert_called_once_with(os.path.abspath('in.mp4'))
-        self.assertEqual(manager._request.input_path, os.path.abspath('in.mp4'))
-        self.assertIs(manager._view, view)
+        self.assertEqual(manager._run.request.input_path, os.path.abspath('in.mp4'))
+        self.assertIs(manager._run.view, view)
 
     def test_start_leaves_a_blank_path_falsy_so_the_guard_still_fires(self):
         """os.path.abspath('') resolves to the cwd, which is truthy -- an

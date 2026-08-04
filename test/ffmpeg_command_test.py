@@ -350,5 +350,62 @@ class TestCodecAndPixFmt(unittest.TestCase):
         self.assertFalse(plan.produces_hevc, msg=plan)
 
 
+class TestEncoderRateArgs(unittest.TestCase):
+
+    _PROPS = {'bit_rate': 4_000_000}
+
+    def test_libx264_cq_mode(self):
+        args = ffmpeg_command._encoder_rate_args(_Req(quality=20), self._PROPS, 'libx264')
+        self.assertEqual(
+            args, ['-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'film',
+                   '-crf', '20'], msg=args)
+
+    def test_libx265_has_no_tune_flag(self):
+        """libx265 has no 'film' tune -- x264's -tune film fails x265 init."""
+        args = ffmpeg_command._encoder_rate_args(_Req(quality=20), self._PROPS, 'libx265')
+        self.assertNotIn('-tune', args, msg=args)
+
+    def test_nvenc_cq_mode_uses_cq_flag_and_source_bitrate_as_ceiling(self):
+        args = ffmpeg_command._encoder_rate_args(
+            _Req(quality=23), self._PROPS, 'h264_nvenc')
+        self.assertIn('-cq', args, msg=args)
+        self.assertEqual(args[args.index('-cq') + 1], '23', msg=args)
+        self.assertIn('4000000', args, msg=args)
+
+    def test_qsv_cq_mode_uses_global_quality(self):
+        args = ffmpeg_command._encoder_rate_args(
+            _Req(quality=23), self._PROPS, 'h264_qsv')
+        self.assertIn('-global_quality', args, msg=args)
+
+    def test_amf_cq_mode_uses_matched_qp_triplet(self):
+        args = ffmpeg_command._encoder_rate_args(
+            _Req(quality=23), self._PROPS, 'h264_amf')
+        for flag in ('-qp_i', '-qp_p', '-qp_b'):
+            self.assertIn(flag, args, msg=args)
+            self.assertEqual(args[args.index(flag) + 1], '23', msg=args)
+
+    def test_bitrate_mode_computes_maxrate_and_bufsize_from_quality_kbps(self):
+        args = ffmpeg_command._encoder_rate_args(
+            _Req(quality=5000, quality_mode='bitrate'), self._PROPS, 'libx264')
+        self.assertEqual(args[args.index('-b:v') + 1], '5000000', msg=args)
+        self.assertEqual(args[args.index('-maxrate') + 1], '7500000', msg=args)
+        self.assertEqual(args[args.index('-bufsize') + 1], '10000000', msg=args)
+        self.assertNotIn('-crf', args, msg=args)
+
+    def test_amf_bitrate_mode_adds_vbr_peak_rc(self):
+        """AMF is the one encoder with a non-empty bitrate-only args tuple
+        entry -- nvenc/qsv/libx264/libx265 all have an empty one."""
+        args = ffmpeg_command._encoder_rate_args(
+            _Req(quality=5000, quality_mode='bitrate'), self._PROPS, 'h264_amf')
+        self.assertIn('vbr_peak', args, msg=args)
+
+    def test_mkv_zero_bitrate_falls_back_to_8mbps_ceiling(self):
+        """MKV containers often report bit_rate=0; nvenc/qsv must not
+        receive -b:v 0 / -maxrate 0 / -bufsize 0."""
+        args = ffmpeg_command._encoder_rate_args(
+            _Req(quality=23), {'bit_rate': 0}, 'h264_nvenc')
+        self.assertEqual(args[args.index('-b:v') + 1], '8000000', msg=args)
+
+
 if __name__ == '__main__':
     unittest.main()

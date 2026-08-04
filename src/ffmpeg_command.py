@@ -376,3 +376,50 @@ def _codec_and_pix_fmt(request: RequestLike, properties: 'dict[str, Any]',
     )
 
     return CodecPlan(codec=codec, pix_fmt=pix_fmt, produces_hevc=produces_hevc)
+
+
+def _encoder_rate_args(request: RequestLike, properties: 'dict[str, Any]',
+                       codec: str) -> 'list[str]':
+    """The -c:v flag plus every quality/rate-control arg for *codec*.
+
+    quality is CRF (libx264/5) or CQ/global_quality/QP (GPU encoders) in
+    Constant Quality mode; the user's chosen kbps value in Target Bitrate
+    mode, where -b:v/-maxrate/-bufsize are the standard "target average,
+    capped burst" args, added on every encoder here (GPU or CPU)."""
+    quality = str(request.quality)
+    bitrate_rc_args: 'list[str]' = []
+    if request.quality_mode == 'bitrate':
+        target_bv = int(quality) * 1000
+        bitrate_rc_args = ['-b:v', str(target_bv),
+                           '-maxrate', str(int(target_bv * 1.5)),
+                           '-bufsize', str(target_bv * 2)]
+
+    # MKV containers often report bit_rate=0; fall back to 8 Mbps so
+    # nvenc/qsv never receive -b:v 0 / -maxrate 0 / -bufsize 0.
+    _bv = properties['bit_rate'] or 8_000_000
+
+    # Per encoder: (args shared by both modes, Constant-Quality-only args,
+    # Target-Bitrate-only args). The command is always
+    # -c:v <codec> + shared + (bitrate-only + bitrate_rc_args | cq-only), so
+    # a change to one mode can't silently skip the other. The key is the
+    # vendor suffix: an unrecognised encoder is already nulled to None by
+    # the vendor dispatch in _gpu_device_args, so this lookup is total.
+    encoder_args = {
+        'nvenc': (['-preset', 'p4', '-tune', 'hq', '-rc', 'vbr'],
+                  ['-cq', quality, '-b:v', str(_bv),
+                   '-maxrate', str(_bv), '-bufsize', str(_bv * 2)],
+                  []),
+        'amf': (['-quality', 'balanced'],
+                ['-rc', 'cqp', '-qp_i', quality,
+                 '-qp_p', quality, '-qp_b', quality],
+                ['-rc', 'vbr_peak']),
+        'qsv': ([], ['-global_quality', quality, '-b:v', str(_bv)], []),
+        # libx265 has no 'film' tune -- x264's -tune film fails x265 init.
+        'libx265': (['-preset', 'veryfast'], ['-crf', quality], []),
+        # No -b:v in CRF mode: libx264 ignores a target bitrate there.
+        'libx264': (['-preset', 'veryfast', '-tune', 'film'],
+                    ['-crf', quality], []),
+    }
+    shared, cq_args, bitrate_args = encoder_args[codec.rsplit('_', 1)[-1]]
+    return ['-c:v', codec] + shared + (
+        bitrate_args + bitrate_rc_args if request.quality_mode == 'bitrate' else cq_args)

@@ -43,7 +43,9 @@ from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
 from conversion_view import Notice
-from utils import VULKAN_DEVICE_ARGS, VULKAN_CUDA_DEVICE_ARGS
+from utils import (VULKAN_DEVICE_ARGS, VULKAN_CUDA_DEVICE_ARGS,
+                   build_libplacebo_filter, is_gpu_only_tonemapper,
+                   FFMPEG_CONVERT_FILTER, get_lut_filter_path)
 
 
 class RequestLike(Protocol):
@@ -216,3 +218,26 @@ def _gpu_device_args(plan: TonemapPlan,
 
     return GpuPlan(active_encoder=active_encoder, pre_input_args=pre_input_args,
                    use_cuda_interop=use_cuda_interop, notices=notices)
+
+
+def _filter_args(request: RequestLike, plan: TonemapPlan, gpu: GpuPlan) -> str:
+    """The tonemap filter chain body, without the [0:v:0]...[vout] wrapper
+    -- build() (Task 8) owns that, since it also owns the -filter_complex
+    flag itself.
+
+    Raises ValueError for a GPU-only tonemapper (e.g. bt.2390) forced onto
+    the CPU zscale path, which has no equivalent -- unchanged from the
+    pre-split function."""
+    tonemapper = request.tonemapper.lower()
+    if plan.use_libplacebo:
+        return build_libplacebo_filter(
+            request.gamma, tonemapper, cuda_input=gpu.use_cuda_interop,
+            lut_enabled=request.lut_enabled)
+    if is_gpu_only_tonemapper(tonemapper):
+        raise ValueError(
+            f"{tonemapper} requires GPU tonemapping; this item's "
+            "settings force CPU processing — change the tonemapper "
+            "or output bit depth."
+        )
+    return FFMPEG_CONVERT_FILTER.format(
+        gamma=request.gamma, tonemapper=tonemapper, lut_path=get_lut_filter_path())

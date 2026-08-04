@@ -180,5 +180,47 @@ class TestGpuDeviceArgs(unittest.TestCase):
         self.assertEqual(gpu.pre_input_args, ffmpeg_command.VULKAN_DEVICE_ARGS, msg=gpu)
 
 
+class TestFilterArgs(unittest.TestCase):
+
+    def _plan(self, **overrides) -> ffmpeg_command.TonemapPlan:
+        base = dict(use_gpu=False, dovi_needs_rpu=False, use_libplacebo=False, notices=[])
+        base.update(overrides)
+        return ffmpeg_command.TonemapPlan(**base)
+
+    def _gpu(self, **overrides) -> ffmpeg_command.GpuPlan:
+        base = dict(active_encoder=None, pre_input_args=[], use_cuda_interop=False, notices=[])
+        base.update(overrides)
+        return ffmpeg_command.GpuPlan(**base)
+
+    def test_cpu_path_uses_zscale_chain(self):
+        filt = ffmpeg_command._filter_args(_Req(), self._plan(), self._gpu())
+        self.assertIn('zscale=t=linear', filt, msg=filt)
+        self.assertIn('tonemap=reinhard', filt, msg=filt)
+
+    def test_libplacebo_path_uses_libplacebo_chain(self):
+        filt = ffmpeg_command._filter_args(
+            _Req(use_gpu=True), self._plan(use_libplacebo=True), self._gpu())
+        self.assertIn('libplacebo=', filt, msg=filt)
+        self.assertNotIn('zscale=t=linear', filt, msg=filt)
+
+    def test_libplacebo_path_forwards_cuda_input_from_gpu_plan(self):
+        filt = ffmpeg_command._filter_args(
+            _Req(use_gpu=True), self._plan(use_libplacebo=True),
+            self._gpu(use_cuda_interop=True))
+        self.assertIn('hwmap=derive_device=vulkan', filt, msg=filt)
+
+    def test_gpu_only_tonemapper_on_cpu_path_raises(self):
+        with self.assertRaises(ValueError) as ctx:
+            ffmpeg_command._filter_args(
+                _Req(tonemapper='bt.2390'), self._plan(use_libplacebo=False), self._gpu())
+        self.assertIn('bt.2390 requires GPU tonemapping', str(ctx.exception))
+
+    def test_gpu_only_tonemapper_on_libplacebo_path_does_not_raise(self):
+        filt = ffmpeg_command._filter_args(
+            _Req(use_gpu=True, tonemapper='bt.2390'),
+            self._plan(use_libplacebo=True), self._gpu())
+        self.assertIn('tonemapping=bt.2390', filt, msg=filt)
+
+
 if __name__ == '__main__':
     unittest.main()

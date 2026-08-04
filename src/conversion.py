@@ -205,19 +205,7 @@ class ConversionManager:
         cmd += ['-i', os.path.normpath(input_path)]
 
         # The filter must be applied before mapping streams
-        tonemapper = tonemapper.lower()
-        if use_libplacebo:
-            filter_str = build_libplacebo_filter(
-                gamma, tonemapper, cuda_input=use_cuda_interop, lut_enabled=lut_enabled)
-        else:
-            if is_gpu_only_tonemapper(tonemapper):
-                raise ValueError(
-                    f"{tonemapper} requires GPU tonemapping; this item's "
-                    "settings force CPU processing — change the tonemapper "
-                    "or output bit depth."
-                )
-            filter_str = FFMPEG_CONVERT_FILTER.format(
-                gamma=gamma, tonemapper=tonemapper, lut_path=get_lut_filter_path())
+        filter_str = ffmpeg_command._filter_args(request, tone, gpu)
         cmd += [
             '-filter_complex', f'[0:v:0]{filter_str}[vout]',
             '-map', '[vout]'  # Map the filtered video output

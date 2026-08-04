@@ -42,7 +42,7 @@ class TestTonemapPlan(unittest.TestCase):
     """resolve_libplacebo_available is always a plain stub callable here --
     never unittest.mock.patch -- because _tonemap_plan takes it as a
     parameter rather than importing utils.vulkan_libplacebo_available
-    itself. See this task's file-level note on why."""
+    itself. See src/ffmpeg_command.py's module docstring on why."""
 
     def test_default_request_stays_on_cpu_no_notices(self):
         plan = ffmpeg_command._tonemap_plan(_Req(), _PROPS, lambda: False)
@@ -102,9 +102,10 @@ class TestGpuDeviceArgs(unittest.TestCase):
     the same reason resolve_libplacebo_available is in TestTonemapPlan --
     _gpu_device_args takes it as a parameter rather than importing
     utils.vulkan_cuda_interop_available itself. platform.system() is
-    different: _gpu_device_args still calls it directly (see this task's
-    file-level note on why that one needs no such treatment), so tests that
-    care about its return value still use @patch('ffmpeg_command.platform.system', ...)."""
+    different: _gpu_device_args still calls it directly (see
+    src/ffmpeg_command.py's module docstring on why that one needs no such
+    treatment), so tests that care about its return value still use
+    @patch('ffmpeg_command.platform.system', ...)."""
 
     def _plan(self, **overrides) -> ffmpeg_command.TonemapPlan:
         base = dict(use_gpu=False, dovi_needs_rpu=False, use_libplacebo=False, notices=[])
@@ -178,6 +179,19 @@ class TestGpuDeviceArgs(unittest.TestCase):
             self._plan(use_gpu=True, use_libplacebo=True), lambda: 'h264_nvenc', lambda: False)
         self.assertFalse(gpu.use_cuda_interop, msg=gpu)
         self.assertEqual(gpu.pre_input_args, ffmpeg_command.VULKAN_DEVICE_ARGS, msg=gpu)
+
+    @patch('ffmpeg_command.platform.system', return_value='Windows')
+    def test_gpu_on_with_no_hardware_encoder_still_uses_vulkan_tonemap(self, _plat):
+        """is_gpu_acceleration_available offers the GPU toggle whenever a
+        machine has Vulkan/libplacebo even with no hardware encoder detected
+        -- resolve_gpu_encoder returning None here must still fall through
+        to the plain Vulkan device args, not silently drop GPU tonemapping."""
+        gpu = ffmpeg_command._gpu_device_args(
+            self._plan(use_gpu=True, use_libplacebo=True), lambda: None, lambda: False)
+        self.assertIsNone(gpu.active_encoder, msg=gpu)
+        self.assertFalse(gpu.use_cuda_interop, msg=gpu)
+        self.assertEqual(gpu.pre_input_args, ffmpeg_command.VULKAN_DEVICE_ARGS, msg=gpu)
+        self.assertEqual(gpu.notices, [], msg=gpu)
 
 
 class TestFilterArgs(unittest.TestCase):
@@ -424,7 +438,8 @@ class TestBuild(unittest.TestCase):
     unittest.mock.patch -- build() (and everything it calls) takes them as
     parameters rather than importing the underlying utils probes, so every
     test in this class is fully deterministic regardless of this machine's
-    real GPU/Vulkan capability. See Task 2's file-level note for why."""
+    real GPU/Vulkan capability. See src/ffmpeg_command.py's module docstring
+    for why."""
 
     _PROPS = {'width': 1920, 'height': 1080, 'bit_rate': 4_000_000,
               'codec_name': 'h264', 'frame_rate': 30.0, 'audio_codec': 'aac',

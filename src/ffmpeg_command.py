@@ -3,22 +3,22 @@
 Split out of ConversionManager.construct_ffmpeg_command, which was a
 253-line, complexity-45 function doing six separable jobs. Pure functions
 only -- no tkinter, no gui, no conversion.py -- so each is testable with no
-ConversionView or test double. build() (added in Task 8) is the one impure
-piece: it owns the ConversionView and decides notice-emission order.
+ConversionView or test double. build() is the one impure piece: it owns
+the ConversionView and decides notice-emission order.
 
 Three sharp edges, each documented at the code that resolves them:
   - HEVC-swap ordering: active_encoder can be reassigned by the H.264->HEVC
-    preservation swap. CodecPlan.produces_hevc (Task 6) is computed at the
+    preservation swap. CodecPlan.produces_hevc is computed at the
     point of the swap so no caller has to reconstruct it from a
     possibly-stale value.
   - GPU-probe laziness: a 12-bit request forces use_gpu off before any GPU
-    vendor probe would run, so resolve_gpu_encoder (Task 3) must be a lazy
+    vendor probe would run, so resolve_gpu_encoder must be a lazy
     callable, not a pre-resolved value -- calling it unconditionally would
     add a probe subprocess call on a path that has none today.
   - This module never imports vulkan_libplacebo_available or
     vulkan_cuda_interop_available from utils, even though it is the only
-    code that calls them. Both are always parameters (see Probes, added in
-    Task 8). Two reasons, not one: it preserves their laziness exactly like
+    code that calls them. Both are always parameters (see Probes). Two
+    reasons, not one: it preserves their laziness exactly like
     resolve_gpu_encoder above, and -- the one that actually bit this refactor
     during implementation -- conversion.py's own `from utils import X`
     creates an independent name binding per importing module, so
@@ -54,15 +54,15 @@ from utils import (VULKAN_DEVICE_ARGS, VULKAN_CUDA_DEVICE_ARGS,
 class RequestLike(Protocol):
     """The subset of ConversionRequest this module needs, described
     structurally so this module never imports conversion.py -- conversion.py
-    imports this module (Task 8), and the layer table forbids a cycle.
+    imports this module, and the layer table forbids a cycle.
     ConversionRequest, being a plain dataclass with matching attribute
     names, satisfies this automatically.
 
     Declared as read-only @property members, not plain annotations: plain
     Protocol attributes are structurally writable, but ConversionRequest is
     a frozen dataclass (no setter) -- pyright flags that mismatch as a
-    reportArgumentType error at the one real call site (conversion.py's
-    `ffmpeg_command._tonemap_plan(request, ...)`) otherwise."""
+    reportArgumentType error at the one real call site (conversion.py:172's
+    `ffmpeg_command.build(request, properties, probes, view)`) otherwise."""
     @property
     def input_path(self) -> str: ...
     @property
@@ -107,8 +107,8 @@ def _tonemap_plan(request: RequestLike, properties: 'dict[str, Any]',
 
     resolve_libplacebo_available is a parameter, not a direct call to
     utils.vulkan_libplacebo_available, so this module never imports a
-    function that reaches a real ffmpeg subprocess -- see this task's
-    file-level note for why that matters for the existing test suite's
+    function that reaches a real ffmpeg subprocess -- see this module's
+    top-of-file docstring for why that matters for the existing test suite's
     mocks, not just for purity's sake."""
     use_gpu = request.use_gpu
     if request.bit_depth >= 12:
@@ -167,7 +167,7 @@ def _gpu_device_args(plan: TonemapPlan,
     docstring's GPU-probe-laziness note.
 
     resolve_cuda_interop_available is a parameter for the same reason
-    resolve_gpu_encoder is -- see this task's file-level note -- and its
+    resolve_gpu_encoder is -- see the module docstring -- and its
     call stays exactly where the original inline code's
     vulkan_cuda_interop_available() call was, inside the same short-circuit
     expression, so it is still skipped whenever plan.use_libplacebo is
@@ -225,7 +225,7 @@ def _gpu_device_args(plan: TonemapPlan,
 
 def _filter_args(request: RequestLike, plan: TonemapPlan, gpu: GpuPlan) -> str:
     """The tonemap filter chain body, without the [0:v:0]...[vout] wrapper
-    -- build() (Task 8) owns that, since it also owns the -filter_complex
+    -- build() owns that, since it also owns the -filter_complex
     flag itself.
 
     Raises ValueError for a GPU-only tonemapper (e.g. bt.2390) forced onto
@@ -441,10 +441,10 @@ class Probes:
     a real subprocess, on a path that has none today), and it is what keeps
     the pre-existing test suite's patch('src.conversion.vulkan_libplacebo_available',
     ...)-style mocks (roughly 30 call sites across test/conversion_test.py
-    and the Task 1 golden master) working unmodified -- conversion.py still
-    owns the real `from utils import ...` bindings those mocks target, and
-    merely passes the (possibly-mocked) names through as arguments. See
-    Task 2's file-level note for the full story, including why
+    and test/ffmpeg_command_golden_test.py) working unmodified -- conversion.py
+    still owns the real `from utils import ...` bindings those mocks target,
+    and merely passes the (possibly-mocked) names through as arguments. See
+    this module's top-of-file docstring for the full story, including why
     platform.system() needs no equivalent field here."""
     resolve_gpu_encoder: 'Callable[[], str | None]'
     resolve_libplacebo_available: 'Callable[[], bool]'

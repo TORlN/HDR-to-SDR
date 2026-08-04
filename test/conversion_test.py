@@ -649,7 +649,7 @@ class TestCancelUsesStoredView(unittest.TestCase):
         self.assertEqual(view.drop_target_restored, 1)
 
     def test_cancel_before_any_conversion_is_a_no_op(self):
-        """_view is None until the first conversion starts."""
+        """_run is None until the first conversion starts."""
         m = ConversionManager()
         m.cancel_conversion()  # must not raise
         self.assertIs(m.cancelled, True)
@@ -1984,8 +1984,8 @@ class TestRetryUsesTheRequest(unittest.TestCase):
         # self._run by the time A's retry callback runs.
         m._run = ConversionRun(
             request=_req(input_path='other_in.mkv',
-                        output_path='other_out.mp4', use_gpu=True,
-                        tonemapper='mobius'),
+                         output_path='other_out.mp4', use_gpu=True,
+                         tonemapper='mobius'),
             view=_view())
         m.start = MagicMock()
         m._retry_with_cpu(handed_request, _view())
@@ -2005,7 +2005,7 @@ class TestNoLooseStateRemains(unittest.TestCase):
         for name in ('use_gpu', '_quality', '_quality_mode', '_bit_depth',
                      '_lut_enabled', '_licensed', '_on_complete'):
             self.assertFalse(hasattr(m, name),
-                             msg=f'{name} should have been folded into _request/_view')
+                             msg=f'{name} should have been folded into _run')
 
 
 class TestStartTakesARequestAndAView(unittest.TestCase):

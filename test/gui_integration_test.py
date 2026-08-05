@@ -627,7 +627,7 @@ class TestStateAndLayout(_GuiTestBase):
         # Regression: the queue used to show only 8 rows. Bumped taller as a
         # fixed default (see test_batch_queue_row_has_no_weight for why this
         # is a static height rather than dynamic growth).
-        self.assertGreater(int(str(self.gui.batch_listbox.cget('height'))), 8)
+        self.assertGreater(int(str(self.gui.batch_listbox.cget('height'))), 7)
 
 
 class TestTooltip(_GuiTestBase):

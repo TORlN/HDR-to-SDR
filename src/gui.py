@@ -190,13 +190,6 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
     # of being removed from the list, per _apply_tonemap_choices.
     _GPU_ONLY_SUFFIX = " (GPU Only)"
 
-    # Ceiling on how tall the batch queue's row is allowed to grow when the
-    # window is resized taller -- see _clamp_batch_queue_height. Past this,
-    # resize slack goes back to being blank space instead of handing the
-    # queue box the entire window (e.g. once image_frame is hidden because
-    # no file is loaded, it was the only remaining flexible row).
-    _BATCH_QUEUE_MAX_HEIGHT_PX = 400
-
     def __init__(self, root: "TkinterDnD.Tk", licensed: bool = False) -> None:
         """Initialize the GUI and set up all components."""
         self.root = root
@@ -295,11 +288,6 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._batch_list_refresh_job: str | None = None
         self._window_auto_fitted = False
         self.root.bind('<Configure>', self._on_window_configure)
-        # Plain bind() above replaces any prior binding for this sequence on
-        # root, so the batch-queue height clamp must be added after it (with
-        # add='+') rather than during configure_grid -- binding there first
-        # got silently wiped out by this line.
-        self.root.bind('<Configure>', self._clamp_batch_queue_height, add='+')
 
         self.cancelled = False
 
@@ -743,12 +731,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.feedback_link.bind('<Button-1>', lambda _e: self._open_issues_page())
 
         self.batch_frame = ttk.LabelFrame(self.root, text="Batch Queue", padding="10")
-        # No tk.S: batch_frame's height is driven explicitly by
-        # _clamp_batch_queue_height (see configure_grid), not by grid
-        # stretch, so it can be capped without also raising the window's
-        # minimum size. See _clamp_batch_queue_height's docstring.
         self.batch_frame.grid(
-            row=2, column=0, padx=10, pady=(0, 5), sticky=tk.W + tk.E + tk.N)
+            row=2, column=0, padx=10, pady=(0, 5), sticky=tk.W + tk.E + tk.N + tk.S)
         self.batch_frame.columnconfigure(0, weight=1)
 
         batch_buttons = ttk.Frame(self.batch_frame)
@@ -781,7 +765,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             text="Add or drop multiple files to convert them in sequence.")
         self.batch_hint_label.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(4, 4))
 
-        self.batch_listbox = tk.Listbox(self.batch_frame, height=8, activestyle='none')
+        self.batch_listbox = tk.Listbox(self.batch_frame, height=15, activestyle='none')
         self.batch_listbox.grid(row=2, column=0, sticky=tk.W + tk.E + tk.N + tk.S)
         batch_scroll = ttk.Scrollbar(
             self.batch_frame, orient=tk.VERTICAL, command=self.batch_listbox.yview)
@@ -823,51 +807,18 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.image_frame.rowconfigure(2, weight=0)
         self.image_frame.rowconfigure(3, weight=0)
 
+        # image_frame is the row that absorbs window-resize slack: the
+        # preview panes re-render larger to fill it (see
+        # _rescale_preview_to_window), which is the only content in this
+        # window that actually benefits from extra space. batch_frame stays
+        # weight=0 -- a fixed, natural-sized row -- so it always sits
+        # directly above action_frame (the Convert button) with no gap,
+        # regardless of window height. It's still taller than the original
+        # default (see batch_listbox's height below).
         self.root.grid_rowconfigure(0, weight=0)
-        self.root.grid_rowconfigure(1, weight=0)
+        self.root.grid_rowconfigure(1, weight=1)
+        self.root.grid_rowconfigure(2, weight=0)
         self.root.grid_columnconfigure(0, weight=1)
-
-        # batch_frame's minsize is pinned once, here, to its own natural
-        # (unstretched) height -- never touched again after this. An earlier
-        # version of this cap set rowconfigure(2, minsize=...) dynamically
-        # inside _clamp_batch_queue_height to freeze the row at the cap once
-        # exceeded, but grid_rowconfigure's minsize feeds directly into the
-        # *toplevel's* minimum size: once set to the cap, the window itself
-        # could never be dragged shorter than (other rows + cap) again, so
-        # growing the queue once and shrinking the window back down left it
-        # stuck expanded forever. Keeping minsize fixed at the small natural
-        # height avoids that -- it's the same floor batch_frame always had
-        # before it got any weight at all -- and the cap itself is enforced
-        # purely visually, in _clamp_batch_queue_height, via
-        # grid_propagate(False) + an explicit height on the widget, which
-        # (unlike rowconfigure minsize) does not feed back into the
-        # toplevel's minimum size.
-        self.batch_frame.update_idletasks()
-        self._batch_queue_natural_height = self.batch_frame.winfo_reqheight()
-        self.root.grid_rowconfigure(
-            2, weight=1, minsize=self._batch_queue_natural_height)
-        self.batch_frame.grid_propagate(False)
-        self.batch_frame.configure(height=self._batch_queue_natural_height)
-
-    def _batch_queue_target_height(self, available_px: int) -> int:
-        """Clamp to [natural, cap]: never smaller than batch_frame's own
-        unstretched content, never taller than the cap."""
-        return min(max(available_px, self._batch_queue_natural_height),
-                   self._BATCH_QUEUE_MAX_HEIGHT_PX)
-
-    def _clamp_batch_queue_height(self, event: "tk.Event | None" = None) -> None:
-        """Recompute the batch queue's explicit height against the window's
-        current size. Bound to root's <Configure> so it re-runs on every
-        resize, in both directions -- unlike a rowconfigure-minsize-based
-        cap, this is fully reversible (see configure_grid)."""
-        if event is not None and event.widget is not self.root:
-            return
-        self.root.update_idletasks()
-        other_rows_height = (
-            self.control_frame.winfo_height() + self.image_frame.winfo_height()
-            + self.action_frame.winfo_height() + self.footer_frame.winfo_height())
-        available = self.root.winfo_height() - other_rows_height
-        self.batch_frame.configure(height=self._batch_queue_target_height(available))
 
     # ── File loading ───────────────────────────────────────────────────────────
 

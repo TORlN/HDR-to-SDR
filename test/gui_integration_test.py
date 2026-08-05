@@ -344,6 +344,9 @@ class TestConstruction(_GuiTestBase):
         self.assertEqual(self.gui.quality_entry.cget('textvariable'),
                          str(self.gui.quality_display_var))
 
+    def test_quality_entry_return_key_is_bound(self):
+        self.assertTrue(self.gui.quality_entry.bind('<Return>'))
+
     def test_quality_slider_width_tracks_gamma_slider_at_natural_size(self):
         """Regression: quality_slider used to live in a columnspan=3
         sub-frame sized independently of control_frame's shared column 1, so

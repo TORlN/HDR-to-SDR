@@ -3323,6 +3323,78 @@ class TestApplyQualityMode(unittest.TestCase):
         gui.bitrate_var.set.assert_any_call(20000)  # 50% of the new file's 40,000 kbps
 
 
+class TestOnQualityEntryChange(unittest.TestCase):
+    """_on_quality_entry_change is the <Return> handler for the typed Quality
+    entry: commits the exact typed value with no 500 kbps snap (unlike a
+    slider drag), clamps Constant Quality to its CQ/CRF range, clamps Target
+    Bitrate to its floor, and widens (never clamps down) Target Bitrate's
+    ceiling for a typed value above it."""
+
+    def _gui(self, mode='Constant Quality', gpu=False, ceiling=40000, typed='19'):
+        gui = _bare_gui()
+        gui.quality_mode_var = MagicMock(); gui.quality_mode_var.get.return_value = mode
+        gui.gpu_accel_var = MagicMock(); gui.gpu_accel_var.get.return_value = gpu
+        gui.quality_display_var = MagicMock(); gui.quality_display_var.get.return_value = typed
+        gui.quality_var = MagicMock()
+        gui.bitrate_var = MagicMock()
+        gui.quality_slider = MagicMock()
+        gui.error_label = MagicMock()
+        gui._bitrate_ceiling_kbps = MagicMock(return_value=ceiling)
+        return gui
+
+    def test_target_bitrate_commits_exact_typed_value_without_snapping(self):
+        # 12,345 is not a multiple of 500 -- a slider drag would snap it to
+        # 12,500 (see test_on_quality_change_snaps_to_500kbps_steps_in_bitrate_mode);
+        # a typed value must land on exactly what was typed.
+        gui = self._gui(mode='Target Bitrate', ceiling=40000, typed='12345')
+        gui._on_quality_entry_change()
+        gui.bitrate_var.set.assert_called_once_with(12345)
+        gui.quality_slider.set.assert_called_once_with(12345)
+        self.assertTrue(gui._bitrate_customized_for_current_item)
+
+    def test_target_bitrate_clamps_to_the_floor(self):
+        gui = self._gui(mode='Target Bitrate', ceiling=40000, typed='500')
+        gui._on_quality_entry_change()
+        gui.bitrate_var.set.assert_called_once_with(1000)
+
+    def test_target_bitrate_widens_ceiling_for_a_value_above_it(self):
+        # The heuristic ceiling (40,000) is not a hard limit -- a typed value
+        # above it widens the slider's range to fit rather than being
+        # clamped down to the heuristic.
+        gui = self._gui(mode='Target Bitrate', ceiling=40000, typed='47547')
+        gui._on_quality_entry_change()
+        gui.quality_slider.configure.assert_called_once_with(to=47547)
+        gui.bitrate_var.set.assert_called_once_with(47547)
+        gui.quality_slider.set.assert_called_once_with(47547)
+
+    def test_constant_quality_clamps_to_crf_range_on_cpu(self):
+        gui = self._gui(mode='Constant Quality', gpu=False, typed='999')
+        gui._on_quality_entry_change()
+        gui.quality_var.set.assert_called_once_with(28)  # _CRF_RANGE worst end
+
+    def test_constant_quality_clamps_to_cq_range_on_gpu(self):
+        gui = self._gui(mode='Constant Quality', gpu=True, typed='0')
+        gui._on_quality_entry_change()
+        gui.quality_var.set.assert_called_once_with(15)  # _CQ_RANGE best end
+
+    def test_invalid_input_shows_error_and_reverts_display(self):
+        gui = self._gui(mode='Constant Quality', typed='not a number')
+        gui.quality_var.get.return_value = 20
+        gui._on_quality_entry_change()
+        gui.error_label.config.assert_called_once_with(text="Invalid quality value.")
+        gui.quality_var.set.assert_not_called()
+        gui.bitrate_var.set.assert_not_called()
+        gui.quality_slider.set.assert_not_called()
+        gui.quality_display_var.set.assert_called_once_with('20')  # reverted by _sync_quality_display
+
+    def test_invalid_input_leaves_customized_flag_untouched(self):
+        gui = self._gui(mode='Target Bitrate', typed='abc')
+        gui.bitrate_var.get.return_value = 8000
+        gui._bitrate_customized_for_current_item = False
+        gui._on_quality_entry_change()
+        self.assertFalse(gui._bitrate_customized_for_current_item)
+
+
 class TestQualityModeTooltipEstimatedBitrate(unittest.TestCase):
     """The tooltip's 'This file: source is N kbps' line must flag an estimated
     (container-derived) bitrate the same way the info strip does, since it

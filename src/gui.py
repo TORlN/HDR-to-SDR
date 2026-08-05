@@ -598,11 +598,10 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         finally:
             self._applying_bitrate_range = False
         self.quality_slider.bind('<Button-1>', self._quality_slider_jump)
-        # <Return> commit handler is wired up once _on_quality_entry_change
-        # exists (see the follow-up spec item on typed exact-value commits).
         self.quality_entry = ttk.Entry(
             self.control_frame, textvariable=self.quality_display_var, width=10)
         self.quality_entry.grid(row=5, column=2, sticky=tk.W + tk.E, padx=(5, 0))
+        self.quality_entry.bind('<Return>', self._on_quality_entry_change)
         ttk.Label(quality_frame, text="Smaller File  ◀──▶  Better Quality",
                   foreground='gray').grid(row=1, column=0, sticky=tk.W, padx=(10, 0))
         quality_frame.columnconfigure(0, weight=1)
@@ -1303,6 +1302,41 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self._bitrate_customized_for_current_item = True
         else:
             self.quality_var.set(int(float(value)))
+        self._write_back_current_settings(debounce_listbox=True)
+
+    def _on_quality_entry_change(self, event: tk.Event = None) -> None:  # type: ignore[type-arg]
+        """<Return> handler for the typed Quality entry: commits the exact
+        typed value (no 500 kbps snap -- that's only for slider drags, see
+        _on_quality_change), clamped to CQ/CRF's range in Constant Quality
+        mode or Target Bitrate's floor, and widening (never clamping down)
+        Target Bitrate's ceiling for a typed value above it."""
+        raw = self.quality_display_var.get().replace(',', '').replace('kbps', '').strip()
+        try:
+            typed = int(raw)
+        except ValueError:
+            self.error_label.config(text="Invalid quality value.")
+            self._sync_quality_display()  # revert the box to the last valid value
+            return
+        self.error_label.config(text="")
+        if self.quality_mode_var.get() == 'Target Bitrate':
+            floor = self._BITRATE_FLOOR_KBPS
+            ceiling = max(self._bitrate_ceiling_kbps(), typed)  # widen, never clamp a typed value down
+            clamped = _clamp(typed, floor, ceiling)
+            self.quality_slider.configure(to=ceiling)
+        else:
+            worst, best = self._CQ_RANGE if self.gpu_accel_var.get() else self._CRF_RANGE
+            lo, hi = min(worst, best), max(worst, best)
+            clamped = _clamp(typed, lo, hi)
+        self._applying_bitrate_range = True
+        try:
+            self.quality_slider.set(clamped)
+        finally:
+            self._applying_bitrate_range = False
+        if self.quality_mode_var.get() == 'Target Bitrate':
+            self.bitrate_var.set(clamped)
+            self._bitrate_customized_for_current_item = True
+        else:
+            self.quality_var.set(clamped)
         self._write_back_current_settings(debounce_listbox=True)
 
     def _on_quality_mode_selected(self, event: tk.Event = None) -> None:  # type: ignore[type-arg]

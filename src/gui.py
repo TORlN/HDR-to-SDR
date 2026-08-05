@@ -674,14 +674,14 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.loading_frame.grid_remove()
 
         self.info_label = ttk.Label(self.control_frame, text='', foreground='gray')
-        self.info_label.grid(row=6, column=0, columnspan=3, sticky=tk.W, padx=(0, 10))
+        self.info_label.grid(row=7, column=0, columnspan=3, sticky=tk.W, padx=(0, 10))
         self.info_label.grid_remove()
 
         self.error_label = ttk.Label(self.control_frame, text='', foreground='red')
-        self.error_label.grid(row=7, column=0, columnspan=3, sticky=tk.W)
+        self.error_label.grid(row=8, column=0, columnspan=3, sticky=tk.W)
 
         self._pro_banner = ttk.Frame(self.control_frame)
-        self._pro_banner.grid(row=8, column=0, columnspan=3,
+        self._pro_banner.grid(row=9, column=0, columnspan=3,
                                sticky=tk.W + tk.E, pady=(6, 2))
         self._pro_banner.grid_remove()
         ttk.Label(

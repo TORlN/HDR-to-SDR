@@ -731,7 +731,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.feedback_link.bind('<Button-1>', lambda _e: self._open_issues_page())
 
         self.batch_frame = ttk.LabelFrame(self.root, text="Batch Queue", padding="10")
-        self.batch_frame.grid(row=2, column=0, padx=10, pady=(0, 5), sticky=tk.W + tk.E)
+        self.batch_frame.grid(
+            row=2, column=0, padx=10, pady=(0, 5), sticky=tk.W + tk.E + tk.N + tk.S)
         self.batch_frame.columnconfigure(0, weight=1)
 
         batch_buttons = ttk.Frame(self.batch_frame)
@@ -807,7 +808,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.image_frame.rowconfigure(3, weight=0)
 
         self.root.grid_rowconfigure(0, weight=0)
-        self.root.grid_rowconfigure(1, weight=1)
+        self.root.grid_rowconfigure(1, weight=0)
+        self.root.grid_rowconfigure(2, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
 
     # ── File loading ───────────────────────────────────────────────────────────

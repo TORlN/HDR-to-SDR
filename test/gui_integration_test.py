@@ -603,6 +603,20 @@ class TestStateAndLayout(_GuiTestBase):
         self.assertEqual(str(self.gui.original_image_label.cget('anchor')), 'nw')
         self.assertEqual(str(self.gui.converted_image_label.cget('anchor')), 'nw')
 
+    def test_window_resize_slack_grows_batch_queue_not_image_frame(self):
+        """Regression: root row 1 (image_frame) had weight=1, so resizing the
+        window taller dumped all the extra height into image_frame -- which
+        (after the anchor='nw' fix above) just left dead space below the
+        now-top-anchored preview images instead of doing anything useful.
+        The batch queue listbox (batch_frame row 2, itself rowconfigure
+        weight=1 internally) is the widget that should actually grow, so the
+        slack belongs on root row 2, not root row 1."""
+        self.assertEqual(self.gui.root.grid_rowconfigure(1)['weight'], 0)
+        self.assertEqual(self.gui.root.grid_rowconfigure(2)['weight'], 1)
+        info = self.gui.batch_frame.grid_info()
+        self.assertIn('n', str(info['sticky']))
+        self.assertIn('s', str(info['sticky']))
+
 
 class TestTooltip(_GuiTestBase):
 

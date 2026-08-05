@@ -265,6 +265,10 @@ class TestConversionManager(unittest.TestCase):
         # listed intentional behavior change of the port -- so assert it,
         # or a dropped call leaves the window unable to accept drops again.
         self.assertEqual(view.drop_target_restored, 1)
+        # Regression: the bar stayed at 100 after a single-file conversion --
+        # nothing ever reset it once the "Conversion complete!" dialog was
+        # dismissed.
+        self.assertEqual(view.progress[-1], 0)
 
     def test_handle_completion_failure(self):
         """Test handle_completion for a failed conversion."""
@@ -284,6 +288,7 @@ class TestConversionManager(unittest.TestCase):
         self.assertEqual(view.inputs_enabled, [True])
         self.assertEqual(view.cancel_visible, [False])
         self.assertEqual(view.drop_target_restored, 1)
+        self.assertEqual(view.progress[-1], 0)
 
     def test_handle_completion_truncates_long_error_output(self):
         """Error dialog must show only the last 50 stderr lines, not all of them.

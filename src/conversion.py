@@ -340,6 +340,7 @@ class ConversionManager:
             view.set_inputs_enabled(True)
             view.set_cancel_visible(False)
             view.restore_drop_target()
+            view.set_progress(0)
 
         view.schedule(_handle)
 

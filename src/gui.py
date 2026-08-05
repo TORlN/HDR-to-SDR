@@ -765,7 +765,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             text="Add or drop multiple files to convert them in sequence.")
         self.batch_hint_label.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(4, 4))
 
-        self.batch_listbox = tk.Listbox(self.batch_frame, height=15, activestyle='none')
+        self.batch_listbox = tk.Listbox(self.batch_frame, height=8, activestyle='none')
         self.batch_listbox.grid(row=2, column=0, sticky=tk.W + tk.E + tk.N + tk.S)
         batch_scroll = ttk.Scrollbar(
             self.batch_frame, orient=tk.VERTICAL, command=self.batch_listbox.yview)

@@ -578,13 +578,19 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             '<Enter>', lambda e: self.show_tooltip(e, self._quality_mode_tooltip_text()))
         info_button_quality_mode.bind('<Leave>', self.hide_tooltip)
 
-        ttk.Label(self.control_frame, text="Quality:").grid(row=5, column=0, sticky=tk.W)
+        # pady matches quality_frame's own pady below: without it, the label
+        # would center against row 5's full cell height while quality_frame
+        # (and the slider inside it) centers against that height minus its
+        # own top pady, landing a couple pixels apart even after the caption
+        # move below stops row 5 from being two slider-heights tall.
+        ttk.Label(self.control_frame, text="Quality:").grid(
+            row=5, column=0, sticky=tk.W, pady=(5, 0))
         quality_frame = ttk.Frame(self.control_frame)
         quality_frame.grid(row=5, column=1, sticky=tk.W + tk.E, pady=(5, 0))
         self.quality_slider = ttk.Scale(
             quality_frame, from_=self._CRF_RANGE[0], to=self._CRF_RANGE[1],
             orient=tk.HORIZONTAL, length=200, command=self._on_quality_change)
-        self.quality_slider.grid(row=0, column=0, sticky=tk.W + tk.E, padx=(10, 8))
+        self.quality_slider.grid(row=0, column=0, sticky=tk.W + tk.E, padx=(10, 10))
         # ttk.Scale.set() fires its own -command (_on_quality_change) even for
         # this construction-time priming call. If a persisted session left
         # quality_mode_var as 'Target Bitrate', that fires before the slider
@@ -600,10 +606,16 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.quality_slider.bind('<Button-1>', self._quality_slider_jump)
         self.quality_entry = ttk.Entry(
             self.control_frame, textvariable=self.quality_display_var, width=10)
-        self.quality_entry.grid(row=5, column=2, sticky=tk.W + tk.E, padx=(5, 0))
+        self.quality_entry.grid(row=5, column=2, sticky=tk.W + tk.E, padx=(5, 0), pady=(5, 0))
         self.quality_entry.bind('<Return>', self._on_quality_entry_change)
-        ttk.Label(quality_frame, text="Smaller File  ◀──▶  Better Quality",
-                  foreground='gray').grid(row=1, column=0, sticky=tk.W, padx=(10, 0))
+        # Lives directly in control_frame (its own row 6), not quality_frame,
+        # for the same reason the "Quality:" label and quality_entry were
+        # moved out of quality_frame: a second line inside quality_frame's
+        # row 5 would make that grid row two slider-heights tall, so the
+        # label/entry (no vertical sticky) would center against the taller
+        # row instead of against the slider itself.
+        ttk.Label(self.control_frame, text="Smaller File  ◀──▶  Better Quality",
+                  foreground='gray').grid(row=6, column=1, sticky=tk.W, padx=(10, 0))
         quality_frame.columnconfigure(0, weight=1)
 
         self.image_frame = ttk.Frame(self.root, padding="10")
@@ -1007,7 +1019,11 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             if self._bitrate_customized_for_current_item:
                 ceiling = self._bitrate_ceiling_kbps()
                 fraction = settings.get('bitrate_fraction', 0.5)
-                value = round(fraction * ceiling / 500) * 500
+                # Round to the nearest whole kbps, not the nearest 500: a
+                # typed exact value (see _on_quality_entry_change) is not
+                # necessarily a 500 kbps multiple, and re-snapping it here
+                # would silently truncate it right back on the next reselect.
+                value = round(fraction * ceiling)
                 value = _clamp(value, self._BITRATE_FLOOR_KBPS, ceiling)
                 self.bitrate_var.set(value)
                 self._bitrate_needs_reseed = False
@@ -1140,9 +1156,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
     def _bitrate_ceiling_kbps(self) -> int:
         """Target Bitrate's slider ceiling: the exact source bitrate, never
         below the floor. Not rounded -- a rounded ceiling silently made the
-        true source rate unreachable (see the typed-entry commit handler,
-        which is the only way to reach this exact value; a slider drag still
-        snaps to a coarser 500 kbps step, see _on_quality_change)."""
+        true source rate unreachable (see _on_quality_entry_change, which is
+        the only way to reach this exact value; a slider drag still snaps to
+        a coarser 500 kbps step, see _on_quality_change)."""
         source = self._source_bitrate_kbps()
         return max(self._BITRATE_FLOOR_KBPS, source)
 
@@ -1325,8 +1341,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.quality_slider.configure(to=ceiling)
         else:
             worst, best = self._CQ_RANGE if self.gpu_accel_var.get() else self._CRF_RANGE
-            lo, hi = min(worst, best), max(worst, best)
-            clamped = _clamp(typed, lo, hi)
+            clamped = _clamp(typed, worst, best)
         self._applying_bitrate_range = True
         try:
             self.quality_slider.set(clamped)

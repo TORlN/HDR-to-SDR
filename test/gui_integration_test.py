@@ -351,18 +351,52 @@ class TestConstruction(_GuiTestBase):
         """Regression: quality_slider used to live in a columnspan=3
         sub-frame sized independently of control_frame's shared column 1, so
         it ended up wider than gamma_slider at every window size. Both must
-        now resolve to the same actual pixel width."""
+        now resolve to the same actual pixel width. quality_slider's padx is
+        (10, 10), exactly matching gamma_slider's, so the widths must be
+        exactly equal -- not just close."""
         self.gui.root.update_idletasks()
-        self.assertAlmostEqual(
+        self.assertEqual(
             self.gui.gamma_slider.winfo_width(), self.gui.quality_slider.winfo_width(),
-            delta=2, msg='quality_slider must match gamma_slider width at natural window size')
+            msg='quality_slider must match gamma_slider width at natural window size')
 
     def test_quality_slider_width_tracks_gamma_slider_when_stretched(self):
-        self.gui.root.geometry('1400x900')
+        # A withdrawn toplevel ignores geometry() (it's never mapped), so
+        # root.geometry() alone doesn't actually stretch anything -- force
+        # control_frame's column 1 wider directly instead.
+        self.gui.control_frame.grid_propagate(False)
+        self.gui.control_frame.configure(width=1200)
         self.gui.root.update_idletasks()
-        self.assertAlmostEqual(
+        self.assertEqual(
             self.gui.gamma_slider.winfo_width(), self.gui.quality_slider.winfo_width(),
-            delta=2, msg='quality_slider must match gamma_slider width when the window is stretched wider')
+            msg='quality_slider must match gamma_slider width when the window is stretched wider')
+
+    def test_quality_row_vertically_aligned_with_gamma_slider(self):
+        """Regression: realigning the Quality row into control_frame's shared
+        grid (so quality_slider/quality_entry sit directly in control_frame,
+        not a sub-frame) left the "Smaller File <-> Better Quality" caption
+        behind inside the old quality_frame at its own row 1, making that
+        grid row two slider-heights tall. With no vertical sticky, the
+        Quality label/entry then centered against that taller row instead of
+        against the slider itself -- landing visibly below where the Gamma
+        row's label/slider/entry (which has no such second line) center."""
+        self.gui.root.update_idletasks()
+        # quality_slider's parent is quality_frame (a sub-frame gridded into
+        # control_frame), while quality_entry and the "Quality:" label are
+        # parented directly to control_frame -- winfo_y() is parent-relative,
+        # so comparing it across those different parents would be comparing
+        # unrelated coordinate spaces. winfo_rooty() (absolute screen
+        # position) is the only apples-to-apples comparison here.
+        slider_center = (self.gui.quality_slider.winfo_rooty()
+                          + self.gui.quality_slider.winfo_height() / 2)
+        entry_center = (self.gui.quality_entry.winfo_rooty()
+                         + self.gui.quality_entry.winfo_height() / 2)
+        label_widgets = self.gui.control_frame.grid_slaves(row=5, column=0)
+        label_center = (label_widgets[0].winfo_rooty()
+                         + label_widgets[0].winfo_height() / 2)
+        self.assertAlmostEqual(slider_center, entry_center, delta=2,
+                                msg='quality_entry must vertically center on quality_slider')
+        self.assertAlmostEqual(slider_center, label_center, delta=2,
+                                msg='the "Quality:" label must vertically center on quality_slider')
 
     def test_quality_mode_tooltip_mentions_both_modes(self):
         text = self.gui._quality_mode_tooltip_text()
@@ -375,6 +409,22 @@ class TestConstruction(_GuiTestBase):
         self.gui._on_quality_mode_selected()
         self.assertAlmostEqual(float(self.gui.quality_slider.cget('from')), 1000)
         self.assertAlmostEqual(float(self.gui.quality_slider.cget('to')), 40000)
+
+    def test_typed_exact_bitrate_flows_through_the_real_ceiling_end_to_end(self):
+        # End-to-end coupling test: a real (non-mocked) cached source bitrate
+        # feeding _bitrate_ceiling_kbps() feeding _on_quality_entry_change(),
+        # all with real widgets -- the exact path TestOnQualityEntryChange
+        # (characterization_test.py) can't cover since it mocks
+        # _bitrate_ceiling_kbps directly in every test. 47,547 is deliberately
+        # not a multiple of 500, matching the exact-truncation bug this whole
+        # branch exists to fix.
+        self.gui._cached_props = {'bit_rate': 47_547_000}  # 47,547 kbps
+        self.gui.quality_mode_var.set('Target Bitrate')
+        self.gui._on_quality_mode_selected()
+        self.gui.quality_display_var.set('47547')
+        self.gui._on_quality_entry_change()
+        self.assertEqual(self.gui.bitrate_var.get(), 47547)
+        self.assertEqual(int(self.gui.quality_slider.cget('to')), 47547)
 
 
 @unittest.skipUnless(_TK_OK, _SKIP)

@@ -3395,6 +3395,56 @@ class TestOnQualityEntryChange(unittest.TestCase):
         self.assertFalse(gui._bitrate_customized_for_current_item)
 
 
+class TestRestoreSettingsDictBitrateFraction(unittest.TestCase):
+    """_restore_settings_dict reconstructs Target Bitrate's absolute kbps
+    value from the stored fraction*ceiling. Before this branch, every
+    reachable bitrate was already a 500 kbps multiple (only the slider could
+    set one), so re-snapping the reconstructed value to the nearest 500 was
+    harmless. Now that _on_quality_entry_change (the typed-entry <Return>
+    handler) can commit an exact, non-500-aligned value, that re-snap must be
+    gone -- otherwise reselecting/reloading the queued file silently
+    quantizes a typed 12,345 back down to 12,500, the same truncation bug
+    this whole branch exists to fix."""
+
+    def _gui(self, ceiling=47_547, fraction=None, typed_value=12_345):
+        gui = _bare_gui()
+        gui.gamma_var = MagicMock()
+        gui.gpu_accel_var = MagicMock()
+        gui.tonemap_var = MagicMock()
+        gui.lut_export_var = MagicMock()
+        gui.quality_mode_var = MagicMock()
+        gui.quality_var = MagicMock()
+        gui.bitrate_var = MagicMock()
+        gui._bitrate_ceiling_kbps = MagicMock(return_value=ceiling)
+        if fraction is None:
+            fraction = typed_value / ceiling
+        return gui, fraction
+
+    def test_restores_exact_non_500_multiple_bitrate_without_requantizing(self):
+        # 12,345 kbps against a 47,547 kbps ceiling -- neither is a multiple
+        # of 500. The old `round(fraction * ceiling / 500) * 500` reconstruction
+        # would land on 12,500; the fix must land on 12,345 (within a hair of
+        # float-rounding, hence assertAlmostEqual).
+        gui, fraction = self._gui(ceiling=47_547, typed_value=12_345)
+        gui._restore_settings_dict({
+            'bitrate_customized': True,
+            'bitrate_fraction': fraction,
+        })
+        restored = gui.bitrate_var.set.call_args.args[0]
+        self.assertAlmostEqual(restored, 12_345, delta=1)
+
+    def test_still_restores_a_500_multiple_bitrate_exactly(self):
+        # The pre-existing case (a slider-set value, always a 500 multiple)
+        # must keep working under the new nearest-whole-kbps reconstruction.
+        gui, fraction = self._gui(ceiling=40_000, typed_value=12_500)
+        gui._restore_settings_dict({
+            'bitrate_customized': True,
+            'bitrate_fraction': fraction,
+        })
+        restored = gui.bitrate_var.set.call_args.args[0]
+        self.assertAlmostEqual(restored, 12_500, delta=1)
+
+
 class TestQualityModeTooltipEstimatedBitrate(unittest.TestCase):
     """The tooltip's 'This file: source is N kbps' line must flag an estimated
     (container-derived) bitrate the same way the info strip does, since it

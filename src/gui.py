@@ -498,15 +498,15 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.gpu_accel_checkbutton = ttk.Checkbutton(
             self.control_frame, text="Enable GPU Acceleration",
             variable=self.gpu_accel_var, command=self.check_gpu_acceleration)
-        self.gpu_accel_checkbutton.grid(row=3, column=0, sticky=tk.W, pady=(5, 0))
+        self.gpu_accel_checkbutton.grid(row=5, column=0, sticky=tk.W, pady=(5, 0))
 
         self.display_image_checkbutton = ttk.Checkbutton(
             self.control_frame, text="Display Frame Preview",
             variable=self.display_image_var, command=self.update_frame_preview)
-        self.display_image_checkbutton.grid(row=4, column=0, sticky=tk.W, pady=(5, 0))
+        self.display_image_checkbutton.grid(row=6, column=0, sticky=tk.W, pady=(5, 0))
 
         self.tonemap_frame = ttk.Frame(self.control_frame)
-        self.tonemap_frame.grid(row=3, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))
+        self.tonemap_frame.grid(row=5, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))
         self.tonemap_combobox = ttk.Combobox(
             self.tonemap_frame, textvariable=self.tonemap_var,
             values=TONEMAP, state='readonly', width=15)
@@ -566,7 +566,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.bit_depth_frame.grid_remove()
 
         self.quality_mode_frame = ttk.Frame(self.control_frame)
-        self.quality_mode_frame.grid(row=4, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))
+        self.quality_mode_frame.grid(row=6, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))
         self.quality_mode_combobox = ttk.Combobox(
             self.quality_mode_frame, textvariable=self.quality_mode_var,
             values=['Constant Quality', 'Target Bitrate'], state='readonly', width=15)
@@ -579,14 +579,14 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         info_button_quality_mode.bind('<Leave>', self.hide_tooltip)
 
         # pady matches quality_frame's own pady below: without it, the label
-        # would center against row 5's full cell height while quality_frame
+        # would center against row 3's full cell height while quality_frame
         # (and the slider inside it) centers against that height minus its
         # own top pady, landing a couple pixels apart even after the caption
-        # move below stops row 5 from being two slider-heights tall.
+        # move below stops row 3 from being two slider-heights tall.
         ttk.Label(self.control_frame, text="Quality:").grid(
-            row=5, column=0, sticky=tk.W, pady=(5, 0))
+            row=3, column=0, sticky=tk.W, pady=(5, 0))
         quality_frame = ttk.Frame(self.control_frame)
-        quality_frame.grid(row=5, column=1, sticky=tk.W + tk.E, pady=(5, 0))
+        quality_frame.grid(row=3, column=1, sticky=tk.W + tk.E, pady=(5, 0))
         self.quality_slider = ttk.Scale(
             quality_frame, from_=self._CRF_RANGE[0], to=self._CRF_RANGE[1],
             orient=tk.HORIZONTAL, length=200, command=self._on_quality_change)
@@ -606,16 +606,16 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.quality_slider.bind('<Button-1>', self._quality_slider_jump)
         self.quality_entry = ttk.Entry(
             self.control_frame, textvariable=self.quality_display_var, width=10)
-        self.quality_entry.grid(row=5, column=2, sticky=tk.W + tk.E, padx=(5, 0), pady=(5, 0))
+        self.quality_entry.grid(row=3, column=2, sticky=tk.W + tk.E, padx=(5, 0), pady=(5, 0))
         self.quality_entry.bind('<Return>', self._on_quality_entry_change)
-        # Lives directly in control_frame (its own row 6), not quality_frame,
+        # Lives directly in control_frame (its own row 4), not quality_frame,
         # for the same reason the "Quality:" label and quality_entry were
         # moved out of quality_frame: a second line inside quality_frame's
-        # row 5 would make that grid row two slider-heights tall, so the
+        # row 3 would make that grid row two slider-heights tall, so the
         # label/entry (no vertical sticky) would center against the taller
         # row instead of against the slider itself.
         ttk.Label(self.control_frame, text="Smaller File  ◀──▶  Better Quality",
-                  foreground='gray').grid(row=6, column=1, sticky=tk.W, padx=(10, 0))
+                  foreground='gray').grid(row=4, column=1, sticky=tk.W, padx=(10, 0))
         quality_frame.columnconfigure(0, weight=1)
 
         self.image_frame = ttk.Frame(self.root, padding="10")

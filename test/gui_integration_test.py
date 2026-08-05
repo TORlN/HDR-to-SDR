@@ -322,7 +322,7 @@ class TestConstruction(_GuiTestBase):
 
     def test_quality_mode_combobox_grid_position(self):
         info = self.gui.quality_mode_frame.grid_info()
-        self.assertEqual(int(info['row']), 4)
+        self.assertEqual(int(info['row']), 6)
         self.assertEqual(int(info['column']), 1)
 
     def test_quality_mode_combobox_values_and_readonly(self):
@@ -331,13 +331,13 @@ class TestConstruction(_GuiTestBase):
         self.assertEqual(str(self.gui.quality_mode_combobox.cget('state')), 'readonly')
 
     def test_quality_label_grid_position(self):
-        widgets = self.gui.control_frame.grid_slaves(row=5, column=0)
+        widgets = self.gui.control_frame.grid_slaves(row=3, column=0)
         self.assertEqual(len(widgets), 1)
         self.assertEqual(str(widgets[0].cget('text')), 'Quality:')
 
     def test_quality_entry_grid_position(self):
         info = self.gui.quality_entry.grid_info()
-        self.assertEqual(int(info['row']), 5)
+        self.assertEqual(int(info['row']), 3)
         self.assertEqual(int(info['column']), 2)
 
     def test_quality_entry_shows_formatted_display_var(self):
@@ -390,7 +390,7 @@ class TestConstruction(_GuiTestBase):
                           + self.gui.quality_slider.winfo_height() / 2)
         entry_center = (self.gui.quality_entry.winfo_rooty()
                          + self.gui.quality_entry.winfo_height() / 2)
-        label_widgets = self.gui.control_frame.grid_slaves(row=5, column=0)
+        label_widgets = self.gui.control_frame.grid_slaves(row=3, column=0)
         label_center = (label_widgets[0].winfo_rooty()
                          + label_widgets[0].winfo_height() / 2)
         self.assertAlmostEqual(slider_center, entry_center, delta=2,

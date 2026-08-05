@@ -591,6 +591,18 @@ class TestStateAndLayout(_GuiTestBase):
         self.assertEqual(self.gui.original_image_label.cget('image'), '')
         self.assertEqual(self.gui.converted_image_label.cget('image'), '')
 
+    def test_image_labels_anchor_top_of_expanded_row(self):
+        """Regression: image_frame's row 1 (images + button_container) has
+        rowconfigure weight=1, so it grows to fill any extra window height.
+        button_container is pinned with sticky=tk.N, but the image labels
+        left anchor at ttk.Label's default 'w' -- horizontally left but
+        vertically *centered* -- so the image sank toward the middle of the
+        tall cell, visibly below the "Original/Converted" titles and the
+        frame-jump buttons once the window was resized taller. 'nw' keeps
+        the existing left alignment and adds a top anchor."""
+        self.assertEqual(str(self.gui.original_image_label.cget('anchor')), 'nw')
+        self.assertEqual(str(self.gui.converted_image_label.cget('anchor')), 'nw')
+
 
 class TestTooltip(_GuiTestBase):
 

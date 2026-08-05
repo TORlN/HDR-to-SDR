@@ -632,11 +632,11 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.converted_title_label.grid(
                 row=0, column=1, columnspan=2, sticky=tk.W, padx=(10, 10))
 
-        self.original_image_label = ttk.Label(self.image_frame)
+        self.original_image_label = ttk.Label(self.image_frame, anchor=tk.NW)
         self.original_image_label.grid(
             row=1, column=0, columnspan=1,
             sticky=tk.W + tk.E + tk.N + tk.S, padx=(10, 10))
-        self.converted_image_label = ttk.Label(self.image_frame)
+        self.converted_image_label = ttk.Label(self.image_frame, anchor=tk.NW)
         self.converted_image_label.grid(
             row=1, column=1, sticky=tk.W + tk.E + tk.N + tk.S, padx=(10, 0))
 

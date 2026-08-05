@@ -297,7 +297,8 @@ class TestConstruction(_GuiTestBase):
             self.gui.display_image_checkbutton, self.gui.input_entry,
             self.gui.output_entry, self.gui.gamma_entry,
             self.gui.gpu_accel_checkbutton, self.gui.batch_listbox,
-            self.gui.quality_slider, self.gui.quality_mode_combobox, self.gui.format_combobox,
+            self.gui.quality_slider, self.gui.quality_entry,
+            self.gui.quality_mode_combobox, self.gui.format_combobox,
             self.gui.custom_time_entry, self.gui.custom_seek_button,
             self.gui.add_files_button, self.gui.clear_batch_button,
             self.gui.remove_batch_button,
@@ -329,9 +330,36 @@ class TestConstruction(_GuiTestBase):
                          ('Constant Quality', 'Target Bitrate'))
         self.assertEqual(str(self.gui.quality_mode_combobox.cget('state')), 'readonly')
 
-    def test_quality_value_label_shows_formatted_display_var(self):
-        self.assertEqual(self.gui.quality_value_label.cget('textvariable'),
+    def test_quality_label_grid_position(self):
+        widgets = self.gui.control_frame.grid_slaves(row=5, column=0)
+        self.assertEqual(len(widgets), 1)
+        self.assertEqual(str(widgets[0].cget('text')), 'Quality:')
+
+    def test_quality_entry_grid_position(self):
+        info = self.gui.quality_entry.grid_info()
+        self.assertEqual(int(info['row']), 5)
+        self.assertEqual(int(info['column']), 2)
+
+    def test_quality_entry_shows_formatted_display_var(self):
+        self.assertEqual(self.gui.quality_entry.cget('textvariable'),
                          str(self.gui.quality_display_var))
+
+    def test_quality_slider_width_tracks_gamma_slider_at_natural_size(self):
+        """Regression: quality_slider used to live in a columnspan=3
+        sub-frame sized independently of control_frame's shared column 1, so
+        it ended up wider than gamma_slider at every window size. Both must
+        now resolve to the same actual pixel width."""
+        self.gui.root.update_idletasks()
+        self.assertAlmostEqual(
+            self.gui.gamma_slider.winfo_width(), self.gui.quality_slider.winfo_width(),
+            delta=2, msg='quality_slider must match gamma_slider width at natural window size')
+
+    def test_quality_slider_width_tracks_gamma_slider_when_stretched(self):
+        self.gui.root.geometry('1400x900')
+        self.gui.root.update_idletasks()
+        self.assertAlmostEqual(
+            self.gui.gamma_slider.winfo_width(), self.gui.quality_slider.winfo_width(),
+            delta=2, msg='quality_slider must match gamma_slider width when the window is stretched wider')
 
     def test_quality_mode_tooltip_mentions_both_modes(self):
         text = self.gui._quality_mode_tooltip_text()
@@ -813,8 +841,9 @@ class TestUnlicensedState(_LicensingBase):
         # GPU acceleration is free; the checkbox must stay enabled without a license.
         self.assertFalse(self.gui.gpu_accel_checkbutton.instate(['disabled']))
 
-    def test_disables_quality_slider(self):
+    def test_disables_quality_controls(self):
         self.assertTrue(self.gui.quality_slider.instate(['disabled']))
+        self.assertTrue(self.gui.quality_entry.instate(['disabled']))
 
     def test_disables_quality_mode_combobox(self):
         self.assertTrue(self.gui.quality_mode_combobox.instate(['disabled']))
@@ -840,7 +869,7 @@ class TestUnlicensedState(_LicensingBase):
         # GPU is free, so gpu_accel_checkbutton IS included even when unlicensed.
         # 10-bit is free too, so bit_depth_10_radio is included; 12-bit is Pro.
         premium = [
-            self.gui.quality_slider, self.gui.quality_mode_combobox,
+            self.gui.quality_slider, self.gui.quality_entry, self.gui.quality_mode_combobox,
             self.gui.format_combobox, self.gui.custom_time_entry,
             self.gui.custom_seek_button, self.gui.add_files_button,
             self.gui.clear_batch_button, self.gui.remove_batch_button,
@@ -882,8 +911,9 @@ class TestLicensedState(_LicensingBase):
     def test_enables_gpu_checkbox(self):
         self.assertFalse(self.gui.gpu_accel_checkbutton.instate(['disabled']))
 
-    def test_enables_quality_slider(self):
+    def test_enables_quality_controls(self):
         self.assertFalse(self.gui.quality_slider.instate(['disabled']))
+        self.assertFalse(self.gui.quality_entry.instate(['disabled']))
 
     def test_enables_quality_mode_combobox(self):
         self.assertFalse(self.gui.quality_mode_combobox.instate(['disabled']))
@@ -907,7 +937,7 @@ class TestLicensedState(_LicensingBase):
 
     def test_includes_premium_in_interactable_elements(self):
         premium = [
-            self.gui.gpu_accel_checkbutton, self.gui.quality_slider,
+            self.gui.gpu_accel_checkbutton, self.gui.quality_slider, self.gui.quality_entry,
             self.gui.quality_mode_combobox,
             self.gui.format_combobox, self.gui.custom_time_entry,
             self.gui.custom_seek_button, self.gui.add_files_button,
@@ -974,6 +1004,7 @@ class TestLicenseTransition(unittest.TestCase):
         gui._apply_license_state(True)
         self.assertFalse(gui.gpu_accel_checkbutton.instate(['disabled']))
         self.assertFalse(gui.quality_slider.instate(['disabled']))
+        self.assertFalse(gui.quality_entry.instate(['disabled']))
         self.assertFalse(gui.add_files_button.instate(['disabled']))
         self.assertEqual(list(gui.format_combobox['values']),
                          list(HDRConverterGUI._OUTPUT_FORMATS))

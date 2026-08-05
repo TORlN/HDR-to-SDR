@@ -364,6 +364,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         pro = 'normal' if licensed else 'disabled'
 
         self.quality_slider.config(state=pro)
+        self.quality_entry.config(state=pro)
         # A ttk.Combobox must stay 'readonly' when enabled, not 'normal' (which
         # would let the user free-type into it) -- matching format_combobox's
         # existing pattern, where 'state' is never set to the plain pro/disabled
@@ -415,7 +416,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.gpu_accel_checkbutton, self.bit_depth_10_radio, self.batch_listbox,
         ]
         premium = [
-            self.quality_slider, self.quality_mode_combobox, self.format_combobox,
+            self.quality_slider, self.quality_entry, self.quality_mode_combobox, self.format_combobox,
             self.custom_time_entry, self.custom_seek_button,
             self.add_files_button, self.clear_batch_button, self.remove_batch_button,
             self.bit_depth_12_radio, self.apply_settings_button,
@@ -577,13 +578,13 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             '<Enter>', lambda e: self.show_tooltip(e, self._quality_mode_tooltip_text()))
         info_button_quality_mode.bind('<Leave>', self.hide_tooltip)
 
+        ttk.Label(self.control_frame, text="Quality:").grid(row=5, column=0, sticky=tk.W)
         quality_frame = ttk.Frame(self.control_frame)
-        quality_frame.grid(row=5, column=0, columnspan=3, sticky=tk.W + tk.E, pady=(5, 0))
-        ttk.Label(quality_frame, text="Quality:").grid(row=0, column=0, sticky=tk.W)
+        quality_frame.grid(row=5, column=1, sticky=tk.W + tk.E, pady=(5, 0))
         self.quality_slider = ttk.Scale(
             quality_frame, from_=self._CRF_RANGE[0], to=self._CRF_RANGE[1],
             orient=tk.HORIZONTAL, length=200, command=self._on_quality_change)
-        self.quality_slider.grid(row=0, column=1, sticky=tk.W + tk.E, padx=(10, 8))
+        self.quality_slider.grid(row=0, column=0, sticky=tk.W + tk.E, padx=(10, 8))
         # ttk.Scale.set() fires its own -command (_on_quality_change) even for
         # this construction-time priming call. If a persisted session left
         # quality_mode_var as 'Target Bitrate', that fires before the slider
@@ -597,12 +598,14 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         finally:
             self._applying_bitrate_range = False
         self.quality_slider.bind('<Button-1>', self._quality_slider_jump)
-        self.quality_value_label = ttk.Label(
-            quality_frame, textvariable=self.quality_display_var, width=10)
-        self.quality_value_label.grid(row=0, column=2, sticky=tk.W)
+        # <Return> commit handler is wired up once _on_quality_entry_change
+        # exists (see the follow-up spec item on typed exact-value commits).
+        self.quality_entry = ttk.Entry(
+            self.control_frame, textvariable=self.quality_display_var, width=10)
+        self.quality_entry.grid(row=5, column=2, sticky=tk.W + tk.E, padx=(5, 0))
         ttk.Label(quality_frame, text="Smaller File  ◀──▶  Better Quality",
-                  foreground='gray').grid(row=1, column=1, columnspan=2, sticky=tk.W, padx=(10, 0))
-        quality_frame.columnconfigure(1, weight=1)
+                  foreground='gray').grid(row=1, column=0, sticky=tk.W, padx=(10, 0))
+        quality_frame.columnconfigure(0, weight=1)
 
         self.image_frame = ttk.Frame(self.root, padding="10")
         self.image_frame.grid(row=1, column=0, sticky=tk.W + tk.E + tk.N + tk.S)
@@ -765,7 +768,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.open_after_conversion_checkbutton, self.display_image_checkbutton,
             self.input_entry, self.output_entry, self.gamma_entry,
             self.gpu_accel_checkbutton, self.batch_listbox,
-            self.quality_slider, self.quality_mode_combobox,
+            self.quality_slider, self.quality_entry, self.quality_mode_combobox,
             self.format_combobox,
             self.custom_time_entry, self.custom_seek_button,
             self.add_files_button, self.clear_batch_button, self.remove_batch_button,

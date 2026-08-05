@@ -346,6 +346,49 @@ class TestConstruction(_GuiTestBase):
         self.assertAlmostEqual(float(self.gui.quality_slider.cget('to')), 40000)
 
 
+@unittest.skipUnless(_TK_OK, _SKIP)
+class TestRestoringBitrateModeAtStartup(unittest.TestCase):
+    """Restoring a persisted Target Bitrate session must not corrupt the
+    saved kbps value before the user touches anything. quality_slider's own
+    priming .set() during construction (create_widgets) fires
+    _on_quality_change synchronously -- with quality_mode_var already
+    'Target Bitrate' at that point but the slider still wearing its CRF
+    range, an unguarded call misreads the CRF number as kbps."""
+
+    def setUp(self):
+        persisted = dict(DEFAULTS)
+        persisted['quality_mode'] = 'bitrate'
+        persisted['quality_bitrate_kbps'] = 12000
+        self._load_patch = patch('src.gui.load_settings', return_value=persisted)
+        self._save_patch = patch('src.gui.save_settings')
+        self._load_patch.start()
+        self._save_patch.start()
+        self._props_patch = patch('src.gui.get_video_properties', return_value=None)
+        self._maxcll_patch = patch('src.gui.get_maxcll', return_value=None)
+        self._props_patch.start()
+        self._maxcll_patch.start()
+        self.root = _probe_root
+        drain_after_timers(self.root)
+        for w in self.root.winfo_children():
+            w.destroy()
+
+    def tearDown(self):
+        self._load_patch.stop()
+        self._save_patch.stop()
+        self._props_patch.stop()
+        self._maxcll_patch.stop()
+
+    def test_persisted_bitrate_survives_construction(self):
+        gui = HDRConverterGUI(self.root, licensed=True)
+        self.assertEqual(gui.bitrate_var.get(), 12000,
+                         msg='persisted Target Bitrate kbps must not be '
+                             'overwritten by the slider priming .set() '
+                             'firing _on_quality_change during construction')
+        self.assertFalse(gui._bitrate_customized_for_current_item,
+                         msg='construction-time priming must not mark the '
+                             '(nonexistent) current item as user-customized')
+
+
 class TestDarkTheme(_GuiTestBase):
     """The color-based dark clam theme (replaces image-based sv_ttk)."""
 

@@ -584,7 +584,18 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             quality_frame, from_=self._CRF_RANGE[0], to=self._CRF_RANGE[1],
             orient=tk.HORIZONTAL, length=200, command=self._on_quality_change)
         self.quality_slider.grid(row=0, column=1, sticky=tk.W + tk.E, padx=(10, 8))
-        self.quality_slider.set(self.quality_var.get())
+        # ttk.Scale.set() fires its own -command (_on_quality_change) even for
+        # this construction-time priming call. If a persisted session left
+        # quality_mode_var as 'Target Bitrate', that fires before the slider
+        # has been ranged for bitrate mode (_apply_quality_mode runs later in
+        # create_widgets), misreading this CRF value as kbps and corrupting
+        # the just-restored bitrate_var. Suppress it the same way
+        # _apply_bitrate_range suppresses its own programmatic .set() calls.
+        self._applying_bitrate_range = True
+        try:
+            self.quality_slider.set(self.quality_var.get())
+        finally:
+            self._applying_bitrate_range = False
         self.quality_slider.bind('<Button-1>', self._quality_slider_jump)
         self.quality_value_label = ttk.Label(
             quality_frame, textvariable=self.quality_display_var, width=10)

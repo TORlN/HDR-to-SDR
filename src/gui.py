@@ -1139,10 +1139,13 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         return (bit_rate // 1000) or self._BITRATE_FALLBACK_KBPS
 
     def _bitrate_ceiling_kbps(self) -> int:
-        """Target Bitrate's slider ceiling: the source bitrate rounded to the
-        nearest 500 kbps step, never below the floor."""
+        """Target Bitrate's slider ceiling: the exact source bitrate, never
+        below the floor. Not rounded -- a rounded ceiling silently made the
+        true source rate unreachable (see the typed-entry commit handler,
+        which is the only way to reach this exact value; a slider drag still
+        snaps to a coarser 500 kbps step, see _on_quality_change)."""
         source = self._source_bitrate_kbps()
-        return max(self._BITRATE_FLOOR_KBPS, round(source / 500) * 500)
+        return max(self._BITRATE_FLOOR_KBPS, source)
 
     def _apply_bitrate_range(self) -> None:
         """Reconfigure the quality slider for Target Bitrate mode. The range

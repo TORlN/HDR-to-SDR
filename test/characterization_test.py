@@ -2717,6 +2717,7 @@ class TestApplyLicenseStateUnlicensed(unittest.TestCase):
         gui.gpu_accel_var = MagicMock()
         gui.gpu_accel_checkbutton = MagicMock()
         gui.quality_slider = MagicMock()
+        gui.quality_entry = MagicMock()
         gui.quality_mode_combobox = MagicMock()
         gui.quality_mode_var = MagicMock()
         gui.quality_mode_var.get.return_value = quality_mode
@@ -3133,22 +3134,21 @@ class TestApplyQualityMode(unittest.TestCase):
         }
         self.assertEqual(gui._source_bitrate_kbps(), 20000)
 
-    def test_bitrate_ceiling_rounds_to_nearest_500(self):
+    def test_bitrate_ceiling_returns_the_exact_source_bitrate(self):
         gui = self._gui(cached_bit_rate=84_376_000)  # 84,376 kbps
-        self.assertEqual(gui._bitrate_ceiling_kbps(), 84500)
+        self.assertEqual(gui._bitrate_ceiling_kbps(), 84376)
 
     def test_bitrate_ceiling_never_below_floor(self):
         gui = self._gui(cached_bit_rate=500_000)  # 500 kbps, below the 1,000 floor
         self.assertEqual(gui._bitrate_ceiling_kbps(), 1000)
 
-    def test_bitrate_ceiling_rounds_half_to_even_at_tie(self):
-        # 1,250 / 500 == 2.5, a tie. Python's round() is round-half-to-even
-        # ("banker's rounding"): round(2.5) == 2, not 3, so the ceiling lands
-        # on 1,000 rather than the round-half-up-intuitive 1,500. This pins
-        # the currently-shipping behavior; it is not asserting this is the
-        # "right" rounding choice.
-        gui = self._gui(cached_bit_rate=1_250_000)  # 1,250 kbps -- exact tie
-        self.assertEqual(gui._bitrate_ceiling_kbps(), 1000)
+    def test_bitrate_ceiling_no_longer_rounds_at_the_former_tie_point(self):
+        # 1,250 kbps used to round down to a 1,000 kbps ceiling (banker's
+        # rounding at the 2.5 tie -- see git history, commit 7695a70). The
+        # ceiling is now the exact source bitrate, so this same input must
+        # return 1,250 exactly instead of being truncated.
+        gui = self._gui(cached_bit_rate=1_250_000)  # 1,250 kbps
+        self.assertEqual(gui._bitrate_ceiling_kbps(), 1250)
 
     # ── mode switch: Constant Quality -> Target Bitrate ─────────────────
 
@@ -3214,6 +3214,19 @@ class TestApplyQualityMode(unittest.TestCase):
         gui._bitrate_needs_reseed = True
         gui._apply_quality_mode()
         gui.bitrate_var.set.assert_any_call(5000)  # 50% of second file's 10,000
+
+    def test_reseed_uses_the_exact_non_500_aligned_ceiling(self):
+        # Confirms the reseed calculation still works correctly now that
+        # _bitrate_ceiling_kbps can return a ceiling that isn't itself a
+        # multiple of 500 (e.g. a real probed 47,547 kbps source, no longer
+        # rounded down to 47,500 -- see _bitrate_ceiling_kbps).
+        gui = self._gui(mode='Target Bitrate', cached_bit_rate=47_547_000)  # 47,547 kbps
+        gui._bitrate_needs_reseed = True
+        gui._apply_quality_mode()
+        # Reseed still rounds ITS OWN result to the nearest 500 for a
+        # drag-friendly default: round(47547 * 0.5 / 500) * 500 == 24000.
+        gui.bitrate_var.set.assert_any_call(24000)
+        gui.quality_slider.configure.assert_called_once_with(from_=1000, to=47547)
 
     def test_reseed_rounds_half_to_even_at_tie(self):
         # Ceiling = 2,500 kbps is itself an exact, non-tie result (source

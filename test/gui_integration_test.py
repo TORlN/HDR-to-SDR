@@ -610,12 +610,74 @@ class TestStateAndLayout(_GuiTestBase):
         now-top-anchored preview images instead of doing anything useful.
         The batch queue listbox (batch_frame row 2, itself rowconfigure
         weight=1 internally) is the widget that should actually grow, so the
-        slack belongs on root row 2, not root row 1."""
+        slack belongs on root row 2, not root row 1. Row 2's minsize is
+        pinned to batch_frame's own natural height, not 0 -- see
+        _clamp_batch_queue_height's docstring for why raising it dynamically
+        to the cap instead would permanently lock the window's minimum size
+        once the queue had ever grown."""
         self.assertEqual(self.gui.root.grid_rowconfigure(1)['weight'], 0)
         self.assertEqual(self.gui.root.grid_rowconfigure(2)['weight'], 1)
+        self.assertEqual(
+            self.gui.root.grid_rowconfigure(2)['minsize'],
+            self.gui._batch_queue_natural_height)
         info = self.gui.batch_frame.grid_info()
         self.assertIn('n', str(info['sticky']))
-        self.assertIn('s', str(info['sticky']))
+        self.assertNotIn('s', str(info['sticky']))
+
+    def test_batch_queue_target_height_below_natural_clamps_up(self):
+        target = self.gui._batch_queue_target_height(0)
+        self.assertEqual(target, self.gui._batch_queue_natural_height)
+
+    def test_batch_queue_target_height_between_natural_and_cap_tracks_available(self):
+        available = self.gui._batch_queue_natural_height + 20
+        self.assertLess(available, self.gui._BATCH_QUEUE_MAX_HEIGHT_PX)
+        target = self.gui._batch_queue_target_height(available)
+        self.assertEqual(target, available)
+
+    def test_batch_queue_target_height_above_cap_clamps_down(self):
+        # Regression: with only root row 2 (batch_frame) carrying any grid
+        # weight, a very tall window -- especially with image_frame hidden
+        # because no file is loaded -- handed the batch queue box the
+        # entire window instead of a bounded amount of extra height.
+        target = self.gui._batch_queue_target_height(
+            self.gui._BATCH_QUEUE_MAX_HEIGHT_PX + 500)
+        self.assertEqual(target, self.gui._BATCH_QUEUE_MAX_HEIGHT_PX)
+
+    def test_clamp_batch_queue_height_caps_widget_past_threshold(self):
+        with patch.object(self.gui.root, 'winfo_height', return_value=1000), \
+             patch.object(self.gui.control_frame, 'winfo_height', return_value=100), \
+             patch.object(self.gui.image_frame, 'winfo_height', return_value=0), \
+             patch.object(self.gui.action_frame, 'winfo_height', return_value=50), \
+             patch.object(self.gui.footer_frame, 'winfo_height', return_value=30):
+            # available = 1000 - (100+0+50+30) = 820, well past the cap
+            self.gui._clamp_batch_queue_height()
+        # Capped via the widget's own explicit height, not via row minsize --
+        # row 2's minsize/weight must stay exactly as configure_grid set them
+        # (unchanged, reversible), never raised to the cap.
+        self.assertEqual(
+            int(str(self.gui.batch_frame.cget('height'))),
+            self.gui._BATCH_QUEUE_MAX_HEIGHT_PX)
+        self.assertEqual(self.gui.root.grid_rowconfigure(2)['weight'], 1)
+        self.assertEqual(
+            self.gui.root.grid_rowconfigure(2)['minsize'],
+            self.gui._batch_queue_natural_height)
+
+    def test_clamp_batch_queue_height_shrinks_back_below_threshold(self):
+        # A prior resize left the widget capped at max height; shrinking the
+        # window back down must shrink the widget back with it, not leave it
+        # frozen at the cap (the bug in an earlier rowconfigure-minsize-based
+        # version of this cap -- see _clamp_batch_queue_height's docstring).
+        self.gui.batch_frame.configure(height=self.gui._BATCH_QUEUE_MAX_HEIGHT_PX)
+        with patch.object(self.gui.root, 'winfo_height', return_value=300), \
+             patch.object(self.gui.control_frame, 'winfo_height', return_value=100), \
+             patch.object(self.gui.image_frame, 'winfo_height', return_value=0), \
+             patch.object(self.gui.action_frame, 'winfo_height', return_value=50), \
+             patch.object(self.gui.footer_frame, 'winfo_height', return_value=30):
+            # available = 300 - (100+0+50+30) = 120, well below the cap
+            self.gui._clamp_batch_queue_height()
+        self.assertEqual(
+            int(str(self.gui.batch_frame.cget('height'))),
+            max(120, self.gui._batch_queue_natural_height))
 
 
 class TestTooltip(_GuiTestBase):

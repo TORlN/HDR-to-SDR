@@ -1285,10 +1285,12 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         mode, or 500 kbps increments in Target Bitrate mode (the scale emits
         floats either way)."""
         if getattr(self, '_applying_bitrate_range', False):
-            # This call is _apply_bitrate_range's own programmatic .set(),
-            # not a user drag -- it already applies bitrate_var itself and
-            # every caller of _apply_bitrate_range already writes settings
-            # back explicitly afterward, so there is nothing left to do here.
+            # A purely programmatic .set(), not a user drag -- either
+            # _apply_bitrate_range's own reseed/clamp (which already applies
+            # bitrate_var itself, with every caller writing settings back
+            # explicitly afterward) or create_widgets' construction-time
+            # priming (before any file/batch item exists, so there is
+            # nothing to write back). Either way, nothing left to do here.
             return
         if self.quality_mode_var.get() == 'Target Bitrate':
             self.bitrate_var.set(round(float(value) / 500) * 500)

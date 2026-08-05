@@ -3141,6 +3141,15 @@ class TestApplyQualityMode(unittest.TestCase):
         gui = self._gui(cached_bit_rate=500_000)  # 500 kbps, below the 1,000 floor
         self.assertEqual(gui._bitrate_ceiling_kbps(), 1000)
 
+    def test_bitrate_ceiling_rounds_half_to_even_at_tie(self):
+        # 1,250 / 500 == 2.5, a tie. Python's round() is round-half-to-even
+        # ("banker's rounding"): round(2.5) == 2, not 3, so the ceiling lands
+        # on 1,000 rather than the round-half-up-intuitive 1,500. This pins
+        # the currently-shipping behavior; it is not asserting this is the
+        # "right" rounding choice.
+        gui = self._gui(cached_bit_rate=1_250_000)  # 1,250 kbps -- exact tie
+        self.assertEqual(gui._bitrate_ceiling_kbps(), 1000)
+
     # ── mode switch: Constant Quality -> Target Bitrate ─────────────────
 
     def test_switching_to_bitrate_mode_sets_range_and_restores_value(self):
@@ -3205,6 +3214,17 @@ class TestApplyQualityMode(unittest.TestCase):
         gui._bitrate_needs_reseed = True
         gui._apply_quality_mode()
         gui.bitrate_var.set.assert_any_call(5000)  # 50% of second file's 10,000
+
+    def test_reseed_rounds_half_to_even_at_tie(self):
+        # Ceiling = 2,500 kbps is itself an exact, non-tie result (source
+        # 2,500 kbps -> round(2500/500)=round(5)=5 -> 2,500). The reseed's
+        # OWN tie shows up next: ceiling * 0.5 / 500 == 2.5, and round(2.5)
+        # == 2 (banker's rounding), so the seed lands on 1,000 kbps, not the
+        # round-half-up-intuitive 1,500.
+        gui = self._gui(mode='Target Bitrate', cached_bit_rate=2_500_000)  # 2,500 kbps
+        gui._bitrate_needs_reseed = True  # set by _update_info_label on file load
+        gui._apply_quality_mode()
+        gui.bitrate_var.set.assert_any_call(1000)
 
     # ── mode switch: Target Bitrate -> Constant Quality ─────────────────
 

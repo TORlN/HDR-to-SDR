@@ -128,16 +128,17 @@ def _tonemap_plan(request: RequestLike, properties: 'dict[str, Any]',
             "look wrong (green/purple cast)."))
     elif dovi_needs_rpu and not use_gpu:
         # use_gpu is False here, so without this notice the override is
-        # silent -- a user who unchecked "Enable GPU Acceleration" expecting
-        # a pure-CPU run has no way to know GPU tonemapping ran anyway (only
+        # silent -- GPU acceleration is off for this run (e.g. this machine
+        # has no GPU, or bit_depth forced CPU), yet GPU tonemapping still ran
+        # for this source, and the user has no other way to know that (only
         # the tonemap step; encoding still follows the vendor dispatch, so
         # it stays on the CPU encoder).
         notices.append(Notice.info(
             "Dolby Vision Profile 5",
             "This Dolby Vision (profile 5) source has no HDR10-compatible "
             "base layer, so GPU tonemapping is being used to render its "
-            "colors correctly even though \"Enable GPU Acceleration\" is "
-            "unchecked. Encoding itself still runs on the CPU."))
+            "colors correctly even though GPU acceleration is off for this "
+            "run. Encoding itself still runs on the CPU."))
 
     return TonemapPlan(use_gpu=use_gpu, dovi_needs_rpu=dovi_needs_rpu,
                        use_libplacebo=use_libplacebo, notices=notices)

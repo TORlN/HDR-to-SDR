@@ -1725,9 +1725,9 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         self.assertEqual([n for n in view.notices if n.kind == 'warning'], [])
 
     def test_dovi_profile5_override_notifies_when_gpu_toggle_off(self):
-        """The RPU override silently ignores the "Enable GPU Acceleration"
-        checkbox -- without a notice, a user who left it unchecked (expecting
-        pure CPU conversion) has no way to know GPU tonemapping ran anyway."""
+        """The RPU override silently ignores GPU acceleration being off for
+        this run -- without a notice, a user expecting pure CPU conversion
+        has no way to know GPU tonemapping ran anyway."""
         manager = ConversionManager()
         view = _view()
         with patch('src.conversion.vulkan_libplacebo_available', return_value=True):

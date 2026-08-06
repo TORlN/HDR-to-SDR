@@ -413,7 +413,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.browse_button, self.convert_button, self.gamma_slider,
             self.open_after_conversion_checkbutton, self.display_image_checkbutton,
             self.input_entry, self.output_entry, self.gamma_entry,
-            self.gpu_accel_checkbutton, self.bit_depth_10_radio, self.batch_listbox,
+            self.bit_depth_10_radio, self.batch_listbox,
         ]
         premium = [
             self.quality_slider, self.quality_entry, self.quality_mode_combobox, self.format_combobox,
@@ -447,7 +447,6 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             save_settings({
                 'gamma': self.gamma_var.get(),
                 'tonemapper': self.tonemap_var.get(),
-                'gpu_accel': self.gpu_accel_var.get(),
                 'open_after_conversion': self.open_after_conversion_var.get(),
                 'display_preview': self.display_image_var.get(),
                 'quality': self.quality_var.get(),
@@ -494,11 +493,6 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.gamma_entry = ttk.Entry(self.control_frame, textvariable=self.gamma_var, width=5)
         self.gamma_entry.grid(row=2, column=2, sticky=tk.W + tk.E, padx=(5, 0))
         self.gamma_entry.bind('<Return>', self.on_gamma_change)
-
-        self.gpu_accel_checkbutton = ttk.Checkbutton(
-            self.control_frame, text="Enable GPU Acceleration",
-            variable=self.gpu_accel_var, command=self.check_gpu_acceleration)
-        self.gpu_accel_checkbutton.grid(row=5, column=0, sticky=tk.W, pady=(5, 0))
 
         self.display_image_checkbutton = ttk.Checkbutton(
             self.control_frame, text="Display Frame Preview",
@@ -564,6 +558,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             command=self._on_bit_depth_toggle)
         self.bit_depth_12_radio.grid(row=0, column=2, padx=(5, 0))
         self.bit_depth_frame.grid_remove()
+
+        self.gpu_status_label = ttk.Label(self.control_frame, text='')
+        self.gpu_status_label.grid(row=5, column=2, sticky=tk.W, padx=(15, 0), pady=(5, 0))
 
         self.quality_mode_frame = ttk.Frame(self.control_frame)
         self.quality_mode_frame.grid(row=6, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))
@@ -779,13 +776,15 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.browse_button, self.convert_button, self.gamma_slider,
             self.open_after_conversion_checkbutton, self.display_image_checkbutton,
             self.input_entry, self.output_entry, self.gamma_entry,
-            self.gpu_accel_checkbutton, self.batch_listbox,
+            self.batch_listbox,
             self.quality_slider, self.quality_entry, self.quality_mode_combobox,
             self.format_combobox,
             self.custom_time_entry, self.custom_seek_button,
             self.add_files_button, self.clear_batch_button, self.remove_batch_button,
             self.bit_depth_10_radio, self.bit_depth_12_radio, self.apply_settings_button,
         ]
+
+        self._detect_gpu_acceleration()
 
         self._apply_quality_mode()
         self._apply_tonemap_choices()
@@ -994,7 +993,6 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             'quality': self.quality_var.get(),
             'bitrate_fraction': self.bitrate_var.get() / self._bitrate_ceiling_kbps(),
             'tonemapper': self.tonemap_var.get(),
-            'gpu_accel': self.gpu_accel_var.get(),
             'bit_depth_choice': self.bit_depth_var.get(),
             'bitrate_customized': getattr(self, '_bitrate_customized_for_current_item', False),
             'lut_enabled': self.lut_export_var.get(),
@@ -1006,7 +1004,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         range/fallback logic so the restored values are re-validated against
         whichever file is now loaded -- e.g. Target Bitrate's ceiling clamps
         to this file's own source bitrate, and a GPU-only tonemapper falls
-        back to Mobius if this file's load left GPU accel off.
+        back to Mobius if this machine's GPU accel (a fixed, machine-wide
+        capability, not a per-file setting) is off.
 
         Self-guarded against _write_back_current_settings: the slider moves
         below are internal, intermediate state, not a user edit, and must
@@ -1019,7 +1018,6 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._restoring_batch_item_settings = True
         try:
             self.gamma_var.set(settings.get('gamma', self.gamma_var.get()))
-            self.gpu_accel_var.set(settings.get('gpu_accel', self.gpu_accel_var.get()))
             self.tonemap_var.set(settings.get('tonemapper', self.tonemap_var.get()))
             self.lut_export_var.set(settings.get('lut_enabled', self.lut_export_var.get()))
             self.quality_mode_var.set(self._QUALITY_MODE_FROM_INTERNAL.get(
@@ -1118,7 +1116,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         marker's meaning) discoverable from the queue panel itself."""
         return (
             "Each queued file remembers its own settings (gamma, quality, "
-            "tonemapper, GPU accel, bit depth, Accurate GPU Color).\n\n"
+            "tonemapper, bit depth, Accurate GPU Color).\n\n"
             "Selecting a queued file loads its own settings into the controls "
             "above; changing a control while a file is selected edits that "
             "file's settings only.\n\n"
@@ -1590,33 +1588,31 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
 
     # ── GPU acceleration ───────────────────────────────────────────────────────
 
-    def check_gpu_acceleration(self) -> None:
-        """Check if GPU acceleration is available when the checkbox is toggled."""
-        if self.gpu_accel_var.get():
-            try:
-                available = conversion_manager.is_gpu_acceleration_available()
-                if not available:
-                    self.gpu_accel_var.set(False)
-                    messagebox.showwarning(
-                        "GPU Acceleration",
-                        "GPU acceleration is not available on this system. "
-                        "It needs either a supported hardware encoder "
-                        "(NVIDIA h264_nvenc, AMD h264_amf, Intel h264_qsv) or "
-                        "GPU tonemapping (libplacebo/Vulkan). Switching to CPU mode.")
-            except Exception as e:
-                self.gpu_accel_var.set(False)
-                logging.error(f"Error checking GPU acceleration: {e}")
-                messagebox.showerror(
-                    "Error",
-                    f"An error occurred while checking GPU acceleration:\n{e}")
-        if hasattr(self, 'quality_slider'):
-            self._apply_quality_mode()
-        if hasattr(self, 'tonemap_combobox'):
-            self._apply_tonemap_choices()
-        if hasattr(self, 'lut_export_checkbutton'):
-            self._apply_lut_export_availability()
-        self._write_back_current_settings()
-        self.update_frame_preview()
+    def _detect_gpu_acceleration(self) -> None:
+        """Probe GPU availability once, at construction. GPU acceleration is
+        always attempted when available -- there is no user toggle -- so this
+        replaces the old checkbox's on-click check."""
+        try:
+            available = conversion_manager.is_gpu_acceleration_available()
+        except Exception as e:
+            logging.error(f"Error checking GPU acceleration: {e}")
+            messagebox.showerror(
+                "Error",
+                f"An error occurred while checking GPU acceleration:\n{e}")
+            self.gpu_accel_var.set(False)
+            self.gpu_status_label.config(text="✗ GPU", foreground='red')
+            return
+        self.gpu_accel_var.set(available)
+        if available:
+            self.gpu_status_label.config(text="✓ GPU", foreground='green')
+        else:
+            self.gpu_status_label.config(text="✗ GPU", foreground='red')
+            messagebox.showwarning(
+                "GPU Acceleration",
+                "GPU acceleration is not available on this system. "
+                "It needs either a supported hardware encoder "
+                "(NVIDIA h264_nvenc, AMD h264_amf, Intel h264_qsv) or "
+                "GPU tonemapping (libplacebo/Vulkan).")
 
     # ── Tooltips ───────────────────────────────────────────────────────────────
 

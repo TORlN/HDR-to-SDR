@@ -153,7 +153,10 @@ class TestConstruction(_GuiTestBase):
     def test_variable_defaults(self):
         self.assertEqual(self.gui.gamma_var.get(), 1.0)
         self.assertEqual(self.gui.tonemap_var.get(), 'Mobius')
-        self.assertFalse(self.gui.gpu_accel_var.get())
+        # _GuiTestBase mocks is_gpu_acceleration_available to return True (see
+        # its setUp), so construction-time detection legitimately sets this True
+        # -- it is no longer a persisted, off-by-default preference.
+        self.assertTrue(self.gui.gpu_accel_var.get())
         self.assertTrue(self.gui.display_image_var.get())
         self.assertEqual(self.gui.progress_var.get(), 0)
 
@@ -242,10 +245,12 @@ class TestConstruction(_GuiTestBase):
                          ('MP4', 'MKV', 'MOV'))
         self.assertEqual(str(self.gui.format_combobox.cget('state')), 'readonly')
 
-    def test_quality_slider_defaults_to_cpu_crf_range(self):
-        # GPU off by default -> CRF range, worst(28) on the left, best(17) on the right.
-        self.assertAlmostEqual(float(self.gui.quality_slider.cget('from')), 28)
-        self.assertAlmostEqual(float(self.gui.quality_slider.cget('to')), 17)
+    def test_quality_slider_defaults_to_gpu_cq_range(self):
+        # _GuiTestBase mocks is_gpu_acceleration_available to return True, so
+        # construction-time detection lands on the GPU CQ range, worst(30) on
+        # the left, best(15) on the right.
+        self.assertAlmostEqual(float(self.gui.quality_slider.cget('from')), 30)
+        self.assertAlmostEqual(float(self.gui.quality_slider.cget('to')), 15)
 
     def test_no_legacy_color_depth_widget(self):
         """The old unconditional 8/10-bit picker is gone for good -- replaced
@@ -300,7 +305,7 @@ class TestConstruction(_GuiTestBase):
             self.gui.open_after_conversion_checkbutton,
             self.gui.display_image_checkbutton, self.gui.input_entry,
             self.gui.output_entry, self.gui.gamma_entry,
-            self.gui.gpu_accel_checkbutton, self.gui.batch_listbox,
+            self.gui.batch_listbox,
             self.gui.quality_slider, self.gui.quality_entry,
             self.gui.quality_mode_combobox, self.gui.format_combobox,
             self.gui.custom_time_entry, self.gui.custom_seek_button,
@@ -741,11 +746,11 @@ class TestUserActions(_GuiTestBase):
 
     @patch('src.gui.messagebox')
     @patch('src.gui.conversion_manager')
-    def test_gpu_toggle_unavailable_resets_and_warns(self, mock_cm, mock_mb):
+    def test_detect_gpu_acceleration_unavailable_resets_and_warns(self, mock_cm, mock_mb):
         mock_cm.is_gpu_acceleration_available.return_value = False
-        self.gui.gpu_accel_var.set(True)
-        self.gui.check_gpu_acceleration()
+        self.gui._detect_gpu_acceleration()
         self.assertFalse(self.gui.gpu_accel_var.get())
+        self.assertEqual(self.gui.gpu_status_label.cget('text'), "✗ GPU")
         mock_mb.showwarning.assert_called_once()
 
     @patch('src.gui.messagebox')
@@ -940,10 +945,6 @@ class TestUnlicensedState(_LicensingBase):
             w.destroy()
         cls._class_gui = HDRConverterGUI(_probe_root, licensed=False)
 
-    def test_gpu_checkbox_enabled_when_unlicensed(self):
-        # GPU acceleration is free; the checkbox must stay enabled without a license.
-        self.assertFalse(self.gui.gpu_accel_checkbutton.instate(['disabled']))
-
     def test_disables_quality_controls(self):
         self.assertTrue(self.gui.quality_slider.instate(['disabled']))
         self.assertTrue(self.gui.quality_entry.instate(['disabled']))
@@ -969,8 +970,7 @@ class TestUnlicensedState(_LicensingBase):
         self.assertNotEqual(self.gui._pro_banner.grid_info(), {})
 
     def test_excludes_premium_from_interactable_elements(self):
-        # GPU is free, so gpu_accel_checkbutton IS included even when unlicensed.
-        # 10-bit is free too, so bit_depth_10_radio is included; 12-bit is Pro.
+        # 10-bit is free, so bit_depth_10_radio is included; 12-bit is Pro.
         premium = [
             self.gui.quality_slider, self.gui.quality_entry, self.gui.quality_mode_combobox,
             self.gui.format_combobox, self.gui.custom_time_entry,
@@ -981,7 +981,6 @@ class TestUnlicensedState(_LicensingBase):
         for widget in premium:
             self.assertNotIn(widget, self.gui.interactable_elements,
                              msg=f'{widget} must not be in interactable_elements when unlicensed')
-        self.assertIn(self.gui.gpu_accel_checkbutton, self.gui.interactable_elements)
         self.assertIn(self.gui.bit_depth_10_radio, self.gui.interactable_elements)
 
     def test_multifile_drop_blocked(self):
@@ -1011,9 +1010,6 @@ class TestLicensedState(_LicensingBase):
             w.destroy()
         cls._class_gui = HDRConverterGUI(_probe_root, licensed=True)
 
-    def test_enables_gpu_checkbox(self):
-        self.assertFalse(self.gui.gpu_accel_checkbutton.instate(['disabled']))
-
     def test_enables_quality_controls(self):
         self.assertFalse(self.gui.quality_slider.instate(['disabled']))
         self.assertFalse(self.gui.quality_entry.instate(['disabled']))
@@ -1040,7 +1036,7 @@ class TestLicensedState(_LicensingBase):
 
     def test_includes_premium_in_interactable_elements(self):
         premium = [
-            self.gui.gpu_accel_checkbutton, self.gui.quality_slider, self.gui.quality_entry,
+            self.gui.quality_slider, self.gui.quality_entry,
             self.gui.quality_mode_combobox,
             self.gui.format_combobox, self.gui.custom_time_entry,
             self.gui.custom_seek_button, self.gui.add_files_button,
@@ -1105,11 +1101,8 @@ class TestLicenseTransition(unittest.TestCase):
         return HDRConverterGUI(_probe_root, licensed=licensed)
 
     def test_apply_license_state_unlocks_all_premium_features(self):
-        # GPU stays enabled at all times; only quality/batch/format are Pro-gated.
         gui = self._make_gui(licensed=False)
-        self.assertFalse(gui.gpu_accel_checkbutton.instate(['disabled']))
         gui._apply_license_state(True)
-        self.assertFalse(gui.gpu_accel_checkbutton.instate(['disabled']))
         self.assertFalse(gui.quality_slider.instate(['disabled']))
         self.assertFalse(gui.quality_entry.instate(['disabled']))
         self.assertFalse(gui.add_files_button.instate(['disabled']))

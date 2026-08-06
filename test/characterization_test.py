@@ -811,102 +811,97 @@ class TestGuiInteractions(unittest.TestCase):
 
     @patch('src.gui.messagebox')
     @patch('src.gui.conversion_manager')
-    def test_check_gpu_acceleration_resets_when_unavailable(self, mock_cm, mock_mb):
+    def test_detect_gpu_acceleration_sets_available_and_status(self, mock_cm, mock_mb):
         gui = _bare_gui()
         gui.gpu_accel_var = MagicMock()
-        gui.gpu_accel_var.get.return_value = True
-        gui.update_frame_preview = MagicMock()
-        mock_cm.is_gpu_acceleration_available.return_value = False
-
-        gui.check_gpu_acceleration()
-
-        gui.gpu_accel_var.set.assert_called_once_with(False)
-        mock_mb.showwarning.assert_called_once()
-
-    @patch('src.gui.messagebox')
-    @patch('src.gui.conversion_manager')
-    def test_check_gpu_acceleration_keeps_when_available(self, mock_cm, mock_mb):
-        gui = _bare_gui()
-        gui.gpu_accel_var = MagicMock()
-        gui.gpu_accel_var.get.return_value = True
-        gui.update_frame_preview = MagicMock()
+        gui.gpu_status_label = MagicMock()
         mock_cm.is_gpu_acceleration_available.return_value = True
 
-        gui.check_gpu_acceleration()
+        gui._detect_gpu_acceleration()
 
-        gui.gpu_accel_var.set.assert_not_called()
+        gui.gpu_accel_var.set.assert_called_once_with(True)
+        gui.gpu_status_label.config.assert_called_once_with(text="✓ GPU", foreground='green')
         mock_mb.showwarning.assert_not_called()
 
     @patch('src.gui.messagebox')
     @patch('src.gui.conversion_manager')
-    def test_check_gpu_acceleration_refreshes_preview(self, mock_cm, mock_mb):
-        """Toggling GPU acceleration can silently fall back the tonemapper
-        (e.g. Spline -> Mobius, via _apply_tonemap_choices) -- the preview
-        must be refreshed so it reflects whatever tonemapper/GPU state is
-        now actually active, not go on showing a stale frame."""
+    def test_detect_gpu_acceleration_sets_unavailable_and_warns(self, mock_cm, mock_mb):
         gui = _bare_gui()
         gui.gpu_accel_var = MagicMock()
-        gui.gpu_accel_var.get.return_value = True
-        gui.update_frame_preview = MagicMock()
-        mock_cm.is_gpu_acceleration_available.return_value = True
+        gui.gpu_status_label = MagicMock()
+        mock_cm.is_gpu_acceleration_available.return_value = False
 
-        gui.check_gpu_acceleration()
+        gui._detect_gpu_acceleration()
 
-        gui.update_frame_preview.assert_called_once()
+        gui.gpu_accel_var.set.assert_called_once_with(False)
+        gui.gpu_status_label.config.assert_called_once_with(text="✗ GPU", foreground='red')
+        mock_mb.showwarning.assert_called_once()
 
     @patch('src.gui.messagebox')
     @patch('src.gui.conversion_manager')
-    def test_check_gpu_acceleration_disables_lut_checkbox_when_gpu_off(self, mock_cm, mock_mb):
-        """Accurate GPU Color only affects the GPU/libplacebo export path
-        (see its tooltip: "No effect on CPU exports") -- grey it out when
-        GPU acceleration is off so it can't be toggled to no effect."""
+    def test_detect_gpu_acceleration_reports_exception(self, mock_cm, mock_mb):
+        gui = _bare_gui()
+        gui.gpu_accel_var = MagicMock()
+        gui.gpu_status_label = MagicMock()
+        mock_cm.is_gpu_acceleration_available.side_effect = RuntimeError('nope')
+
+        gui._detect_gpu_acceleration()
+
+        gui.gpu_accel_var.set.assert_called_once_with(False)
+        gui.gpu_status_label.config.assert_called_once_with(text="✗ GPU", foreground='red')
+        mock_mb.showerror.assert_called_once()
+        mock_mb.showwarning.assert_not_called()
+
+    def test_apply_lut_export_availability_disables_when_gpu_off(self):
         gui = _bare_gui()
         gui.gpu_accel_var = MagicMock()
         gui.gpu_accel_var.get.return_value = False
-        gui.update_frame_preview = MagicMock()
         gui.lut_export_checkbutton = MagicMock()
 
-        gui.check_gpu_acceleration()
+        gui._apply_lut_export_availability()
 
         gui.lut_export_checkbutton.config.assert_called_once_with(state='disabled')
 
-    @patch('src.gui.messagebox')
-    @patch('src.gui.conversion_manager')
-    def test_check_gpu_acceleration_enables_lut_checkbox_for_gpu_only_tonemapper(
-            self, mock_cm, mock_mb):
+    def test_apply_lut_export_availability_enables_when_gpu_on(self):
         gui = _bare_gui()
         gui.gpu_accel_var = MagicMock()
         gui.gpu_accel_var.get.return_value = True
-        gui.tonemap_var = MagicMock()
-        gui.tonemap_var.get.return_value = 'BT.2390'
-        gui.update_frame_preview = MagicMock()
         gui.lut_export_checkbutton = MagicMock()
-        mock_cm.is_gpu_acceleration_available.return_value = True
 
-        gui.check_gpu_acceleration()
+        gui._apply_lut_export_availability()
 
         gui.lut_export_checkbutton.config.assert_called_once_with(state='normal')
 
-    @patch('src.gui.messagebox')
-    @patch('src.gui.conversion_manager')
-    def test_check_gpu_acceleration_enables_lut_checkbox_for_non_gpu_only_tonemapper_too(
-            self, mock_cm, mock_mb):
-        """libplacebo's gamut handling was found to diverge from the LUT
-        reference for CPU-capable tonemappers too (Hable measured ~61/255),
-        not just bt.2390/spline, so the checkbox stays enabled for them too
-        whenever GPU acceleration is on."""
+    def test_current_settings_dict_excludes_gpu_accel(self):
         gui = _bare_gui()
+        gui.gamma_var = MagicMock(get=MagicMock(return_value=1.0))
+        gui.quality_mode_var = MagicMock(get=MagicMock(return_value='Constant Quality'))
+        gui.quality_var = MagicMock(get=MagicMock(return_value=23))
+        gui.bitrate_var = MagicMock(get=MagicMock(return_value=8000))
+        gui._bitrate_ceiling_kbps = MagicMock(return_value=40000)
+        gui.tonemap_var = MagicMock(get=MagicMock(return_value='Mobius'))
         gui.gpu_accel_var = MagicMock()
-        gui.gpu_accel_var.get.return_value = True
+        gui.bit_depth_var = MagicMock(get=MagicMock(return_value='10-bit'))
+        gui.lut_export_var = MagicMock(get=MagicMock(return_value=True))
+
+        result = gui._current_settings_dict()
+
+        self.assertNotIn('gpu_accel', result)
+
+    def test_restore_settings_dict_does_not_set_gpu_accel_var(self):
+        gui = _bare_gui()
+        gui.gamma_var = MagicMock()
+        gui.gpu_accel_var = MagicMock()
         gui.tonemap_var = MagicMock()
-        gui.tonemap_var.get.return_value = 'Mobius'
-        gui.update_frame_preview = MagicMock()
-        gui.lut_export_checkbutton = MagicMock()
-        mock_cm.is_gpu_acceleration_available.return_value = True
+        gui.lut_export_var = MagicMock()
+        gui.quality_mode_var = MagicMock()
+        gui.quality_var = MagicMock()
+        gui.bitrate_var = MagicMock()
+        gui._bitrate_ceiling_kbps = MagicMock(return_value=40000)
 
-        gui.check_gpu_acceleration()
+        gui._restore_settings_dict({'gamma': 2.0, 'gpu_accel': True})
 
-        gui.lut_export_checkbutton.config.assert_called_once_with(state='normal')
+        gui.gpu_accel_var.set.assert_not_called()
 
     def test_handle_file_drop_sets_paths_and_refreshes(self):
         gui = _bare_gui()
@@ -1745,18 +1740,6 @@ class TestGuiErrorAndResizePaths(unittest.TestCase):
         event = MagicMock()
         event.data = '{C:/x.mkv}'
         gui.handle_file_drop(event)  # must not raise
-        mock_mb.showerror.assert_called_once()
-
-    @patch('src.gui.messagebox')
-    @patch('src.gui.conversion_manager')
-    def test_check_gpu_acceleration_reports_exception(self, mock_cm, mock_mb):
-        gui = _bare_gui()
-        gui.gpu_accel_var = MagicMock()
-        gui.gpu_accel_var.get.return_value = True
-        gui.update_frame_preview = MagicMock()
-        mock_cm.is_gpu_acceleration_available.side_effect = RuntimeError('nope')
-        gui.check_gpu_acceleration()
-        gui.gpu_accel_var.set.assert_called_once_with(False)
         mock_mb.showerror.assert_called_once()
 
     @patch('src.preview.ImageTk.PhotoImage')
@@ -2715,7 +2698,6 @@ class TestApplyLicenseStateUnlicensed(unittest.TestCase):
     def _gui(self, output_path='', quality_mode='Constant Quality'):
         gui = _bare_gui()
         gui.gpu_accel_var = MagicMock()
-        gui.gpu_accel_checkbutton = MagicMock()
         gui.quality_slider = MagicMock()
         gui.quality_entry = MagicMock()
         gui.quality_mode_combobox = MagicMock()

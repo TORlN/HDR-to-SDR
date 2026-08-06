@@ -121,13 +121,17 @@ class TestDropTargetAndFallback(unittest.TestCase):
         gui = MagicMock(spec=[])
         TkConversionView(gui, MagicMock(), [], MagicMock()).restore_drop_target()
 
-    def test_gpu_fallback_unticks_the_box_and_persists_it(self):
-        """A raw Variable.set() does not fire the checkbox's command=, so the
-        write-back is what stops a stale gpu_accel=True coming back."""
+    def test_gpu_fallback_is_a_no_op(self):
+        """Regression: under always-on GPU detection (see
+        docs/superpowers/specs/2026-08-05-always-on-gpu-acceleration-design.md),
+        gpu_accel_var represents a machine capability recomputed once at
+        launch, not a per-file preference. A single file's mid-encode GPU
+        failure must not flip that flag or write it back onto the batch
+        queue for the whole app."""
         gui = MagicMock()
         TkConversionView(gui, MagicMock(), [], MagicMock()).on_gpu_fallback()
-        gui.gpu_accel_var.set.assert_called_once_with(False)
-        gui._write_back_current_settings.assert_called_once_with()
+        gui.gpu_accel_var.set.assert_not_called()
+        gui._write_back_current_settings.assert_not_called()
 
 
 class TestOpenOutput(unittest.TestCase):

@@ -1961,8 +1961,11 @@ class TestRetryUsesTheRequest(unittest.TestCase):
         cb.assert_called_once_with(False)
 
     def test_cpu_retry_writes_back_gpu_accel_off(self):
-        """The fallback must be persisted, not just displayed -- the view owns
-        both halves now."""
+        """_retry_with_cpu must still call view.on_gpu_fallback() once per
+        fallback -- TkConversionView's implementation is a no-op under
+        always-on GPU detection (see test/tk_conversion_view_test.py), but
+        the call site itself, and the separate user-facing warning right
+        next to it, are unchanged."""
         m = ConversionManager()
         m.start = MagicMock()
         view = _view()

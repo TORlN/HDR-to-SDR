@@ -76,19 +76,17 @@ class TkConversionView:
             register()
 
     def on_gpu_fallback(self) -> None:
-        # DANGER: _write_back_current_settings() writes to whichever batch item
-        # the CURRENT widgets name, but the retry re-encodes the ORIGINAL
-        # request's paths. Safe only because every path widget is disabled for
-        # the duration of a conversion. If a future change unlocks the batch
-        # listbox mid-conversion, this stamps gpu_accel=False onto the wrong
-        # queue item.
-        self._gui.gpu_accel_var.set(False)
-        # A raw Variable.set() doesn't fire the checkbox's command= callback
-        # (check_gpu_acceleration), which is normally what persists a GPU
-        # toggle onto the current batch item's stored settings -- without
-        # this, reselecting the item later would restore the stale,
-        # pre-failure gpu_accel=True.
-        self._gui._write_back_current_settings()
+        # Deliberately a no-op. Under always-on GPU detection, gpu_accel_var
+        # represents a machine capability recomputed once at launch, not a
+        # per-file preference -- flipping it here after one file's GPU-
+        # specific encode failure would incorrectly tell the whole app "this
+        # machine has no GPU" for every file converted afterward. The user-
+        # facing warning for this failure is handled separately, via
+        # view.notify(Notice.warning(...)) in _retry_with_cpu
+        # (src/conversion.py). Removing this method (and its Protocol
+        # requirement) entirely is out of scope here -- see
+        # docs/superpowers/specs/2026-08-05-gpu-fallback-cleanup-and-batch-failure-reasons-design.md.
+        pass
 
     def open_output(self, path: str) -> None:
         webbrowser.open(path)

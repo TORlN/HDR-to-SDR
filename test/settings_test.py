@@ -32,7 +32,7 @@ class TestLoadSettings(unittest.TestCase):
     def test_returns_saved_values(self):
         data = {
             'gamma': 2.2, 'tonemapper': 'Hable',
-            'gpu_accel': True, 'open_after_conversion': True, 'display_preview': False,
+            'open_after_conversion': True, 'display_preview': False,
             'quality': 19, 'quality_mode': 'cq', 'quality_bitrate_kbps': 8000, 'filetype': 'MKV',
             'lut_enabled': False,
         }
@@ -58,13 +58,12 @@ class TestLoadSettings(unittest.TestCase):
             os.unlink(tmp)
         self.assertEqual(result['gamma'], 2.0)
         self.assertEqual(result['tonemapper'], DEFAULTS['tonemapper'])
-        self.assertEqual(result['gpu_accel'], DEFAULTS['gpu_accel'])
         self.assertEqual(result['open_after_conversion'], DEFAULTS['open_after_conversion'])
 
     def test_unknown_keys_are_ignored(self):
         data = {
             'gamma': 1.5, 'filter': 'Static', 'tonemapper': 'Reinhard',
-            'gpu_accel': False, 'open_after_conversion': True, 'display_preview': True,
+            'open_after_conversion': True, 'display_preview': True,
             'unknown_key': 'should be dropped',
         }
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
@@ -85,6 +84,22 @@ class TestLoadSettings(unittest.TestCase):
     def test_defaults_include_lut_enabled_on(self):
         self.assertEqual(DEFAULTS['lut_enabled'], True)
 
+    def test_stale_gpu_accel_key_is_ignored_on_load(self):
+        """gpu_accel was removed from DEFAULTS once GPU acceleration became
+        always-on; a settings.json saved by an older version with that key
+        still present must load without error, silently dropping it."""
+        data = {'gamma': 1.8, 'gpu_accel': True}
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(data, f)
+            tmp = f.name
+        try:
+            with patch('src.settings.SETTINGS_FILE', tmp):
+                result = load_settings()
+        finally:
+            os.unlink(tmp)
+        self.assertNotIn('gpu_accel', result)
+        self.assertEqual(result['gamma'], 1.8)
+
 
 class TestSaveSettings(unittest.TestCase):
 
@@ -94,13 +109,22 @@ class TestSaveSettings(unittest.TestCase):
             with patch('src.settings.SETTINGS_FILE', test_file):
                 save_settings({
                     'gamma': 2.2, 'tonemapper': 'Hable',
-                    'gpu_accel': True, 'open_after_conversion': False, 'display_preview': True,
+                    'open_after_conversion': False, 'display_preview': True,
                 })
             self.assertTrue(os.path.exists(test_file))
             with open(test_file, encoding='utf-8') as f:
                 data = json.load(f)
             self.assertEqual(data['gamma'], 2.2)
             self.assertNotIn('filter', data)
+
+    def test_stale_gpu_accel_key_is_dropped_on_save(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_file = os.path.join(tmpdir, 'settings.json')
+            with patch('src.settings.SETTINGS_FILE', test_file):
+                save_settings({'gamma': 1.8, 'gpu_accel': True})
+            with open(test_file, encoding='utf-8') as f:
+                data = json.load(f)
+            self.assertNotIn('gpu_accel', data)
 
     def test_oserror_on_mkdir_does_not_raise(self):
         with patch('src.settings.os.makedirs', side_effect=OSError('no permission')):

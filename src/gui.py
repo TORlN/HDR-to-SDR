@@ -211,7 +211,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.display_image_var = tk.BooleanVar(value=_s['display_preview'])
         self.original_image = None
         self.converted_image_base = None
-        self.gpu_accel_var = tk.BooleanVar(value=_s['gpu_accel'])
+        self.gpu_accel_var = tk.BooleanVar(value=False)  # gpu_accel is no longer persisted
         # Persisted export setting: applies the gamut-correction LUT on GPU
         # exports (costs a CPU round-trip, ~2x slower at 4K -- see
         # build_libplacebo_filter's docstring). No effect on CPU exports,

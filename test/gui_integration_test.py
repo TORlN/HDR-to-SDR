@@ -331,7 +331,7 @@ class TestConstruction(_GuiTestBase):
 
     def test_quality_mode_combobox_grid_position(self):
         info = self.gui.quality_mode_frame.grid_info()
-        self.assertEqual(int(info['row']), 6)
+        self.assertEqual(int(info['row']), 5)
         self.assertEqual(int(info['column']), 1)
 
     def test_quality_mode_combobox_values_and_readonly(self):
@@ -579,9 +579,20 @@ class TestStateAndLayout(_GuiTestBase):
         used to occupy, once GPU acceleration stopped being user-toggled."""
         self.assertIs(self.gui.lut_export_row.master, self.gui.control_frame)
         info = self.gui.lut_export_row.grid_info()
-        self.assertEqual(int(info['row']), 5)
+        self.assertEqual(int(info['row']), 4)
         self.assertEqual(int(info['column']), 0)
         self.assertIs(self.gui.lut_export_checkbutton.master, self.gui.lut_export_row)
+
+    def test_no_gap_between_quality_row_and_gpu_row(self):
+        """Row 4 held only the caption, now a tooltip (see the quality info
+        button) -- once nothing else claims it, the GPU/tonemap row must
+        shift up to fill it rather than leaving a blank grid row."""
+        info = self.gui.lut_export_row.grid_info()
+        self.assertEqual(int(info['row']), 4)
+        info = self.gui.gpu_status_label.grid_info()
+        self.assertEqual(int(info['row']), 4)
+        info = self.gui.display_image_checkbutton.grid_info()
+        self.assertEqual(int(info['row']), 5)
 
     def test_set_inputs_enabled_false_disables_widgets(self):
         TkConversionView(self.gui, self.gui.progress_var,

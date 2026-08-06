@@ -497,10 +497,10 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.display_image_checkbutton = ttk.Checkbutton(
             self.control_frame, text="Display Frame Preview",
             variable=self.display_image_var, command=self.update_frame_preview)
-        self.display_image_checkbutton.grid(row=6, column=0, sticky=tk.W, pady=(5, 0))
+        self.display_image_checkbutton.grid(row=5, column=0, sticky=tk.W, pady=(5, 0))
 
         self.tonemap_frame = ttk.Frame(self.control_frame)
-        self.tonemap_frame.grid(row=5, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))
+        self.tonemap_frame.grid(row=4, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))
         self.tonemap_combobox = ttk.Combobox(
             self.tonemap_frame, textvariable=self.tonemap_var,
             values=TONEMAP, state='readonly', width=15)
@@ -520,7 +520,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         info_button_tonemap.bind('<Leave>', self.hide_tooltip)
 
         self.lut_export_row = ttk.Frame(self.control_frame)
-        self.lut_export_row.grid(row=5, column=0, sticky=tk.W, pady=(5, 0))
+        self.lut_export_row.grid(row=4, column=0, sticky=tk.W, pady=(5, 0))
         self.lut_export_checkbutton = ttk.Checkbutton(
             self.lut_export_row, text="Accurate GPU Color",
             variable=self.lut_export_var, command=self._on_lut_export_toggle)
@@ -560,10 +560,10 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.bit_depth_frame.grid_remove()
 
         self.gpu_status_label = ttk.Label(self.control_frame, text='')
-        self.gpu_status_label.grid(row=5, column=2, sticky=tk.W, padx=(15, 0), pady=(5, 0))
+        self.gpu_status_label.grid(row=4, column=2, sticky=tk.W, padx=(15, 0), pady=(5, 0))
 
         self.quality_mode_frame = ttk.Frame(self.control_frame)
-        self.quality_mode_frame.grid(row=6, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))
+        self.quality_mode_frame.grid(row=5, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))
         self.quality_mode_combobox = ttk.Combobox(
             self.quality_mode_frame, textvariable=self.quality_mode_var,
             values=['Constant Quality', 'Target Bitrate'], state='readonly', width=15)
@@ -670,14 +670,14 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.loading_frame.grid_remove()
 
         self.info_label = ttk.Label(self.control_frame, text='', foreground='gray')
-        self.info_label.grid(row=7, column=0, columnspan=3, sticky=tk.W, padx=(0, 10))
+        self.info_label.grid(row=6, column=0, columnspan=3, sticky=tk.W, padx=(0, 10))
         self.info_label.grid_remove()
 
         self.error_label = ttk.Label(self.control_frame, text='', foreground='red')
-        self.error_label.grid(row=8, column=0, columnspan=3, sticky=tk.W)
+        self.error_label.grid(row=7, column=0, columnspan=3, sticky=tk.W)
 
         self._pro_banner = ttk.Frame(self.control_frame)
-        self._pro_banner.grid(row=9, column=0, columnspan=3,
+        self._pro_banner.grid(row=8, column=0, columnspan=3,
                                sticky=tk.W + tk.E, pady=(6, 2))
         self._pro_banner.grid_remove()
         ttk.Label(
@@ -794,7 +794,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.control_frame.columnconfigure(0, weight=0)
         self.control_frame.columnconfigure(1, weight=1)
         self.control_frame.columnconfigure(2, weight=0)
-        for i in range(10):
+        for i in range(9):
             self.control_frame.rowconfigure(i, weight=0)
 
         self.image_frame.columnconfigure(0, weight=1)

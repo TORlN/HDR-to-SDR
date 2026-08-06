@@ -560,7 +560,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.bit_depth_frame.grid_remove()
 
         self.gpu_status_label = ttk.Label(self.control_frame, text='')
-        self.gpu_status_label.grid(row=4, column=2, sticky=tk.W, padx=(15, 0), pady=(5, 0))
+        self.gpu_status_label.grid(row=4, column=2, sticky=tk.E, padx=(15, 0), pady=(5, 0))
 
         self.quality_mode_frame = ttk.Frame(self.control_frame)
         self.quality_mode_frame.grid(row=5, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))

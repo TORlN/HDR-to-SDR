@@ -575,13 +575,20 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             '<Enter>', lambda e: self.show_tooltip(e, self._quality_mode_tooltip_text()))
         info_button_quality_mode.bind('<Leave>', self.hide_tooltip)
 
-        # pady matches quality_frame's own pady below: without it, the label
+        quality_label_row = ttk.Frame(self.control_frame)
+        # pady matches quality_frame's own pady below: without it, this frame
         # would center against row 3's full cell height while quality_frame
         # (and the slider inside it) centers against that height minus its
-        # own top pady, landing a couple pixels apart even after the caption
-        # move below stops row 3 from being two slider-heights tall.
-        ttk.Label(self.control_frame, text="Quality:").grid(
-            row=3, column=0, sticky=tk.W, pady=(5, 0))
+        # own top pady, landing a couple pixels apart.
+        quality_label_row.grid(row=3, column=0, sticky=tk.W, pady=(5, 0))
+        ttk.Label(quality_label_row, text="Quality:").grid(row=0, column=0, sticky=tk.W)
+        self.quality_info_button = ttk.Label(quality_label_row, text="ⓘ", cursor="hand2")
+        self.quality_info_button.grid(row=0, column=1, padx=(3, 0))
+        tooltip_text_quality = "Smaller File  ◀──▶  Better Quality"
+        self.quality_info_button.bind(
+            '<Enter>', lambda e: self.show_tooltip(e, tooltip_text_quality))
+        self.quality_info_button.bind('<Leave>', self.hide_tooltip)
+
         quality_frame = ttk.Frame(self.control_frame)
         quality_frame.grid(row=3, column=1, sticky=tk.W + tk.E, pady=(5, 0))
         self.quality_slider = ttk.Scale(
@@ -605,14 +612,6 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.control_frame, textvariable=self.quality_display_var, width=10)
         self.quality_entry.grid(row=3, column=2, sticky=tk.W + tk.E, padx=(5, 0), pady=(5, 0))
         self.quality_entry.bind('<Return>', self._on_quality_entry_change)
-        # Lives directly in control_frame (its own row 4), not quality_frame,
-        # for the same reason the "Quality:" label and quality_entry were
-        # moved out of quality_frame: a second line inside quality_frame's
-        # row 3 would make that grid row two slider-heights tall, so the
-        # label/entry (no vertical sticky) would center against the taller
-        # row instead of against the slider itself.
-        ttk.Label(self.control_frame, text="Smaller File  ◀──▶  Better Quality",
-                  foreground='gray').grid(row=4, column=1, sticky=tk.W, padx=(10, 0))
         quality_frame.columnconfigure(0, weight=1)
 
         self.image_frame = ttk.Frame(self.root, padding="10")

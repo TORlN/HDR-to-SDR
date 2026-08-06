@@ -340,9 +340,14 @@ class TestConstruction(_GuiTestBase):
         self.assertEqual(str(self.gui.quality_mode_combobox.cget('state')), 'readonly')
 
     def test_quality_label_grid_position(self):
+        """"Quality:" now lives inside a wrapper frame alongside its info
+        tooltip icon (see test_quality_info_button_exists_and_shows_tooltip),
+        not as a bare label directly in control_frame."""
         widgets = self.gui.control_frame.grid_slaves(row=3, column=0)
         self.assertEqual(len(widgets), 1)
-        self.assertEqual(str(widgets[0].cget('text')), 'Quality:')
+        label_texts = [str(w.cget('text')) for w in widgets[0].winfo_children()
+                       if isinstance(w, ttk.Label)]
+        self.assertIn('Quality:', label_texts)
 
     def test_quality_entry_grid_position(self):
         info = self.gui.quality_entry.grid_info()
@@ -682,6 +687,18 @@ class TestTooltip(_GuiTestBase):
         self.gui.show_tooltip(self._event(), "second")
         self.assertFalse(first.winfo_exists())
         self.assertTrue(self.gui.tooltip.winfo_exists())
+
+    def test_quality_info_button_exists_and_shows_tooltip(self):
+        self.assertEqual(self.gui.quality_info_button.cget('text'), 'ⓘ')
+        event = types.SimpleNamespace(widget=MagicMock())
+        event.widget.winfo_rootx.return_value = 100
+        event.widget.winfo_rooty.return_value = 100
+
+        self.gui.show_tooltip(event, "Smaller File  ◀──▶  Better Quality")
+        labels = [w for w in self.gui.tooltip.winfo_children() if isinstance(w, ttk.Label)]
+        self.assertTrue(labels)
+        self.assertEqual(labels[0].cget('text'), "Smaller File  ◀──▶  Better Quality")
+        self.gui.hide_tooltip()
 
 
 class TestUserActions(_GuiTestBase):

@@ -48,6 +48,9 @@ class TestHDRConverterGUI(TestCase):
             # for a process spawn.
             'props': patch('src.gui.get_video_properties', return_value=None),
             'maxcll': patch('src.gui.get_maxcll', return_value=None),
+            'gpu_probe': patch(
+                'src.gui.conversion_manager.is_gpu_acceleration_available',
+                return_value=True),
         }
 
         # Combine all patches
@@ -368,6 +371,9 @@ class TestWindowIcon(unittest.TestCase):
             'bool_var':   patch('src.gui.tk.BooleanVar', return_value=MagicMock(spec=tk.BooleanVar)),
             'int_var':    patch('src.gui.tk.IntVar', return_value=MagicMock(
                 spec=tk.IntVar, get=MagicMock(return_value=23), set=MagicMock())),
+            'gpu_probe': patch(
+                'src.gui.conversion_manager.is_gpu_acceleration_available',
+                return_value=True),
         }
         if extra_patches:
             patches.update(extra_patches)
@@ -455,6 +461,9 @@ class TestShowTooltip(TestCase):
             'bool_var':   patch('src.gui.tk.BooleanVar', return_value=MagicMock(spec=tk.BooleanVar)),
             'int_var':    patch('src.gui.tk.IntVar', return_value=MagicMock(
                 spec=tk.IntVar, get=MagicMock(return_value=23), set=MagicMock())),
+            'gpu_probe': patch(
+                'src.gui.conversion_manager.is_gpu_acceleration_available',
+                return_value=True),
         }
         self.patches = patches
         self.mocks = {name: p.start() for name, p in patches.items()}

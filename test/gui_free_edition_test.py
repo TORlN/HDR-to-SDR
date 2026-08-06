@@ -163,7 +163,9 @@ class TestFreeEditionGui(unittest.TestCase):
         root = TkinterDnD.Tk()
         root.withdraw()
         self.addCleanup(root.destroy)
-        app = gui.HDRConverterGUI(root, licensed=False)
+        with patch.object(gui.conversion_manager, 'is_gpu_acceleration_available',
+                           return_value=True):
+            app = gui.HDRConverterGUI(root, licensed=False)
         self.assertFalse(app._licensed)
 
     @unittest.skipUnless(_TK_OK, _SKIP)
@@ -173,7 +175,9 @@ class TestFreeEditionGui(unittest.TestCase):
         root = TkinterDnD.Tk()
         root.withdraw()
         self.addCleanup(root.destroy)
-        app = gui.HDRConverterGUI(root, licensed=False)
+        with patch.object(gui.conversion_manager, 'is_gpu_acceleration_available',
+                           return_value=True):
+            app = gui.HDRConverterGUI(root, licensed=False)
         self.assertNotIn(app.quality_slider, app.interactable_elements)
         self.assertNotIn(app.quality_entry, app.interactable_elements)
         self.assertIn(app.browse_button, app.interactable_elements)
@@ -189,7 +193,9 @@ class TestFreeEditionGui(unittest.TestCase):
         root = TkinterDnD.Tk()
         root.withdraw()
         self.addCleanup(root.destroy)
-        app = gui.HDRConverterGUI(root, licensed=False)
+        with patch.object(gui.conversion_manager, 'is_gpu_acceleration_available',
+                           return_value=True):
+            app = gui.HDRConverterGUI(root, licensed=False)
         with patch.object(app, '_load_input_file') as mock_load:
             app.handle_file_drop(type('E', (), {'data': 'C:/v/a.mp4'})())
         mock_load.assert_called_once_with('C:/v/a.mp4')
@@ -205,5 +211,7 @@ class TestFreeEditionGui(unittest.TestCase):
         root = TkinterDnD.Tk()
         root.withdraw()
         self.addCleanup(root.destroy)
-        app = gui.HDRConverterGUI(root, licensed=False)
+        with patch.object(gui.conversion_manager, 'is_gpu_acceleration_available',
+                           return_value=True):
+            app = gui.HDRConverterGUI(root, licensed=False)
         app._write_back_current_settings()  # must not raise

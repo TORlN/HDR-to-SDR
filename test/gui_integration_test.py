@@ -116,6 +116,9 @@ class _GuiTestBase(unittest.TestCase):
         self._maxcll_patch = patch('src.gui.get_maxcll', return_value=None)
         self._props_patch.start()
         self._maxcll_patch.start()
+        self._gpu_patch = patch(
+            'src.gui.conversion_manager.is_gpu_acceleration_available', return_value=True)
+        self._gpu_patch.start()
         # Reuse the module-level Tk — never destroy it between tests.
         # Destroying and recreating Tk forces Tcl to deinit/reinit, which is
         # unreliable on broken system Tcl installs.  Instead, destroy only the
@@ -131,6 +134,7 @@ class _GuiTestBase(unittest.TestCase):
         self._save_patch.stop()
         self._props_patch.stop()
         self._maxcll_patch.stop()
+        self._gpu_patch.stop()
 
 
 class TestConstruction(_GuiTestBase):
@@ -448,6 +452,9 @@ class TestRestoringBitrateModeAtStartup(unittest.TestCase):
         self._maxcll_patch = patch('src.gui.get_maxcll', return_value=None)
         self._props_patch.start()
         self._maxcll_patch.start()
+        self._gpu_patch = patch(
+            'src.gui.conversion_manager.is_gpu_acceleration_available', return_value=True)
+        self._gpu_patch.start()
         self.root = _probe_root
         drain_after_timers(self.root)
         for w in self.root.winfo_children():
@@ -458,6 +465,7 @@ class TestRestoringBitrateModeAtStartup(unittest.TestCase):
         self._save_patch.stop()
         self._props_patch.stop()
         self._maxcll_patch.stop()
+        self._gpu_patch.stop()
 
     def test_persisted_bitrate_survives_construction(self):
         gui = HDRConverterGUI(self.root, licensed=True)
@@ -878,7 +886,8 @@ class TestDropTargetAndClose(_GuiTestBase):
         # for any tests that follow this one.  Creating a second Tk() while
         # _probe_root is alive is safe — the Tcl library is already loaded.
         with patch('src.gui.load_settings', return_value=dict(DEFAULTS)), \
-             patch('src.gui.save_settings'):
+             patch('src.gui.save_settings'), \
+             patch('src.gui.conversion_manager.is_gpu_acceleration_available', return_value=True):
             tmp_root = TkinterDnD.Tk()
             tmp_root.withdraw()
             tmp_gui = HDRConverterGUI(tmp_root, licensed=True)
@@ -900,9 +909,12 @@ class _LicensingBase(unittest.TestCase):
     def _start_patches(cls) -> None:
         load_p = patch('src.gui.load_settings', return_value=dict(DEFAULTS))
         save_p = patch('src.gui.save_settings')
+        gpu_p = patch(
+            'src.gui.conversion_manager.is_gpu_acceleration_available', return_value=True)
         load_p.start()
         save_p.start()
-        cls._class_patches = [load_p, save_p]
+        gpu_p.start()
+        cls._class_patches = [load_p, save_p, gpu_p]
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -1077,6 +1089,9 @@ class TestLicenseTransition(unittest.TestCase):
         self._save_patch = patch('src.gui.save_settings')
         self._load_patch.start()
         self._save_patch.start()
+        self._gpu_patch = patch(
+            'src.gui.conversion_manager.is_gpu_acceleration_available', return_value=True)
+        self._gpu_patch.start()
         drain_after_timers(_probe_root)
         for w in _probe_root.winfo_children():
             w.destroy()
@@ -1084,6 +1099,7 @@ class TestLicenseTransition(unittest.TestCase):
     def tearDown(self) -> None:
         self._load_patch.stop()
         self._save_patch.stop()
+        self._gpu_patch.stop()
 
     def _make_gui(self, licensed: bool) -> HDRConverterGUI:
         return HDRConverterGUI(_probe_root, licensed=licensed)
@@ -1135,6 +1151,9 @@ class TestBitDepthToggle(unittest.TestCase):
         self._save_patch = patch('src.gui.save_settings')
         self._load_patch.start()
         self._save_patch.start()
+        self._gpu_patch = patch(
+            'src.gui.conversion_manager.is_gpu_acceleration_available', return_value=True)
+        self._gpu_patch.start()
         drain_after_timers(_probe_root)
         for w in _probe_root.winfo_children():
             w.destroy()
@@ -1142,6 +1161,7 @@ class TestBitDepthToggle(unittest.TestCase):
     def tearDown(self) -> None:
         self._load_patch.stop()
         self._save_patch.stop()
+        self._gpu_patch.stop()
 
     def _make_gui(self, licensed: bool) -> HDRConverterGUI:
         return HDRConverterGUI(_probe_root, licensed=licensed)
@@ -1313,6 +1333,9 @@ class TestDropToQueue(unittest.TestCase):
         self._save_patch = patch('src.gui.save_settings')
         self._load_patch.start()
         self._save_patch.start()
+        self._gpu_patch = patch(
+            'src.gui.conversion_manager.is_gpu_acceleration_available', return_value=True)
+        self._gpu_patch.start()
         drain_after_timers(_probe_root)
         for w in _probe_root.winfo_children():
             w.destroy()
@@ -1320,6 +1343,7 @@ class TestDropToQueue(unittest.TestCase):
     def tearDown(self) -> None:
         self._load_patch.stop()
         self._save_patch.stop()
+        self._gpu_patch.stop()
 
     def _make_gui(self, licensed: bool) -> HDRConverterGUI:
         return HDRConverterGUI(_probe_root, licensed=licensed)

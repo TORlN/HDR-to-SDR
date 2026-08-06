@@ -569,6 +569,15 @@ class TestBatchQueueWidgets(_GuiTestBase):
 
 class TestStateAndLayout(_GuiTestBase):
 
+    def test_accurate_gpu_color_lives_directly_in_control_frame(self):
+        """Relocated out of tonemap_frame into the spot the old GPU checkbox
+        used to occupy, once GPU acceleration stopped being user-toggled."""
+        self.assertIs(self.gui.lut_export_row.master, self.gui.control_frame)
+        info = self.gui.lut_export_row.grid_info()
+        self.assertEqual(int(info['row']), 5)
+        self.assertEqual(int(info['column']), 0)
+        self.assertIs(self.gui.lut_export_checkbutton.master, self.gui.lut_export_row)
+
     def test_set_inputs_enabled_false_disables_widgets(self):
         TkConversionView(self.gui, self.gui.progress_var,
                          self.gui.interactable_elements,

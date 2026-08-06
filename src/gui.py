@@ -519,13 +519,13 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                                   lambda e: self.show_tooltip(e, tooltip_text_tonemap))
         info_button_tonemap.bind('<Leave>', self.hide_tooltip)
 
-        self.lut_export_frame = ttk.Frame(self.tonemap_frame)
-        self.lut_export_frame.grid(row=0, column=2, sticky=tk.W, padx=(15, 0))
+        self.lut_export_row = ttk.Frame(self.control_frame)
+        self.lut_export_row.grid(row=5, column=0, sticky=tk.W, pady=(5, 0))
         self.lut_export_checkbutton = ttk.Checkbutton(
-            self.lut_export_frame, text="Accurate GPU Color",
+            self.lut_export_row, text="Accurate GPU Color",
             variable=self.lut_export_var, command=self._on_lut_export_toggle)
         self.lut_export_checkbutton.grid(row=0, column=0)
-        info_button_lut_export = ttk.Label(self.lut_export_frame, text="ⓘ", cursor="hand2")
+        info_button_lut_export = ttk.Label(self.lut_export_row, text="ⓘ", cursor="hand2")
         info_button_lut_export.grid(row=0, column=1)
         tooltip_text_lut_export = (
             "Applies precise BT.2020→BT.709 color correction on GPU exports.\n"

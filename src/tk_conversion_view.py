@@ -31,7 +31,7 @@ class TkConversionView:
 
     def __init__(self, gui_instance: Any, progress_var: Any,
                  interactable_elements: list[Any], cancel_button: Any,
-                 on_complete: Callable[[bool], None] | None = None) -> None:
+                 on_complete: Callable[[bool, str | None], None] | None = None) -> None:
         self._gui = gui_instance
         self._progress_var = progress_var
         self._elements = interactable_elements

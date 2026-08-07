@@ -82,24 +82,20 @@ class ConversionManager:
                          if request.output_path else request.output_path),
         )
 
-        # Every early-out below must go through here rather than a bare
-        # `return`: on_complete drives the batch queue, and a guard that
-        # fires without calling it leaves the item stuck at 'Converting'
-        # forever. Returning False also lets single-file callers know the
-        # conversion never actually started.
-        def _abort_before_start() -> bool:
-            if view.on_complete is not None:
-                view.on_complete(False)
-            return False
-
+        # Every guard below rejects via self._reject(message, view), which
+        # calls on_complete(False, message) itself -- verify_paths calls
+        # _reject internally for its own two checks. Skipping _reject would
+        # leave a batch item stuck at 'Converting' forever (nothing else
+        # advances the queue), and a single-file caller wouldn't know the
+        # conversion never started.
         if not self.verify_paths(request.input_path, request.output_path, view):
-            return _abort_before_start()
+            return False
 
         incompatibility = self.validate_bit_depth_output(
             request.output_path, request.bit_depth)
         if incompatibility:
             self._reject(incompatibility, view)
-            return _abort_before_start()
+            return False
 
         self._run = ConversionRun(request=request, view=view)
         self.cancelled = False
@@ -107,7 +103,7 @@ class ConversionManager:
         properties = get_video_properties(request.input_path)
         if properties is None:
             self._reject("Failed to retrieve video properties.", view)
-            return _abort_before_start()
+            return False
 
         # A missing/zero duration would make progress tracking divide by zero in
         # the monitor thread (which would then die silently, leaving the UI stuck).
@@ -115,7 +111,7 @@ class ConversionManager:
             self._reject(
                 "Could not determine the video's duration, so it can't be converted.",
                 view)
-            return _abort_before_start()
+            return False
 
         view.set_inputs_enabled(False)
         view.set_cancel_visible(True, on_cancel=self.cancel_conversion)
@@ -143,14 +139,19 @@ class ConversionManager:
 
     @staticmethod
     def _reject(message: str, view: ConversionView) -> None:
-        """Hand a guard rejection to the view.
+        """Hand a guard rejection to the view and end the run as a failure
+        with this message as the reason.
 
         A batch run has no human watching for it, so a modal here would stall
         the whole queue until someone clicks it -- BatchConversionView turns
         this into a log line instead, and the item is still marked Failed and
-        visible in the batch list.
+        visible in the batch list. Every _reject call is a guard firing
+        before start() reaches monitor_progress, so on_complete must fire
+        here or the batch item is stuck at 'Converting' forever.
         """
         view.notify(Notice.warning("Warning", message))
+        if view.on_complete is not None:
+            view.on_complete(False, message)
 
     def verify_paths(self, input_path: str, output_path: str,
                      view: ConversionView) -> bool:
@@ -294,7 +295,7 @@ class ConversionManager:
             # 'Converting' forever.
             logging.error(f"CPU retry failed to start ({request.tonemapper}): {e}")
             if view.on_complete is not None:
-                view.on_complete(False)
+                view.on_complete(False, str(e))
 
     def parse_time(self, time_str: str) -> float:
         hours, minutes, seconds = map(float, time_str.split(':'))
@@ -315,11 +316,19 @@ class ConversionManager:
                 # between files. The callback marks status and advances the queue
                 # (the final summary + UI re-enable happen when the queue drains).
                 success = returncode == 0
-                if not success and not self.cancelled:
-                    tail = '\n'.join(error_messages[-50:])
-                    logging.error(f"Batch item failed with code "
-                                  f"{returncode}: {tail}")
-                on_complete(success)
+                reason = None
+                if not success:
+                    if not self.cancelled:
+                        tail = '\n'.join(error_messages[-50:])
+                        logging.error(f"Batch item failed with code "
+                                      f"{returncode}: {tail}")
+                    # ffmpeg's fatal error typically appears at or near the
+                    # end of stderr before the process exits; fall back to
+                    # the exit code if the process never produced output.
+                    reason = next(
+                        (line for line in reversed(error_messages) if line),
+                        f"Failed with exit code {returncode}")
+                on_complete(success, reason)
                 return
 
             if returncode == 0:

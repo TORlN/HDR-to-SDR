@@ -19,7 +19,7 @@ from conversion_view import Notice  # noqa: E402
 class RecordingConversionView:
     """Implements every ConversionView member; renders nothing."""
 
-    def __init__(self, on_complete: Callable[[bool], None] | None = None) -> None:
+    def __init__(self, on_complete: Callable[[bool, str | None], None] | None = None) -> None:
         self.on_complete = on_complete
         self.notices: list[Notice] = []
         self.progress: list[float] = []

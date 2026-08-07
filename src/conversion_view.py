@@ -40,7 +40,7 @@ class ConversionView(Protocol):
     is answerable from one object instead of two.
     """
 
-    on_complete: Callable[[bool], None] | None
+    on_complete: Callable[[bool, str | None], None] | None
 
     def notify(self, notice: Notice) -> None: ...
     def schedule(self, fn: Callable[[], None]) -> None: ...

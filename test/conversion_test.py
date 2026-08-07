@@ -124,7 +124,7 @@ class TestMonitorAndCompletionTakeObjects(unittest.TestCase):
         cb = MagicMock()
         view = _view(on_complete=cb)
         m.handle_completion(_req(), view, [], 0)
-        cb.assert_called_once_with(True)
+        cb.assert_called_once_with(True, None)
         self.assertEqual(view.notices, [])
 
     def test_monitor_progress_returns_early_without_a_process(self):
@@ -668,7 +668,7 @@ class TestBatchCompletionHook(unittest.TestCase):
         done = MagicMock()
         view = _view(on_complete=done)
         manager.handle_completion(_req(output_path='out.mkv'), view, [], 0)
-        done.assert_called_once_with(True)
+        done.assert_called_once_with(True, None)
         self.assertEqual(view.notices, [])  # no per-file success dialog
         self.assertEqual(view.opened, [])
 
@@ -678,8 +678,29 @@ class TestBatchCompletionHook(unittest.TestCase):
         done = MagicMock()
         view = _view(on_complete=done)
         manager.handle_completion(_req(output_path='out.mkv'), view, ['err'], 1)
-        done.assert_called_once_with(False)
+        done.assert_called_once_with(False, 'err')
         self.assertEqual(view.notices, [])  # no per-file error dialog
+
+    def test_on_complete_failure_reason_is_last_non_empty_error_line(self):
+        """ffmpeg's fatal error typically appears at or near the end of
+        stderr before the process exits; trailing blank lines must not win."""
+        manager = ConversionManager()
+        manager.cancelled = False
+        done = MagicMock()
+        view = _view(on_complete=done)
+        manager.handle_completion(
+            _req(output_path='out.mkv'), view,
+            ['frame=1 time=00:00:01.00', 'Error: could not open encoder', ''],
+            1)
+        done.assert_called_once_with(False, 'Error: could not open encoder')
+
+    def test_on_complete_failure_reason_falls_back_to_exit_code_when_no_output(self):
+        manager = ConversionManager()
+        manager.cancelled = False
+        done = MagicMock()
+        view = _view(on_complete=done)
+        manager.handle_completion(_req(output_path='out.mkv'), view, [], 137)
+        done.assert_called_once_with(False, 'Failed with exit code 137')
 
     def test_on_complete_does_not_re_enable_inputs_between_files(self):
         # Between queued files the UI must stay disabled and the cancel button shown.
@@ -714,14 +735,15 @@ class TestStartSignalsFailureOnEarlyReturn(unittest.TestCase):
 
     def _assert_guard_signals_failure(self, request):
         """Common shape shared by every early-return guard: start returns
-        False, calls on_complete(False), and notifies the view exactly once."""
+        False, notifies the view exactly once, and calls on_complete with
+        that same notice's body as the reason."""
         manager = ConversionManager()
         done = MagicMock()
         view = _view(on_complete=done)
         result = manager.start(request, view)
         self.assertFalse(result)
-        done.assert_called_once_with(False)
         self.assertEqual(len(view.notices), 1)
+        done.assert_called_once_with(False, view.notices[0].body)
 
     def test_invalid_paths_signals_failure(self):
         self._assert_guard_signals_failure(_req(input_path=''))
@@ -1543,7 +1565,7 @@ class TestMonitorProgressCancellationRace(unittest.TestCase):
         for callback in view.deferred:
             callback()
 
-        done.assert_called_once_with(True)
+        done.assert_called_once_with(True, None)
 
 
 class TestGpuErrorDetectionFalsePositive(unittest.TestCase):
@@ -1958,7 +1980,7 @@ class TestRetryUsesTheRequest(unittest.TestCase):
         cb = MagicMock()
         m.start = MagicMock(side_effect=ValueError('needs GPU'))
         m._retry_with_cpu(request, _view(on_complete=cb))
-        cb.assert_called_once_with(False)
+        cb.assert_called_once_with(False, 'needs GPU')
 
     def test_cpu_retry_still_notifies_on_gpu_fallback(self):
         """_retry_with_cpu's on_gpu_fallback() call is gone (Part A of the

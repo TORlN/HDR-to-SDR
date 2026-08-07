@@ -62,7 +62,7 @@ class TestRecordingConversionView(unittest.TestCase):
         """None means interactive; a callable means a batch run is driving the
         queue. conversion.py reads exactly this to decide between them."""
         self.assertIsNone(RecordingConversionView().on_complete)
-        done = lambda success: None
+        done = lambda success, reason: None
         self.assertIs(RecordingConversionView(on_complete=done).on_complete, done)
 
 

@@ -219,7 +219,6 @@ class TestMonitorProgress(unittest.TestCase):
         self.assertIs(sent_request.use_gpu, False)
         # The retry preserves the user's tonemapper (was previously lost).
         self.assertEqual(sent_request.tonemapper, 'hable')
-        self.assertEqual(view.gpu_fallbacks, 1)
 
     def test_cancelled_run_does_not_retry_on_gpu_error(self):
         manager = ConversionManager()

@@ -1960,17 +1960,14 @@ class TestRetryUsesTheRequest(unittest.TestCase):
         m._retry_with_cpu(request, _view(on_complete=cb))
         cb.assert_called_once_with(False)
 
-    def test_cpu_retry_writes_back_gpu_accel_off(self):
-        """_retry_with_cpu must still call view.on_gpu_fallback() once per
-        fallback -- TkConversionView's implementation is a no-op under
-        always-on GPU detection (see test/tk_conversion_view_test.py), but
-        the call site itself, and the separate user-facing warning right
-        next to it, are unchanged."""
+    def test_cpu_retry_still_notifies_on_gpu_fallback(self):
+        """_retry_with_cpu's on_gpu_fallback() call is gone (Part A of the
+        cleanup spec), but the separate user-facing warning right next to
+        it must still fire."""
         m = ConversionManager()
         m.start = MagicMock()
         view = _view()
         m._retry_with_cpu(_req(use_gpu=True), view)
-        self.assertEqual(view.gpu_fallbacks, 1)
         self.assertEqual(view.notices, [Notice.warning(
             "GPU Acceleration Failed",
             "GPU acceleration failed. Switching to CPU encoding.")])

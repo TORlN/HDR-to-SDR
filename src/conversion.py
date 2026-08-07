@@ -278,7 +278,6 @@ class ConversionManager:
         this after(0) callback fires (e.g. cancel + immediately start another
         file).
         """
-        view.on_gpu_fallback()
         view.notify(Notice.warning(
             "GPU Acceleration Failed",
             "GPU acceleration failed. Switching to CPU encoding."))

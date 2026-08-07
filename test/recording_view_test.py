@@ -54,10 +54,8 @@ class TestRecordingConversionView(unittest.TestCase):
     def test_counters_and_opened_paths(self):
         view = RecordingConversionView()
         view.restore_drop_target()
-        view.on_gpu_fallback()
         view.open_output('out.mkv')
         self.assertEqual(view.drop_target_restored, 1)
-        self.assertEqual(view.gpu_fallbacks, 1)
         self.assertEqual(view.opened, ['out.mkv'])
 
     def test_on_complete_defaults_to_none_and_is_settable(self):

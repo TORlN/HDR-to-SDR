@@ -34,7 +34,7 @@ class Notice:
 class ConversionView(Protocol):
     """Everything a conversion needs from the outside world.
 
-    Nine members. `on_complete` is an attribute rather than a method because
+    Eight members. `on_complete` is an attribute rather than a method because
     it is queue control flow supplied by the caller, not something a view
     implements -- but it lives here so that "is anyone watching this run?"
     is answerable from one object instead of two.
@@ -49,5 +49,4 @@ class ConversionView(Protocol):
     def set_cancel_visible(self, visible: bool,
                            on_cancel: Callable[[], None] | None = None) -> None: ...
     def restore_drop_target(self) -> None: ...
-    def on_gpu_fallback(self) -> None: ...
     def open_output(self, path: str) -> None: ...

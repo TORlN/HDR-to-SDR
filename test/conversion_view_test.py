@@ -47,20 +47,20 @@ class TestNotice(unittest.TestCase):
 
 class TestConversionViewProtocol(unittest.TestCase):
 
-    def test_the_protocol_has_exactly_nine_members(self):
-        """A tenth member must not appear without the doubles being updated;
+    def test_the_protocol_has_exactly_eight_members(self):
+        """A ninth member must not appear without the doubles being updated;
         test/tk_conversion_view_test.py checks each implementation against
         this same list."""
         members = _protocol_members(ConversionView)
         self.assertEqual(
-            len(members), 9,
+            len(members), 8,
             msg=f'ConversionView has {len(members)} members: {sorted(members)}')
 
     def test_the_members_are_the_expected_ones(self):
         self.assertEqual(_protocol_members(ConversionView), {
             'on_complete', 'notify', 'schedule', 'set_progress',
             'set_inputs_enabled', 'set_cancel_visible', 'restore_drop_target',
-            'on_gpu_fallback', 'open_output',
+            'open_output',
         })
 
 

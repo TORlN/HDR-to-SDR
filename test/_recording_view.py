@@ -27,7 +27,6 @@ class RecordingConversionView:
         self.cancel_visible: list[bool] = []
         self.cancel_handler: Callable[[], None] | None = None
         self.drop_target_restored = 0
-        self.gpu_fallbacks = 0
         self.opened: list[str] = []
 
     def notify(self, notice: Notice) -> None:
@@ -54,9 +53,6 @@ class RecordingConversionView:
 
     def restore_drop_target(self) -> None:
         self.drop_target_restored += 1
-
-    def on_gpu_fallback(self) -> None:
-        self.gpu_fallbacks += 1
 
     def open_output(self, path: str) -> None:
         self.opened.append(path)

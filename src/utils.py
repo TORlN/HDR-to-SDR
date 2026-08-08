@@ -11,6 +11,8 @@ import shutil
 import tempfile
 import threading
 
+from platform_utils import _startupinfo, log_dir, setup_dpi_awareness  # noqa: F401
+
 # Constants and initialization
 TONEMAP = ["Reinhard", "Mobius", "Hable", "BT.2390", "Spline"]
 # npl=100 is the SDR reference white (100 nits). Lower values push the average
@@ -113,11 +115,11 @@ FFPROBE_EXECUTABLE = None
 
 # Initialize logging
 def _log_file_path() -> str:
-    """Where the app's log file lives -- %LOCALAPPDATA%\\HDR to SDR\\app.log on
-    Windows. A windowed/onedir build has no console for stderr to reach, so
-    without this file warnings (e.g. a failed update check) were invisible."""
-    base = os.getenv('LOCALAPPDATA') or tempfile.gettempdir()
-    return os.path.join(base, 'HDR to SDR', 'app.log')
+    """Where the app's log file lives -- see platform_utils.log_dir() for
+    the per-OS directory. A windowed/onedir build has no console for
+    stderr to reach, so without this file warnings (e.g. a failed update
+    check) were invisible."""
+    return os.path.join(log_dir(), 'app.log')
 
 
 def setup_logging():
@@ -256,16 +258,6 @@ except Exception:
     # missing; FFMPEG_EXECUTABLE/FFPROBE_EXECUTABLE stay None and the GUI reports
     # it to the user on startup (see HDRConverterGUI.__init__).
     logging.error("ffmpeg could not be initialized at import time", exc_info=True)
-
-
-def _startupinfo():
-    """Return (startupinfo, creationflags) that suppress the console window on Windows."""
-    if sys.platform == "win32":
-        si = subprocess.STARTUPINFO()
-        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        si.wShowWindow = subprocess.SW_HIDE
-        return si, subprocess.CREATE_NO_WINDOW
-    return None, 0
 
 
 # Rest of your existing functions...
@@ -1070,14 +1062,3 @@ def _probe_video_properties(input_file):
     except (subprocess.SubprocessError, json.JSONDecodeError, ValueError) as e:
         logging.error(f"Error getting video properties: {str(e)}")
         return None
-
-
-def setup_dpi_awareness() -> None:
-    """Enable Per-Monitor DPI awareness so Windows doesn't bitmap-scale the window."""
-    if sys.platform != 'win32':
-        return
-    try:
-        import ctypes
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)
-    except Exception:
-        pass

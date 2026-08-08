@@ -29,7 +29,7 @@ _ALLOWED: "dict[str, tuple[frozenset[str], bool]]" = {
     'settings':           (frozenset(), False),
     'updater':            (frozenset(), False),
     'license_errors':     (frozenset(), False),
-    'utils':              (frozenset(), False),
+    'utils':              (frozenset({'platform_utils'}), False),
     'conversion_view':    (frozenset(), False),
     'platform_utils':     (frozenset(), False),
     'ffmpeg_command':     (frozenset({'conversion_view', 'utils'}), False),
@@ -43,7 +43,7 @@ _ALLOWED: "dict[str, tuple[frozenset[str], bool]]" = {
     'gui':                (frozenset({'dark_theme', 'conversion', 'tk_conversion_view',
                                       'utils', 'settings', 'dialogs', 'preview',
                                       'updater'}), True),
-    'main':               (frozenset({'gui', 'licensing', 'utils'}), True),
+    'main':               (frozenset({'gui', 'licensing', 'utils', 'platform_utils'}), True),
 }
 
 # gui.py is the composition root, not a shared library. That edge is the

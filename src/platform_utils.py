@@ -1,6 +1,8 @@
 """OS-specific primitives: subprocess startup flags, app data directories,
 DPI awareness, and GPU-name probing. Every sys.platform branch in the app
-lives here, so a future macOS build has one file to open, not five.
+lives here except two one-liners that already degrade correctly on other
+platforms: utils.py's ffmpeg/ffprobe .exe suffix and updater.py's
+detached-launch creationflags.
 """
 from __future__ import annotations
 
@@ -43,6 +45,9 @@ def log_dir() -> str:
 def setup_dpi_awareness() -> None:
     """Enable Per-Monitor DPI awareness so Windows doesn't bitmap-scale the window."""
     if sys.platform != 'win32':
+        # No-op on macOS: a real implementation gap, not handled here. Tk/
+        # Info.plist's NSHighResolutionCapable setting handles Retina scaling
+        # differently on macOS -- deferred to the actual Mac build.
         return
     try:
         import ctypes

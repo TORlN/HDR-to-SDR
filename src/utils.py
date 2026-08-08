@@ -8,10 +8,9 @@ import re
 import sys
 import json
 import shutil
-import tempfile
 import threading
 
-from platform_utils import _startupinfo, log_dir, setup_dpi_awareness  # noqa: F401
+from platform_utils import _startupinfo, log_dir
 
 # Constants and initialization
 TONEMAP = ["Reinhard", "Mobius", "Hable", "BT.2390", "Spline"]

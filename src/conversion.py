@@ -366,20 +366,28 @@ class ConversionManager:
             view.restore_drop_target()
 
     def gpu_name(self) -> str:
-        """Return this machine's primary display adapter name, queried via WMI.
+        """Return this machine's primary GPU name, for the status tooltip.
 
-        Probed once and cached (same pattern as _gpu_encoder) since the
-        adapter doesn't change mid-run. Falls back to a generic label rather
-        than raising -- this only feeds a hover tooltip.
+        Prefers nvidia-smi's own report -- the same source of truth
+        detect_gpu_encoder uses to confirm an NVIDIA GPU -- since WMI's video
+        controller list can rank a virtual adapter first (e.g. a VR headset's
+        link driver registers one; see _wmi_gpu_name). Probed once and
+        cached. Falls back to a generic label rather than raising -- this
+        only feeds a hover tooltip.
         """
         if self._gpu_name_cache is not None:
             return self._gpu_name_cache
+        self._gpu_name_cache = self._nvidia_smi_name() or self._wmi_gpu_name() or 'GPU'
+        return self._gpu_name_cache
+
+    def _nvidia_smi_name(self) -> str | None:
+        """Return the NVIDIA GPU's name via nvidia-smi, or None if unusable."""
+        if not self._nvidia_present():
+            return None
         try:
             si, flags = _utils_startupinfo()
             result = subprocess.run(
-                ['powershell', '-NoProfile', '-Command',
-                 '(Get-CimInstance Win32_VideoController | '
-                 'Select-Object -First 1 -ExpandProperty Name)'],
+                ['nvidia-smi', '--query-gpu=name', '--format=csv,noheader'],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
@@ -387,10 +395,35 @@ class ConversionManager:
                 creationflags=flags,
                 timeout=5,
             )
-            self._gpu_name_cache = result.stdout.strip() or 'GPU'
+            first_line = result.stdout.strip().splitlines()[0].strip() if result.stdout.strip() else ''
+            return first_line or None
         except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-            self._gpu_name_cache = 'GPU'
-        return self._gpu_name_cache
+            return None
+
+    def _wmi_gpu_name(self) -> str | None:
+        """Return a display adapter name via WMI, or None if unusable.
+
+        Excludes adapters whose name contains "Virtual" -- e.g. a Meta Quest
+        Link's "Meta Virtual Monitor" -- which WMI otherwise happily lists
+        ahead of the real GPU.
+        """
+        try:
+            si, flags = _utils_startupinfo()
+            result = subprocess.run(
+                ['powershell', '-NoProfile', '-Command',
+                 "(Get-CimInstance Win32_VideoController | "
+                 "Where-Object { $_.Name -notmatch 'Virtual' } | "
+                 "Select-Object -First 1 -ExpandProperty Name)"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                startupinfo=si,
+                creationflags=flags,
+                timeout=5,
+            )
+            return result.stdout.strip() or None
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+            return None
 
     def _nvidia_present(self) -> bool:
         """Return True if nvidia-smi reports a usable NVIDIA GPU."""

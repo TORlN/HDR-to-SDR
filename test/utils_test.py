@@ -995,6 +995,7 @@ class TestSetupLogging(unittest.TestCase):
             path = utils._log_file_path()  # must not raise
         self.assertTrue(path.endswith(os.path.join('HDR to SDR', 'app.log')))
 
+    @patch('sys.platform', 'win32')
     def test_setup_logging_creates_log_directory(self):
         import tempfile
         import src.utils as utils
@@ -1008,6 +1009,7 @@ class TestSetupLogging(unittest.TestCase):
                 # tears down -- otherwise Windows refuses to delete the open file.
                 self._restore_root_logger()
 
+    @patch('sys.platform', 'win32')
     def test_setup_logging_attaches_rotating_file_handler(self):
         import tempfile
         import logging.handlers

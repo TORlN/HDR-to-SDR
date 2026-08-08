@@ -56,6 +56,18 @@ class TestGpuName(unittest.TestCase):
     """gpu_name() feeds ConversionManager.gpu_name(), which feeds the GPU
     status label's hover tooltip."""
 
+    def setUp(self):
+        # _startupinfo() calls the real subprocess.STARTUPINFO() whenever
+        # sys.platform == 'win32' -- a class that exists in the subprocess
+        # module only on an actual Windows interpreter. The tests below force
+        # sys.platform to 'win32' via @patch to exercise that branch, which
+        # means _startupinfo() must be mocked too, or it raises AttributeError
+        # on any non-Windows CI runner (subprocess.run is mocked separately
+        # per test, but that alone doesn't stop _startupinfo() from running).
+        patcher = patch('src.platform_utils._startupinfo', return_value=(None, 0))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     @patch('sys.platform', 'win32')
     @patch('src.platform_utils.subprocess.run')
     def test_prefers_nvidia_smi_name_when_nvidia_present(self, mock_run):

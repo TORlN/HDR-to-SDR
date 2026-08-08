@@ -657,27 +657,26 @@ class TestRealDolbyVisionTierConversion(unittest.TestCase):
         )
         return json.loads(out)['streams'][0]
 
+    def _assert_tonemapped_to_sdr(self, path):
+        """The tier split is audio-only -- the output must still be properly
+        tonemapped to SDR regardless of tier."""
+        transfer, _, _, pix_fmt = _probe_video(path)
+        self.assertNotEqual(transfer, 'smpte2084')
+        self.assertEqual(pix_fmt, 'yuv420p')
+
     def test_pro_conversion_preserves_full_multichannel_audio(self):
         out_path = self._convert(licensed=True)
         audio = self._audio_stream(out_path)
         self.assertEqual(audio['codec_name'], 'eac3')
         self.assertEqual(audio['channels'], 6)
+        self._assert_tonemapped_to_sdr(out_path)
 
     def test_free_conversion_forces_two_channel_aac(self):
         out_path = self._convert(licensed=False)
         audio = self._audio_stream(out_path)
         self.assertEqual(audio['codec_name'], 'aac')
         self.assertEqual(audio['channels'], 2)
-
-    def test_both_tiers_produce_sdr_video(self):
-        """The tier split is audio-only -- both outputs must still be
-        properly tonemapped to SDR."""
-        pro_path = self._convert(licensed=True, out_name='pro.mkv')
-        free_path = self._convert(licensed=False, out_name='free.mkv')
-        for path in (pro_path, free_path):
-            transfer, _, _, pix_fmt = _probe_video(path)
-            self.assertNotEqual(transfer, 'smpte2084')
-            self.assertEqual(pix_fmt, 'yuv420p')
+        self._assert_tonemapped_to_sdr(out_path)
 
 
 if __name__ == '__main__':

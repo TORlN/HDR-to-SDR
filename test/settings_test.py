@@ -61,10 +61,14 @@ class TestLoadSettings(unittest.TestCase):
         self.assertEqual(result['open_after_conversion'], DEFAULTS['open_after_conversion'])
 
     def test_unknown_keys_are_ignored(self):
+        """Includes 'gpu_accel', removed from DEFAULTS once GPU acceleration
+        became always-on -- a settings.json saved by an older version with
+        that key still present must load without error, silently dropping
+        it same as any other unknown key."""
         data = {
             'gamma': 1.5, 'filter': 'Static', 'tonemapper': 'Reinhard',
             'open_after_conversion': True, 'display_preview': True,
-            'unknown_key': 'should be dropped',
+            'unknown_key': 'should be dropped', 'gpu_accel': True,
         }
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
             json.dump(data, f)
@@ -75,6 +79,7 @@ class TestLoadSettings(unittest.TestCase):
         finally:
             os.unlink(tmp)
         self.assertNotIn('unknown_key', result)
+        self.assertNotIn('gpu_accel', result)
         self.assertEqual(result['gamma'], 1.5)
 
     def test_defaults_include_quality_mode_and_bitrate(self):
@@ -83,22 +88,6 @@ class TestLoadSettings(unittest.TestCase):
 
     def test_defaults_include_lut_enabled_on(self):
         self.assertEqual(DEFAULTS['lut_enabled'], True)
-
-    def test_stale_gpu_accel_key_is_ignored_on_load(self):
-        """gpu_accel was removed from DEFAULTS once GPU acceleration became
-        always-on; a settings.json saved by an older version with that key
-        still present must load without error, silently dropping it."""
-        data = {'gamma': 1.8, 'gpu_accel': True}
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            json.dump(data, f)
-            tmp = f.name
-        try:
-            with patch('src.settings.SETTINGS_FILE', tmp):
-                result = load_settings()
-        finally:
-            os.unlink(tmp)
-        self.assertNotIn('gpu_accel', result)
-        self.assertEqual(result['gamma'], 1.8)
 
 
 class TestSaveSettings(unittest.TestCase):
@@ -116,15 +105,6 @@ class TestSaveSettings(unittest.TestCase):
                 data = json.load(f)
             self.assertEqual(data['gamma'], 2.2)
             self.assertNotIn('filter', data)
-
-    def test_stale_gpu_accel_key_is_dropped_on_save(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            test_file = os.path.join(tmpdir, 'settings.json')
-            with patch('src.settings.SETTINGS_FILE', test_file):
-                save_settings({'gamma': 1.8, 'gpu_accel': True})
-            with open(test_file, encoding='utf-8') as f:
-                data = json.load(f)
-            self.assertNotIn('gpu_accel', data)
 
     def test_oserror_on_mkdir_does_not_raise(self):
         with patch('src.settings.os.makedirs', side_effect=OSError('no permission')):
@@ -174,14 +154,18 @@ class TestSaveSettings(unittest.TestCase):
             self.assertEqual(os.listdir(tmpdir), ['settings.json'])
 
     def test_only_known_keys_are_written(self):
+        """Includes 'gpu_accel', removed from DEFAULTS once GPU acceleration
+        became always-on -- a caller that still passes it (stale in-memory
+        settings dict from before an upgrade) must not have it written back."""
         with tempfile.TemporaryDirectory() as tmpdir:
             test_file = os.path.join(tmpdir, 'settings.json')
-            settings_with_extra = {**DEFAULTS, 'rogue_key': 'drop me'}
+            settings_with_extra = {**DEFAULTS, 'rogue_key': 'drop me', 'gpu_accel': True}
             with patch('src.settings.SETTINGS_FILE', test_file):
                 save_settings(settings_with_extra)
             with open(test_file, encoding='utf-8') as f:
                 written = json.load(f)
         self.assertNotIn('rogue_key', written)
+        self.assertNotIn('gpu_accel', written)
         self.assertEqual(set(written.keys()), set(DEFAULTS.keys()))
 
 

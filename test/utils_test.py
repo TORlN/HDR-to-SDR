@@ -345,11 +345,6 @@ class TestPreviewScaling(unittest.TestCase):
         self.assertIn('force_original_aspect_ratio=decrease', vf,
                       "scale filter is missing force_original_aspect_ratio=decrease")
 
-    def test_ffmpeg_filter_scale_does_not_upscale(self):
-        """FFMPEG_FILTER must include force_original_aspect_ratio=decrease."""
-        from src.utils import FFMPEG_FILTER
-        self.assertIn('force_original_aspect_ratio=decrease', FFMPEG_FILTER)
-
 
 class TestGetVideoPropertiesColorFields(unittest.TestCase):
     """get_video_properties must return HDR color metadata when present."""
@@ -403,34 +398,26 @@ class TestGetVideoPropertiesBitDepth(unittest.TestCase):
         }).encode(), b'')
 
     @patch('src.utils.subprocess.Popen')
-    def test_bit_depth_from_bits_per_raw_sample(self, mock_popen):
-        self._probe(mock_popen, {"bits_per_raw_sample": "12", "pix_fmt": "yuv420p12le"})
-        props = get_video_properties('bitdepth_raw.mkv')
-        self.assertEqual(props['bit_depth'], 12)
-
-    @patch('src.utils.subprocess.Popen')
-    def test_bit_depth_falls_back_to_pix_fmt(self, mock_popen):
-        self._probe(mock_popen, {"pix_fmt": "yuv420p10le"})
-        props = get_video_properties('bitdepth_pixfmt.mkv')
-        self.assertEqual(props['bit_depth'], 10)
-
-    @patch('src.utils.subprocess.Popen')
-    def test_bit_depth_16_from_pix_fmt(self, mock_popen):
-        self._probe(mock_popen, {"pix_fmt": "yuv444p16le"})
-        props = get_video_properties('bitdepth_16.mkv')
-        self.assertEqual(props['bit_depth'], 16)
-
-    @patch('src.utils.subprocess.Popen')
-    def test_bit_depth_defaults_to_8_when_undeterminable(self, mock_popen):
-        self._probe(mock_popen, {"pix_fmt": "yuv420p"})
-        props = get_video_properties('bitdepth_default.mp4')
-        self.assertEqual(props['bit_depth'], 8)
-
-    @patch('src.utils.subprocess.Popen')
-    def test_bit_depth_defaults_to_8_when_no_pix_fmt_or_raw_sample(self, mock_popen):
-        self._probe(mock_popen, {})
-        props = get_video_properties('bitdepth_missing.mp4')
-        self.assertEqual(props['bit_depth'], 8)
+    def test_bit_depth_resolution(self, mock_popen):
+        cases = (
+            ('from bits_per_raw_sample',
+             {"bits_per_raw_sample": "12", "pix_fmt": "yuv420p12le"}, 12),
+            ('falls back to pix_fmt',
+             {"pix_fmt": "yuv420p10le"}, 10),
+            ('16 from pix_fmt',
+             {"pix_fmt": "yuv444p16le"}, 16),
+            ('defaults to 8 when undeterminable',
+             {"pix_fmt": "yuv420p"}, 8),
+            ('defaults to 8 when no pix_fmt or raw_sample', {}, 8),
+        )
+        for i, (label, video_stream, expected) in enumerate(cases):
+            with self.subTest(label):
+                self._probe(mock_popen, video_stream)
+                # get_video_properties caches by filename -- each case needs
+                # its own name or later cases would just replay case 1's
+                # cached result instead of re-probing.
+                props = get_video_properties(f'bitdepth_{i}.mkv')
+                self.assertEqual(props['bit_depth'], expected)
 
 
 class TestGetVideoPropertiesErrors(unittest.TestCase):
@@ -1527,17 +1514,13 @@ class TestDolbyVisionDetection(unittest.TestCase):
 
     @patch('src.utils.subprocess.Popen')
     def test_dovi_configuration_record_sets_flag_and_profile(self, mock_popen):
-        props = self._props_for(mock_popen, [self._DOVI_P8_RECORD], 'dovi_p8.mkv')
-        self.assertTrue(props['is_dolby_vision'])
-        self.assertEqual(props['dovi_profile'], 8)
-
-    @patch('src.utils.subprocess.Popen')
-    def test_dovi_profile_5_detected(self, mock_popen):
-        record = dict(self._DOVI_P8_RECORD,
-                      dv_profile=5, dv_bl_signal_compatibility_id=0)
-        props = self._props_for(mock_popen, [record], 'dovi_p5.mp4')
-        self.assertTrue(props['is_dolby_vision'])
-        self.assertEqual(props['dovi_profile'], 5)
+        for profile, compat_id, name in ((8, 1, 'dovi_p8.mkv'), (5, 0, 'dovi_p5.mp4')):
+            with self.subTest(profile=profile):
+                record = dict(self._DOVI_P8_RECORD, dv_profile=profile,
+                              dv_bl_signal_compatibility_id=compat_id)
+                props = self._props_for(mock_popen, [record], name)
+                self.assertTrue(props['is_dolby_vision'])
+                self.assertEqual(props['dovi_profile'], profile)
 
     @patch('src.utils.subprocess.Popen')
     def test_plain_hdr10_stream_is_not_flagged(self, mock_popen):

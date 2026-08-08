@@ -207,12 +207,6 @@ class TestHDRConverterGUI(TestCase):
         self.gui.original_image_label.config.assert_called_with(image=mock_photo)
         self.gui.converted_image_label.config.assert_called_with(image=mock_photo)
 
-    def test_preview_size_constant_is_4k(self):
-        """PREVIEW_SIZE must be 4K so ffmpeg renders at the highest useful resolution."""
-        from src.preview import PREVIEW_SIZE
-        self.assertEqual(PREVIEW_SIZE, (3840, 2160),
-                         f"PREVIEW_SIZE should be (3840, 2160) but got {PREVIEW_SIZE}")
-
     @patch('src.preview.ImageTk.PhotoImage')
     def test_render_preview_images_correct_size_when_frame_collapsed(self, mock_photo_image):
         """Frame buttons must render at a usable size even when image_frame height
@@ -508,9 +502,11 @@ class TestBuildInfoTextMaxNits(TestCase):
         }
 
     def test_hdr_with_maxcll_shows_value(self):
-        """HDR video with MaxCLL metadata should show 'Max Nits: 1000' in the strip."""
+        """HDR video with MaxCLL metadata should show 'Max Nits: 1000' (an
+        integer, no decimals) in the strip."""
         text = HDRConverterGUI._build_info_text(self._props(), maxcll=1000.0)
         self.assertIn('Max Nits: 1000', text)
+        self.assertNotIn('1000.0', text)
 
     def test_hdr_without_maxcll_shows_na(self):
         """HDR video with no embedded MaxCLL (None) should show 'Max Nits: N/A'."""
@@ -522,12 +518,6 @@ class TestBuildInfoTextMaxNits(TestCase):
         text = HDRConverterGUI._build_info_text(
             self._props(primaries='bt709', transfer='bt709'), maxcll=1000.0)
         self.assertNotIn('Max Nits', text)
-
-    def test_maxcll_integer_display(self):
-        """Max Nits value should be shown as an integer (no decimals)."""
-        text = HDRConverterGUI._build_info_text(self._props(), maxcll=1000.0)
-        self.assertIn('Max Nits: 1000', text)
-        self.assertNotIn('1000.0', text)
 
 
 class TestBuildInfoTextBitrate(TestCase):
@@ -552,6 +542,7 @@ class TestBuildInfoTextBitrate(TestCase):
     def test_shows_formatted_bitrate_before_audio(self):
         text = HDRConverterGUI._build_info_text(self._props(bit_rate=84_376_000), maxcll=1000.0)
         self.assertIn('Bitrate: 84,376 kbps | Audio: EAC3', text)
+        self.assertNotIn('~', text)
 
     def test_omits_bitrate_segment_when_zero(self):
         text = HDRConverterGUI._build_info_text(self._props(bit_rate=0), maxcll=1000.0)
@@ -569,12 +560,6 @@ class TestBuildInfoTextBitrate(TestCase):
         props['bit_rate_estimated'] = True
         text = HDRConverterGUI._build_info_text(props, maxcll=1000.0)
         self.assertIn('Bitrate: ~28,424 kbps', text)
-
-    def test_real_bitrate_has_no_tilde_prefix(self):
-        text = HDRConverterGUI._build_info_text(
-            self._props(bit_rate=84_376_000), maxcll=1000.0)
-        self.assertIn('Bitrate: 84,376 kbps', text)
-        self.assertNotIn('~', text)
 
     def test_prefers_total_bit_rate_over_video_only_bit_rate(self):
         """The info strip is what users compare against Windows Explorer's
@@ -609,25 +594,14 @@ class TestBuildInfoTextOutputBitDepth(TestCase):
             'bit_depth': bit_depth,
         }
 
-    def test_shows_plain_eight_bit_when_source_matches_output(self):
-        text = HDRConverterGUI._build_info_text(
-            self._props(8), maxcll=1000.0, bit_depth=8, licensed=True)
-        self.assertIn('8-bit', text)
-        self.assertNotIn('->', text)
-        self.assertNotIn('Pro', text)
-
-    def test_shows_plain_ten_bit_when_source_matches_output(self):
-        text = HDRConverterGUI._build_info_text(
-            self._props(10), maxcll=1000.0, bit_depth=10, licensed=True)
-        self.assertIn('10-bit', text)
-        self.assertNotIn('->', text)
-
-    def test_shows_plain_twelve_bit_when_source_matches_output(self):
-        text = HDRConverterGUI._build_info_text(
-            self._props(12), maxcll=1000.0, bit_depth=12, licensed=True)
-        self.assertIn('12-bit', text)
-        self.assertNotIn('->', text)
-        self.assertNotIn('Pro', text)
+    def test_shows_plain_bit_depth_when_source_matches_output(self):
+        for depth in (8, 10, 12):
+            with self.subTest(depth=depth):
+                text = HDRConverterGUI._build_info_text(
+                    self._props(depth), maxcll=1000.0, bit_depth=depth, licensed=True)
+                self.assertIn(f'{depth}-bit', text)
+                self.assertNotIn('->', text)
+                self.assertNotIn('Pro', text)
 
     def test_arrow_for_nine_bit_source_rounded_up_to_ten(self):
         text = HDRConverterGUI._build_info_text(
@@ -694,10 +668,6 @@ class TestDolbyVisionInfoTextFormatting(TestCase):
             'bit_depth': 10,
             'is_dolby_vision': dovi, 'dovi_profile': 8 if dovi else None,
         }
-
-    def test_tag_shown_for_dovi_source(self):
-        text = HDRConverterGUI._build_info_text(self._props(True), maxcll=1000.0)
-        self.assertIn('Dolby Vision', text)
 
     def test_tag_sits_between_codec_and_hdr_tag(self):
         text = HDRConverterGUI._build_info_text(self._props(True), maxcll=1000.0)

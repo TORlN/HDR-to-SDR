@@ -2827,22 +2827,18 @@ class TestClampHelper(unittest.TestCase):
     _apply_quality_mode, which used to each inline their own
     min(max(value, lo), hi)."""
 
-    def test_clamps_below_range(self):
+    def test_clamp(self):
         from src.gui import _clamp
-        self.assertEqual(_clamp(-5, 0, 100), 0)
-
-    def test_clamps_above_range(self):
-        from src.gui import _clamp
-        self.assertEqual(_clamp(500, 0, 100), 100)
-
-    def test_passes_through_value_within_range(self):
-        from src.gui import _clamp
-        self.assertEqual(_clamp(42, 0, 100), 42)
-
-    def test_accepts_bounds_in_either_order(self):
-        from src.gui import _clamp
-        self.assertEqual(_clamp(-5, 100, 0), 0)
-        self.assertEqual(_clamp(500, 100, 0), 100)
+        cases = (
+            ('below range', -5, 0, 100, 0),
+            ('above range', 500, 0, 100, 100),
+            ('within range passes through', 42, 0, 100, 42),
+            ('reversed bounds, below', -5, 100, 0, 0),
+            ('reversed bounds, above', 500, 100, 0, 100),
+        )
+        for label, value, lo, hi, expected in cases:
+            with self.subTest(label):
+                self.assertEqual(_clamp(value, lo, hi), expected)
 
 
 class TestResizeImages(unittest.TestCase):

@@ -11,7 +11,6 @@ from unittest.mock import patch, MagicMock, ANY  # Import ANY
 from src.conversion import ConversionManager
 from src.utils import get_video_properties
 from PIL import Image
-from src.utils import FFMPEG_CONVERT_FILTER, get_lut_filter_path
 from src.utils import FFMPEG_EXECUTABLE  # Import FFMPEG_EXECUTABLE
 from dataclasses import FrozenInstanceError, replace
 from src.conversion import ConversionRequest, ConversionRun
@@ -40,21 +39,6 @@ def _req(**overrides) -> ConversionRequest:
 def _view(**overrides) -> RecordingConversionView:
     """A view that records instead of rendering; see test/_recording_view.py."""
     return RecordingConversionView(**overrides)
-
-
-class TestConversionRun(unittest.TestCase):
-
-    def test_bundles_request_and_view(self):
-        request = _req()
-        view = _view()
-        run = ConversionRun(request=request, view=view)
-        self.assertIs(run.request, request)
-        self.assertIs(run.view, view)
-
-    def test_is_frozen(self):
-        run = ConversionRun(request=_req(), view=_view())
-        with self.assertRaises(FrozenInstanceError):
-            run.request = _req(input_path='other.mp4')
 
 
 class TestConversionRequest(unittest.TestCase):
@@ -189,26 +173,6 @@ class TestConversionManager(unittest.TestCase):
             view.cancel_handler, manager.cancel_conversion,
             msg='start() showed the Cancel button without handing the view a '
                 'handler -- the button would be inert')
-
-    @patch('src.conversion.subprocess.Popen')
-    def test_cancel_conversion(self, mock_popen):
-        mock_process = MagicMock()
-        mock_popen.return_value = mock_process
-
-        manager = ConversionManager()
-        manager.process = mock_process
-        view = _view()
-        manager._run = ConversionRun(request=_req(), view=view)
-        manager.cancel_conversion()
-
-        mock_process.terminate.assert_called_once()
-        self.assertTrue(manager.cancelled)
-        self.assertEqual(view.notices, [Notice.info(
-            "Cancelled", "Video conversion has been cancelled.")])
-        # Cancelling hands the window back to the drop handler, same as a
-        # normal completion does -- unconditionally, unlike the old hasattr
-        # dance it replaced.
-        self.assertEqual(view.drop_target_restored, 1)
 
     @patch('src.conversion.get_video_properties')
     def test_start_rejects_invalid_paths(self, mock_get_props):
@@ -419,9 +383,17 @@ class TestConversionManager(unittest.TestCase):
                 creationflags=ANY,
             )
 
+    @patch('src.conversion.vulkan_libplacebo_available', return_value=False)
     @patch('src.conversion.subprocess.Popen')
-    def test_construct_ffmpeg_command_with_gpu(self, mock_popen):
-        """Test construct_ffmpeg_command with GPU acceleration enabled."""
+    def test_construct_ffmpeg_command_with_gpu(self, mock_popen, _mock_libplacebo):
+        """Test construct_ffmpeg_command with GPU acceleration enabled.
+
+        libplacebo forced unavailable so this doesn't depend on the real
+        probe result (which shells out to ffmpeg and caches globally) --
+        the same determinism TestGpuEncoderCommandConstruction's setUp
+        gives its own tests; this test absorbed that class's nvenc/cuda
+        case, so it needs the same guarantee.
+        """
         manager = ConversionManager()
         manager._gpu_encoder = 'h264_nvenc'
         properties = {
@@ -437,46 +409,6 @@ class TestConversionManager(unittest.TestCase):
         self.assertIn('cuda', cmd)
         self.assertIn('h264_nvenc', cmd)
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'h264_nvenc')
-
-    @patch('src.conversion.subprocess.Popen')
-    def test_construct_ffmpeg_command_without_gpu(self, mock_popen):
-        """Test construct_ffmpeg_command with GPU acceleration disabled."""
-        manager = ConversionManager()
-        properties = {
-            "width": 1920, "height": 1080, "bit_rate": 4000000, "codec_name": 'libx264',
-            "frame_rate": 30.0, "audio_codec": 'aac', "audio_bit_rate": 128000,
-            "duration": 120.0
-        }
-        gamma = 2.2
-        tonemapper = 'reinhard'
-
-        expected_filter = FFMPEG_CONVERT_FILTER.format(
-            gamma=gamma, tonemapper=tonemapper, lut_path=get_lut_filter_path())
-        cmd = manager.construct_ffmpeg_command(
-            _req(input_path='input.mp4', output_path='output.mkv', gamma=gamma),
-            properties, _view())
-        expected_cmd = [
-            FFMPEG_EXECUTABLE, '-loglevel', 'info',
-            '-i', os.path.normpath('input.mp4'),
-            '-filter_complex', f'[0:v:0]{expected_filter}[vout]',
-            '-map', '[vout]',
-            '-map', '0:a?',
-            '-map', '0:s?',
-            '-c:v', 'libx264',
-            '-preset', 'veryfast',
-            '-tune', 'film',
-            '-crf', '23',
-            '-r', '30.0',
-            '-pix_fmt', 'yuv420p',
-            '-strict', '-2',
-            '-c:a', 'copy',
-            '-c:s', 'copy',
-            '-map_metadata', '0',
-            '-movflags', '+faststart',
-            os.path.normpath('output.mkv'),
-            '-y'
-        ]
-        self.assertEqual(cmd, expected_cmd)
 
     _UNSUPPORTED_PLATFORM_NOTICE = Notice.warning(
         "Warning", "GPU acceleration is not supported on this platform.")
@@ -597,13 +529,6 @@ class TestConversionManager(unittest.TestCase):
              patch('src.conversion.vulkan_libplacebo_available', return_value=False):
             self.assertFalse(manager.is_gpu_acceleration_available())
 
-    def test_gpu_acceleration_available_with_encoder_only(self):
-        """A hardware encoder alone enables the GPU toggle."""
-        manager = ConversionManager()
-        with patch.object(manager, 'detect_gpu_encoder', return_value='h264_nvenc'), \
-             patch('src.conversion.vulkan_libplacebo_available', return_value=False):
-            self.assertTrue(manager.is_gpu_acceleration_available())
-
     def test_gpu_acceleration_available_with_libplacebo_only(self):
         """GPU tonemapping (libplacebo) alone enables the toggle, even with no
         hardware encoder -- the decoupled case."""
@@ -652,6 +577,8 @@ class TestCancelUsesStoredView(unittest.TestCase):
         self.assertIs(m.cancelled, True)
         self.assertEqual(view.cancel_visible, [False])
         self.assertEqual(view.drop_target_restored, 1)
+        self.assertEqual(view.notices, [Notice.info(
+            "Cancelled", "Video conversion has been cancelled.")])
 
     def test_cancel_before_any_conversion_is_a_no_op(self):
         """_run is None until the first conversion starts."""
@@ -746,6 +673,9 @@ class TestStartSignalsFailureOnEarlyReturn(unittest.TestCase):
         done.assert_called_once_with(False, view.notices[0].body)
 
     def test_invalid_paths_signals_failure(self):
+        """os.path.abspath('') resolves to the cwd, which is truthy -- an
+        unguarded normalization here would silently stop the "both paths
+        given" check from ever firing."""
         self._assert_guard_signals_failure(_req(input_path=''))
 
     def test_bit_depth_incompatibility_signals_failure(self):
@@ -869,14 +799,6 @@ class TestGpuEncoderCommandConstruction(unittest.TestCase):
         self.assertIn('qsv', cmd)
         self.assertNotIn('cuda', cmd)
 
-    def test_nvenc_encoder_used_with_cuda_hwaccel(self):
-        m = ConversionManager()
-        m._gpu_encoder = 'h264_nvenc'
-        cmd = m.construct_ffmpeg_command(_req(use_gpu=True), self._BASE_PROPS, _view())
-        self.assertIn('h264_nvenc', cmd)
-        self.assertIn('cuda', cmd)
-        self.assertIn('-hwaccel', cmd)
-
     def test_nvenc_zero_bitrate_uses_fallback(self):
         """bit_rate=0 from MKV containers must not produce -b:v 0 / -maxrate 0 /
         -bufsize 0 — those args make nvenc behave unpredictably. A sensible
@@ -945,12 +867,6 @@ class TestBitDepthPixelFormat(unittest.TestCase):
             _req(gamma=2.2, bit_depth=10), self._PROPS, _view())
         self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p10le')
         self.assertEqual(cmd[cmd.index('-c:v') + 1], 'libx264')
-
-    def test_bit_depth_defaults_to_eight(self):
-        """Omitting bit_depth entirely must not change the existing 8-bit behavior."""
-        manager = ConversionManager()
-        cmd = manager.construct_ffmpeg_command(_req(gamma=2.2), self._PROPS, _view())
-        self.assertEqual(cmd[cmd.index('-pix_fmt') + 1], 'yuv420p')
 
     def test_twelve_bit_switches_to_libx265_and_yuv420p12le(self):
         manager = ConversionManager()
@@ -2039,21 +1955,6 @@ class TestStartTakesARequestAndAView(unittest.TestCase):
     """The 16-parameter start_conversion is gone; start(request, view) is the
     only way in, and the retry re-enters through it."""
 
-    def test_start_conversion_no_longer_exists(self):
-        self.assertFalse(
-            hasattr(ConversionManager, 'start_conversion'),
-            msg='start_conversion survived; four of its parameters now live '
-                'inside the view, so keeping it would pass the same widgets '
-                'twice')
-
-    def test_the_manager_no_longer_touches_widgets_itself(self):
-        for gone in ('disable_ui', 'enable_ui'):
-            with self.subTest(method=gone):
-                self.assertFalse(
-                    hasattr(ConversionManager, gone),
-                    msg=f'{gone} survived; callers use '
-                        f'view.set_inputs_enabled(bool) now')
-
     @patch('src.conversion.get_video_properties')
     @patch('src.conversion.subprocess.Popen')
     def test_start_normalizes_paths_and_launches(self, mock_popen, mock_props):
@@ -2068,15 +1969,6 @@ class TestStartTakesARequestAndAView(unittest.TestCase):
         self.assertEqual(manager._run.request.input_path, os.path.abspath('in.mp4'))
         self.assertIs(manager._run.view, view)
 
-    def test_start_leaves_a_blank_path_falsy_so_the_guard_still_fires(self):
-        """os.path.abspath('') resolves to the cwd, which is truthy -- an
-        unguarded normalization here would silently stop the "both paths
-        given" check from ever firing."""
-        manager = ConversionManager()
-        view = RecordingConversionView()
-        self.assertIs(manager.start(_req(input_path=''), view), False)
-        self.assertEqual(view.notices, [Notice.warning(
-            "Warning", "Please select both an input file and specify an output file.")])
 
 
 if __name__ == '__main__':

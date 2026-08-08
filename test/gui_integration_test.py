@@ -700,12 +700,13 @@ class TestTooltip(_GuiTestBase):
         self.assertTrue(self.gui.tooltip.winfo_exists())
 
     def test_quality_info_button_exists_and_shows_tooltip(self):
+        """Fires the button's real <Enter> binding rather than calling
+        show_tooltip directly -- a hand-called show_tooltip would still pass
+        even if the button's bind() call were ever deleted."""
         self.assertEqual(self.gui.quality_info_button.cget('text'), 'ⓘ')
-        event = types.SimpleNamespace(widget=MagicMock())
-        event.widget.winfo_rootx.return_value = 100
-        event.widget.winfo_rooty.return_value = 100
 
-        self.gui.show_tooltip(event, "Smaller File  ◀──▶  Better Quality")
+        self.gui.quality_info_button.event_generate('<Enter>')
+
         labels = [w for w in self.gui.tooltip.winfo_children() if isinstance(w, ttk.Label)]
         self.assertTrue(labels)
         self.assertEqual(labels[0].cget('text'), "Smaller File  ◀──▶  Better Quality")
@@ -1114,8 +1115,9 @@ class TestLicensedState(_LicensingBase):
 
 
 @unittest.skipUnless(_TK_OK, _SKIP)
-class TestLicenseTransition(unittest.TestCase):
-    """State-mutating tests — fresh GUI per test (unavoidable)."""
+class _FreshGuiTestBase(unittest.TestCase):
+    """Shared plumbing for tests that mutate GUI state and so need a fresh
+    HDRConverterGUI per test, unlike _LicensingBase's one-per-class instance."""
 
     def setUp(self) -> None:
         self._load_patch = patch('src.gui.load_settings', return_value=dict(DEFAULTS))
@@ -1136,6 +1138,10 @@ class TestLicenseTransition(unittest.TestCase):
 
     def _make_gui(self, licensed: bool) -> HDRConverterGUI:
         return HDRConverterGUI(_probe_root, licensed=licensed)
+
+
+class TestLicenseTransition(_FreshGuiTestBase):
+    """State-mutating tests — fresh GUI per test (unavoidable)."""
 
     def test_apply_license_state_unlocks_all_premium_features(self):
         gui = self._make_gui(licensed=False)
@@ -1171,30 +1177,10 @@ class TestLicenseTransition(unittest.TestCase):
 
 
 @unittest.skipUnless(_TK_OK, _SKIP)
-class TestBitDepthToggle(unittest.TestCase):
+class TestBitDepthToggle(_FreshGuiTestBase):
     """The 10/12-bit toggle: appears only for >10-bit sources, labeled/enabled
     per license state, placed next to the tonemapper selector, and refreshes
     immediately on a mid-session license activation."""
-
-    def setUp(self) -> None:
-        self._load_patch = patch('src.gui.load_settings', return_value=dict(DEFAULTS))
-        self._save_patch = patch('src.gui.save_settings')
-        self._load_patch.start()
-        self._save_patch.start()
-        self._gpu_patch = patch(
-            'src.gui.conversion_manager.is_gpu_acceleration_available', return_value=True)
-        self._gpu_patch.start()
-        drain_after_timers(_probe_root)
-        for w in _probe_root.winfo_children():
-            w.destroy()
-
-    def tearDown(self) -> None:
-        self._load_patch.stop()
-        self._save_patch.stop()
-        self._gpu_patch.stop()
-
-    def _make_gui(self, licensed: bool) -> HDRConverterGUI:
-        return HDRConverterGUI(_probe_root, licensed=licensed)
 
     def test_hidden_for_le_ten_bit_source(self):
         gui = self._make_gui(licensed=True)
@@ -1346,7 +1332,7 @@ class TestBitDepthToggle(unittest.TestCase):
 
 
 @unittest.skipUnless(_TK_OK, _SKIP)
-class TestDropToQueue(unittest.TestCase):
+class TestDropToQueue(_FreshGuiTestBase):
     """Licensed single-file drops route through the batch queue (so dropping
     onto a populated queue adds to it instead of bypassing it); unlicensed
     drops keep the plain load-only behavior since batch is Pro.
@@ -1357,26 +1343,6 @@ class TestDropToQueue(unittest.TestCase):
     real add_batch_files -- moved to src/pro/test/batch_test.py's
     TestDropToQueue -- see task-6 of the Pro/private-repo split.
     """
-
-    def setUp(self) -> None:
-        self._load_patch = patch('src.gui.load_settings', return_value=dict(DEFAULTS))
-        self._save_patch = patch('src.gui.save_settings')
-        self._load_patch.start()
-        self._save_patch.start()
-        self._gpu_patch = patch(
-            'src.gui.conversion_manager.is_gpu_acceleration_available', return_value=True)
-        self._gpu_patch.start()
-        drain_after_timers(_probe_root)
-        for w in _probe_root.winfo_children():
-            w.destroy()
-
-    def tearDown(self) -> None:
-        self._load_patch.stop()
-        self._save_patch.stop()
-        self._gpu_patch.stop()
-
-    def _make_gui(self, licensed: bool) -> HDRConverterGUI:
-        return HDRConverterGUI(_probe_root, licensed=licensed)
 
     def test_single_drop_unlicensed_only_loads(self):
         gui = self._make_gui(licensed=False)

@@ -47,16 +47,11 @@ class TestNotice(unittest.TestCase):
 
 class TestConversionViewProtocol(unittest.TestCase):
 
-    def test_the_protocol_has_exactly_eight_members(self):
+    def test_the_members_are_the_expected_ones(self):
         """A ninth member must not appear without the doubles being updated;
         test/tk_conversion_view_test.py checks each implementation against
-        this same list."""
-        members = _protocol_members(ConversionView)
-        self.assertEqual(
-            len(members), 8,
-            msg=f'ConversionView has {len(members)} members: {sorted(members)}')
-
-    def test_the_members_are_the_expected_ones(self):
+        this same list. An equality check against this exact set already
+        catches a wrong count, so there is no separate len()==8 test."""
         self.assertEqual(_protocol_members(ConversionView), {
             'on_complete', 'notify', 'schedule', 'set_progress',
             'set_inputs_enabled', 'set_cancel_visible', 'restore_drop_target',

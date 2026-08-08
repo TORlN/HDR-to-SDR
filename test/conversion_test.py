@@ -765,105 +765,33 @@ class TestDetectGpuEncoder(unittest.TestCase):
 
 
 class TestGpuName(unittest.TestCase):
-    """gpu_name() feeds the GPU status label's hover tooltip."""
+    """gpu_name() feeds the GPU status label's hover tooltip. The
+    nvidia-smi/WMI probing itself is tested against platform_utils.gpu_name
+    directly in test/platform_utils_test.py; this class covers only what
+    ConversionManager adds on top: caching and the 'GPU' fallback."""
 
-    def _manager(self, nvidia_present):
+    @patch('src.conversion.platform_utils.gpu_name')
+    def test_delegates_to_platform_utils_with_nvidia_present_and_encoder(self, mock_gpu_name):
+        mock_gpu_name.return_value = 'NVIDIA GeForce RTX 4090'
         m = ConversionManager()
-        m._nvidia_present = MagicMock(return_value=nvidia_present)
-        return m
-
-    @patch('src.conversion.subprocess.run')
-    def test_prefers_nvidia_smi_name_when_nvidia_present(self, mock_run):
-        mock_run.return_value = MagicMock(stdout='NVIDIA GeForce RTX 4090\n')
-        m = self._manager(nvidia_present=True)
+        m._nvidia_present = MagicMock(return_value=True)
+        m._gpu_encoder = 'h264_nvenc'
         self.assertEqual(m.gpu_name(), 'NVIDIA GeForce RTX 4090')
-        self.assertEqual(mock_run.call_args.args[0][0], 'nvidia-smi')
+        mock_gpu_name.assert_called_once_with(True, 'h264_nvenc')
 
-    @patch('src.conversion.subprocess.run')
-    def test_falls_back_to_wmi_when_nvidia_absent(self, mock_run):
-        mock_run.return_value = MagicMock(stdout='Intel UHD Graphics\n')
-        m = self._manager(nvidia_present=False)
-        self.assertEqual(m.gpu_name(), 'Intel UHD Graphics')
-        self.assertEqual(mock_run.call_args.args[0][0], 'powershell')
-
-    @patch('src.conversion.subprocess.run')
-    def test_wmi_query_excludes_virtual_adapters(self, mock_run):
-        """Regression: a VR headset's link driver (e.g. Meta Quest Link)
-        registers a "Meta Virtual Monitor" adapter that WMI otherwise lists
-        ahead of the real GPU -- the query itself must filter it out."""
-        mock_run.return_value = MagicMock(stdout='NVIDIA GeForce RTX 4090\n')
-        m = self._manager(nvidia_present=False)
-        m.gpu_name()
-        command = mock_run.call_args.args[0]
-        self.assertIn("-notmatch 'Virtual'", command[-1])
-
-    @patch('src.conversion.subprocess.run')
-    def test_wmi_scopes_to_amd_when_amf_encoder_detected(self, mock_run):
-        mock_run.return_value = MagicMock(stdout='AMD Radeon RX 7900 XTX\n')
-        m = self._manager(nvidia_present=False)
-        m._gpu_encoder = 'h264_amf'
-        self.assertEqual(m.gpu_name(), 'AMD Radeon RX 7900 XTX')
-        command = mock_run.call_args.args[0]
-        self.assertIn("AdapterCompatibility -match 'AMD|Advanced Micro Devices'", command[-1])
-
-    @patch('src.conversion.subprocess.run')
-    def test_wmi_scopes_to_intel_when_qsv_encoder_detected(self, mock_run):
-        mock_run.return_value = MagicMock(stdout='Intel Arc A770\n')
-        m = self._manager(nvidia_present=False)
-        m._gpu_encoder = 'h264_qsv'
-        self.assertEqual(m.gpu_name(), 'Intel Arc A770')
-        command = mock_run.call_args.args[0]
-        self.assertIn("AdapterCompatibility -match 'Intel'", command[-1])
-
-    @patch('src.conversion.subprocess.run')
-    def test_wmi_falls_back_to_unscoped_query_when_vendor_scoped_yields_nothing(self, mock_run):
-        """A laptop's AdapterCompatibility string might not literally say
-        "AMD"/"Intel" -- if the vendor-scoped query comes up empty, still
-        report whatever real (non-virtual) adapter WMI does find rather
-        than giving up and showing the generic 'GPU' fallback."""
-        mock_run.side_effect = [
-            MagicMock(stdout='   \n'),  # vendor-scoped: nothing matched
-            MagicMock(stdout='AMD Radeon RX 6600\n'),  # unscoped fallback
-        ]
-        m = self._manager(nvidia_present=False)
-        m._gpu_encoder = 'h264_amf'
-        self.assertEqual(m.gpu_name(), 'AMD Radeon RX 6600')
-        self.assertEqual(mock_run.call_count, 2)
-        unscoped_command = mock_run.call_args_list[1].args[0]
-        self.assertNotIn('AdapterCompatibility', unscoped_command[-1])
-
-    @patch('src.conversion.subprocess.run')
-    def test_falls_back_to_wmi_when_nvidia_smi_output_is_blank(self, mock_run):
-        mock_run.side_effect = [
-            MagicMock(stdout='   \n'),
-            MagicMock(stdout='NVIDIA GeForce RTX 4090\n'),
-        ]
-        m = self._manager(nvidia_present=True)
-        self.assertEqual(m.gpu_name(), 'NVIDIA GeForce RTX 4090')
-        self.assertEqual(mock_run.call_count, 2)
-
-    @patch('src.conversion.subprocess.run')
-    def test_result_is_cached_after_first_call(self, mock_run):
-        mock_run.return_value = MagicMock(stdout='Intel UHD Graphics\n')
-        m = self._manager(nvidia_present=False)
+    @patch('src.conversion.platform_utils.gpu_name')
+    def test_result_is_cached_after_first_call(self, mock_gpu_name):
+        mock_gpu_name.return_value = 'Intel UHD Graphics'
+        m = ConversionManager()
+        m._nvidia_present = MagicMock(return_value=False)
         m.gpu_name()
         m.gpu_name()
-        mock_run.assert_called_once()
+        mock_gpu_name.assert_called_once()
 
-    @patch('src.conversion.subprocess.run', side_effect=FileNotFoundError())
-    def test_falls_back_to_generic_label_when_both_sources_fail(self, _mock_run):
-        m = self._manager(nvidia_present=True)
-        self.assertEqual(m.gpu_name(), 'GPU')
-
-    @patch('src.conversion.subprocess.run', side_effect=subprocess.TimeoutExpired('powershell', 5))
-    def test_falls_back_to_generic_label_on_timeout(self, _mock_run):
-        m = self._manager(nvidia_present=False)
-        self.assertEqual(m.gpu_name(), 'GPU')
-
-    @patch('src.conversion.subprocess.run')
-    def test_falls_back_to_generic_label_when_wmi_output_blank(self, mock_run):
-        mock_run.return_value = MagicMock(stdout='   \n')
-        m = self._manager(nvidia_present=False)
+    @patch('src.conversion.platform_utils.gpu_name', return_value=None)
+    def test_falls_back_to_generic_label_when_platform_utils_returns_none(self, _mock_gpu_name):
+        m = ConversionManager()
+        m._nvidia_present = MagicMock(return_value=True)
         self.assertEqual(m.gpu_name(), 'GPU')
 
 

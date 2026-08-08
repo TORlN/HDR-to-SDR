@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 from conversion_view import ConversionView, Notice
 import ffmpeg_command
+import platform_utils
 from utils import (get_video_properties, FFMPEG_EXECUTABLE,
                    vulkan_libplacebo_available, vulkan_cuda_interop_available,
                    _startupinfo as _utils_startupinfo)
@@ -368,85 +369,18 @@ class ConversionManager:
     def gpu_name(self) -> str:
         """Return this machine's primary GPU name, for the status tooltip.
 
-        Prefers nvidia-smi's own report -- the same source of truth
-        detect_gpu_encoder uses to confirm an NVIDIA GPU -- since WMI's video
-        controller list can rank a virtual adapter first (e.g. a VR headset's
-        link driver registers one; see _wmi_gpu_name). Probed once and
-        cached. Falls back to a generic label rather than raising -- this
-        only feeds a hover tooltip.
+        Probed once and cached. Falls back to a generic label rather than
+        raising -- this only feeds a hover tooltip. The actual probing
+        (nvidia-smi, WMI) lives in platform_utils.gpu_name(), which returns
+        None on anything it can't determine or that isn't Windows.
         """
         if self._gpu_name_cache is not None:
             return self._gpu_name_cache
-        self._gpu_name_cache = self._nvidia_smi_name() or self._wmi_gpu_name() or 'GPU'
+        self._gpu_name_cache = (
+            platform_utils.gpu_name(self._nvidia_present(), self._gpu_encoder)
+            or 'GPU'
+        )
         return self._gpu_name_cache
-
-    def _nvidia_smi_name(self) -> str | None:
-        """Return the NVIDIA GPU's name via nvidia-smi, or None if unusable."""
-        if not self._nvidia_present():
-            return None
-        try:
-            si, flags = _utils_startupinfo()
-            result = subprocess.run(
-                ['nvidia-smi', '--query-gpu=name', '--format=csv,noheader'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True,
-                startupinfo=si,
-                creationflags=flags,
-                timeout=5,
-            )
-            first_line = result.stdout.strip().splitlines()[0].strip() if result.stdout.strip() else ''
-            return first_line or None
-        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-            return None
-
-    # detect_gpu_encoder's encoder name -> AdapterCompatibility substring(s)
-    # to prefer when scoping the WMI fallback to a known vendor.
-    _WMI_VENDOR_PATTERNS = {
-        'h264_amf': 'AMD|Advanced Micro Devices',
-        'h264_qsv': 'Intel',
-    }
-
-    def _wmi_gpu_name(self) -> str | None:
-        """Return a display adapter name via WMI, or None if unusable.
-
-        Always excludes adapters whose name contains "Virtual" -- e.g. a Meta
-        Quest Link's "Meta Virtual Monitor" -- which WMI otherwise happily
-        lists ahead of the real GPU. When detect_gpu_encoder already pinned
-        an AMD/Intel encoder, scopes the query to that vendor's adapter
-        first -- a multi-GPU machine (e.g. a laptop with both an Intel iGPU
-        and an AMD dGPU) could otherwise still report the wrong card even
-        after excluding virtual ones -- and falls back to the unscoped query
-        if that yields nothing (e.g. an oddly named AdapterCompatibility).
-        """
-        vendor_pattern = self._WMI_VENDOR_PATTERNS.get(self._gpu_encoder or '')
-        if vendor_pattern:
-            name = self._wmi_query(vendor_pattern)
-            if name:
-                return name
-        return self._wmi_query(None)
-
-    def _wmi_query(self, vendor_pattern: str | None) -> str | None:
-        where_clause = "$_.Name -notmatch 'Virtual'"
-        if vendor_pattern:
-            where_clause += f" -and $_.AdapterCompatibility -match '{vendor_pattern}'"
-        try:
-            si, flags = _utils_startupinfo()
-            result = subprocess.run(
-                ['powershell', '-NoProfile', '-Command',
-                 f"(Get-CimInstance Win32_VideoController | "
-                 f"Where-Object {{ {where_clause} }} | "
-                 "Select-Object -First 1 -ExpandProperty Name)"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True,
-                startupinfo=si,
-                creationflags=flags,
-                timeout=5,
-            )
-            return result.stdout.strip() or None
-        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-            return None
 
     def _nvidia_present(self) -> bool:
         """Return True if nvidia-smi reports a usable NVIDIA GPU."""

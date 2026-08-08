@@ -712,6 +712,36 @@ class TestTooltip(_GuiTestBase):
         self.assertEqual(labels[0].cget('text'), "Smaller File  ◀──▶  Better Quality")
         self.gui.hide_tooltip()
 
+    @patch('src.gui.conversion_manager.gpu_name', return_value='NVIDIA GeForce RTX 3080')
+    def test_gpu_status_label_hover_shows_detected_gpu(self, _mock_gpu_name):
+        """_GuiTestBase's setUp constructs the GUI with GPU acceleration
+        forced available (see its is_gpu_acceleration_available patch), so
+        the real <Enter> binding should report that GPU as detected."""
+        self.gui.gpu_status_label.event_generate('<Enter>')
+
+        labels = [w for w in self.gui.tooltip.winfo_children() if isinstance(w, ttk.Label)]
+        self.assertTrue(labels)
+        self.assertEqual(
+            labels[0].cget('text'),
+            "GPU Detected: NVIDIA GeForce RTX 3080. GPU Acceleration Enabled")
+        self.gui.hide_tooltip()
+
+    @patch('src.gui.messagebox')
+    @patch('src.gui.conversion_manager.is_gpu_acceleration_available', return_value=False)
+    def test_gpu_status_label_hover_shows_no_gpu_when_unavailable(self, _mock_available, _mock_mb):
+        """Rebuild with GPU unavailable (messagebox mocked -- construction
+        pops a real showwarning in this branch), then check the binding."""
+        for w in self.root.winfo_children():
+            w.destroy()
+        gui = HDRConverterGUI(self.root, licensed=True)
+
+        gui.gpu_status_label.event_generate('<Enter>')
+
+        labels = [w for w in gui.tooltip.winfo_children() if isinstance(w, ttk.Label)]
+        self.assertTrue(labels)
+        self.assertEqual(labels[0].cget('text'), "No GPU Detected. GPU Acceleration Disabled")
+        gui.hide_tooltip()
+
 
 class TestUserActions(_GuiTestBase):
 

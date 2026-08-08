@@ -851,6 +851,40 @@ class TestGuiInteractions(unittest.TestCase):
         mock_mb.showerror.assert_called_once()
         mock_mb.showwarning.assert_not_called()
 
+    @patch('src.gui.conversion_manager')
+    def test_gpu_status_tooltip_available_shows_gpu_name(self, mock_cm):
+        """The GPU name lookup must be lazy -- only on hover, not at bind
+        time -- so construction doesn't shell out just to build a tooltip
+        nobody may ever see."""
+        gui = _bare_gui()
+        gui.gpu_status_label = MagicMock()
+        gui.show_tooltip = MagicMock()
+        mock_cm.gpu_name.return_value = 'NVIDIA GeForce RTX 3080'
+
+        gui._bind_gpu_status_tooltip(True)
+        mock_cm.gpu_name.assert_not_called()
+        enter_callback = gui.gpu_status_label.bind.call_args_list[0].args[1]
+        enter_callback(MagicMock())
+
+        gui.show_tooltip.assert_called_once()
+        self.assertEqual(
+            gui.show_tooltip.call_args.args[1],
+            "GPU Detected: NVIDIA GeForce RTX 3080. GPU Acceleration Enabled")
+
+    @patch('src.gui.conversion_manager')
+    def test_gpu_status_tooltip_unavailable_shows_disabled_message(self, mock_cm):
+        gui = _bare_gui()
+        gui.gpu_status_label = MagicMock()
+        gui.show_tooltip = MagicMock()
+
+        gui._bind_gpu_status_tooltip(False)
+        enter_callback = gui.gpu_status_label.bind.call_args_list[0].args[1]
+        enter_callback(MagicMock())
+
+        gui.show_tooltip.assert_called_once_with(
+            ANY, "No GPU Detected. GPU Acceleration Disabled")
+        mock_cm.gpu_name.assert_not_called()
+
     def test_apply_lut_export_availability_disables_when_gpu_off(self):
         gui = _bare_gui()
         gui.gpu_accel_var = MagicMock()

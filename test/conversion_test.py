@@ -764,6 +764,40 @@ class TestDetectGpuEncoder(unittest.TestCase):
             mock_detect.assert_not_called()
 
 
+class TestGpuName(unittest.TestCase):
+    """gpu_name() feeds the GPU status label's hover tooltip."""
+
+    @patch('src.conversion.subprocess.run')
+    def test_returns_stripped_adapter_name(self, mock_run):
+        mock_run.return_value = MagicMock(stdout='NVIDIA GeForce RTX 3080\n')
+        m = ConversionManager()
+        self.assertEqual(m.gpu_name(), 'NVIDIA GeForce RTX 3080')
+
+    @patch('src.conversion.subprocess.run')
+    def test_result_is_cached_after_first_call(self, mock_run):
+        mock_run.return_value = MagicMock(stdout='Intel UHD Graphics\n')
+        m = ConversionManager()
+        m.gpu_name()
+        m.gpu_name()
+        mock_run.assert_called_once()
+
+    @patch('src.conversion.subprocess.run', side_effect=FileNotFoundError())
+    def test_falls_back_to_generic_label_when_powershell_missing(self, _mock_run):
+        m = ConversionManager()
+        self.assertEqual(m.gpu_name(), 'GPU')
+
+    @patch('src.conversion.subprocess.run', side_effect=subprocess.TimeoutExpired('powershell', 5))
+    def test_falls_back_to_generic_label_on_timeout(self, _mock_run):
+        m = ConversionManager()
+        self.assertEqual(m.gpu_name(), 'GPU')
+
+    @patch('src.conversion.subprocess.run')
+    def test_falls_back_to_generic_label_on_blank_output(self, mock_run):
+        mock_run.return_value = MagicMock(stdout='   \n')
+        m = ConversionManager()
+        self.assertEqual(m.gpu_name(), 'GPU')
+
+
 class TestGpuEncoderCommandConstruction(unittest.TestCase):
     """construct_ffmpeg_command uses the detected GPU encoder type correctly."""
 

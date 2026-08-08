@@ -61,6 +61,7 @@ class ConversionManager:
         self.process: subprocess.Popen[str] | None = None
         self.cancelled: bool = False
         self._gpu_encoder: str | None = None
+        self._gpu_name_cache: str | None = None
         self._run: ConversionRun | None = None
 
     def start(self, request: ConversionRequest, view: ConversionView) -> bool:
@@ -363,6 +364,33 @@ class ConversionManager:
             view.set_inputs_enabled(True)
             view.set_cancel_visible(False)
             view.restore_drop_target()
+
+    def gpu_name(self) -> str:
+        """Return this machine's primary display adapter name, queried via WMI.
+
+        Probed once and cached (same pattern as _gpu_encoder) since the
+        adapter doesn't change mid-run. Falls back to a generic label rather
+        than raising -- this only feeds a hover tooltip.
+        """
+        if self._gpu_name_cache is not None:
+            return self._gpu_name_cache
+        try:
+            si, flags = _utils_startupinfo()
+            result = subprocess.run(
+                ['powershell', '-NoProfile', '-Command',
+                 '(Get-CimInstance Win32_VideoController | '
+                 'Select-Object -First 1 -ExpandProperty Name)'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                startupinfo=si,
+                creationflags=flags,
+                timeout=5,
+            )
+            self._gpu_name_cache = result.stdout.strip() or 'GPU'
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+            self._gpu_name_cache = 'GPU'
+        return self._gpu_name_cache
 
     def _nvidia_present(self) -> bool:
         """Return True if nvidia-smi reports a usable NVIDIA GPU."""

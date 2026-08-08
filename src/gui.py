@@ -1600,6 +1600,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 f"An error occurred while checking GPU acceleration:\n{e}")
             self.gpu_accel_var.set(False)
             self.gpu_status_label.config(text="✗ GPU", foreground='red')
+            self._bind_gpu_status_tooltip(False)
             return
         self.gpu_accel_var.set(available)
         if available:
@@ -1612,6 +1613,20 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 "It needs either a supported hardware encoder "
                 "(NVIDIA h264_nvenc, AMD h264_amf, Intel h264_qsv) or "
                 "GPU tonemapping (libplacebo/Vulkan).")
+        self._bind_gpu_status_tooltip(available)
+
+    def _bind_gpu_status_tooltip(self, available: bool) -> None:
+        """Hover text for the non-interactive GPU status label.
+
+        The GPU name is only looked up (and shelled out for) if a hover
+        actually happens, not at construction time.
+        """
+        def _text(_available=available):
+            if not _available:
+                return "No GPU Detected. GPU Acceleration Disabled"
+            return f"GPU Detected: {conversion_manager.gpu_name()}. GPU Acceleration Enabled"
+        self.gpu_status_label.bind('<Enter>', lambda e: self.show_tooltip(e, _text()))
+        self.gpu_status_label.bind('<Leave>', self.hide_tooltip)
 
     # ── Tooltips ───────────────────────────────────────────────────────────────
 

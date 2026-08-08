@@ -400,19 +400,42 @@ class ConversionManager:
         except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
             return None
 
+    # detect_gpu_encoder's encoder name -> AdapterCompatibility substring(s)
+    # to prefer when scoping the WMI fallback to a known vendor.
+    _WMI_VENDOR_PATTERNS = {
+        'h264_amf': 'AMD|Advanced Micro Devices',
+        'h264_qsv': 'Intel',
+    }
+
     def _wmi_gpu_name(self) -> str | None:
         """Return a display adapter name via WMI, or None if unusable.
 
-        Excludes adapters whose name contains "Virtual" -- e.g. a Meta Quest
-        Link's "Meta Virtual Monitor" -- which WMI otherwise happily lists
-        ahead of the real GPU.
+        Always excludes adapters whose name contains "Virtual" -- e.g. a Meta
+        Quest Link's "Meta Virtual Monitor" -- which WMI otherwise happily
+        lists ahead of the real GPU. When detect_gpu_encoder already pinned
+        an AMD/Intel encoder, scopes the query to that vendor's adapter
+        first -- a multi-GPU machine (e.g. a laptop with both an Intel iGPU
+        and an AMD dGPU) could otherwise still report the wrong card even
+        after excluding virtual ones -- and falls back to the unscoped query
+        if that yields nothing (e.g. an oddly named AdapterCompatibility).
         """
+        vendor_pattern = self._WMI_VENDOR_PATTERNS.get(self._gpu_encoder or '')
+        if vendor_pattern:
+            name = self._wmi_query(vendor_pattern)
+            if name:
+                return name
+        return self._wmi_query(None)
+
+    def _wmi_query(self, vendor_pattern: str | None) -> str | None:
+        where_clause = "$_.Name -notmatch 'Virtual'"
+        if vendor_pattern:
+            where_clause += f" -and $_.AdapterCompatibility -match '{vendor_pattern}'"
         try:
             si, flags = _utils_startupinfo()
             result = subprocess.run(
                 ['powershell', '-NoProfile', '-Command',
-                 "(Get-CimInstance Win32_VideoController | "
-                 "Where-Object { $_.Name -notmatch 'Virtual' } | "
+                 f"(Get-CimInstance Win32_VideoController | "
+                 f"Where-Object {{ {where_clause} }} | "
                  "Select-Object -First 1 -ExpandProperty Name)"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

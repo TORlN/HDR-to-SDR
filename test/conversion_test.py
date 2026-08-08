@@ -798,6 +798,41 @@ class TestGpuName(unittest.TestCase):
         self.assertIn("-notmatch 'Virtual'", command[-1])
 
     @patch('src.conversion.subprocess.run')
+    def test_wmi_scopes_to_amd_when_amf_encoder_detected(self, mock_run):
+        mock_run.return_value = MagicMock(stdout='AMD Radeon RX 7900 XTX\n')
+        m = self._manager(nvidia_present=False)
+        m._gpu_encoder = 'h264_amf'
+        self.assertEqual(m.gpu_name(), 'AMD Radeon RX 7900 XTX')
+        command = mock_run.call_args.args[0]
+        self.assertIn("AdapterCompatibility -match 'AMD|Advanced Micro Devices'", command[-1])
+
+    @patch('src.conversion.subprocess.run')
+    def test_wmi_scopes_to_intel_when_qsv_encoder_detected(self, mock_run):
+        mock_run.return_value = MagicMock(stdout='Intel Arc A770\n')
+        m = self._manager(nvidia_present=False)
+        m._gpu_encoder = 'h264_qsv'
+        self.assertEqual(m.gpu_name(), 'Intel Arc A770')
+        command = mock_run.call_args.args[0]
+        self.assertIn("AdapterCompatibility -match 'Intel'", command[-1])
+
+    @patch('src.conversion.subprocess.run')
+    def test_wmi_falls_back_to_unscoped_query_when_vendor_scoped_yields_nothing(self, mock_run):
+        """A laptop's AdapterCompatibility string might not literally say
+        "AMD"/"Intel" -- if the vendor-scoped query comes up empty, still
+        report whatever real (non-virtual) adapter WMI does find rather
+        than giving up and showing the generic 'GPU' fallback."""
+        mock_run.side_effect = [
+            MagicMock(stdout='   \n'),  # vendor-scoped: nothing matched
+            MagicMock(stdout='AMD Radeon RX 6600\n'),  # unscoped fallback
+        ]
+        m = self._manager(nvidia_present=False)
+        m._gpu_encoder = 'h264_amf'
+        self.assertEqual(m.gpu_name(), 'AMD Radeon RX 6600')
+        self.assertEqual(mock_run.call_count, 2)
+        unscoped_command = mock_run.call_args_list[1].args[0]
+        self.assertNotIn('AdapterCompatibility', unscoped_command[-1])
+
+    @patch('src.conversion.subprocess.run')
     def test_falls_back_to_wmi_when_nvidia_smi_output_is_blank(self, mock_run):
         mock_run.side_effect = [
             MagicMock(stdout='   \n'),

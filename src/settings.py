@@ -2,10 +2,9 @@ import json
 import logging
 import os
 
-SETTINGS_DIR = os.path.join(
-    os.environ.get('APPDATA') or os.path.expanduser('~'),
-    'HDR-to-SDR',
-)
+from platform_utils import settings_dir
+
+SETTINGS_DIR = settings_dir()
 SETTINGS_FILE = os.path.join(SETTINGS_DIR, 'settings.json')
 
 DEFAULTS = {

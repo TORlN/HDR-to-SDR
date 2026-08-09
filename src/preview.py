@@ -138,9 +138,10 @@ class _HDRPreviewMixin:
         Derived from the chrome that must never be clipped -- the controls, the
         batch queue, the action buttons, and the parts of the preview pane that
         aren't the preview images themselves (titles, the frame-jump buttons,
-        the custom seek box, the progress bar). Those live in the same row as
-        the (deliberately shrinkable) preview images, so they're measured
-        separately rather than via the whole image_frame. Falls back to
+        the custom seek box, the progress bar). The title/button/seek widgets
+        live alongside the (deliberately shrinkable) preview images; the
+        progress bar sits pinned in its own row below them. All are measured
+        individually rather than via the whole image_frame. Falls back to
         ``DEFAULT_MIN_SIZE`` on bare/mocked instances.
         """
         try:
@@ -345,13 +346,16 @@ class _HDRPreviewMixin:
         self._apply_min_window_size()
 
     def arrange_widgets(self, image_frame: bool) -> None:
-        """Arrange the widgets in the appropriate frames."""
+        """Arrange the widgets in the appropriate frames.
+
+        progress_bar is not repositioned here -- it's pinned directly to
+        image_frame at construction time (see create_widgets/configure_grid)
+        and never moves, regardless of whether the preview titles/images are
+        showing."""
         if image_frame:
             self.button_frame.grid(row=2, column=0, columnspan=3, pady=(5, 0), sticky=tk.N)
-            self.progress_bar.grid(row=3, column=0, columnspan=3, sticky=tk.W + tk.E)
         else:
             self.button_frame.grid(row=5, column=0, columnspan=3, pady=(5, 0), sticky=tk.N)
-            self.progress_bar.grid(row=6, column=0, columnspan=3, sticky=tk.W + tk.E)
         self.open_after_conversion_checkbutton.grid(row=1, column=0, padx=(5, 5), sticky=tk.N)
         self.convert_button.grid(row=1, column=1, padx=(5, 5), pady=(0, 10), sticky=tk.N)
         self.cancel_button.grid_remove()

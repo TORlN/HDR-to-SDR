@@ -312,6 +312,12 @@ class TestConstruction(_GuiTestBase):
         info = self.gui.preview_content_frame.grid_info()
         self.assertEqual(str(info.get('sticky', '')), '')
 
+        # Row 1 holds progress_bar directly (see
+        # test_progress_bar_stays_pinned_above_batch_queue) -- weight=0 so it
+        # always gets exactly its natural height, never stretched or
+        # squeezed by row 0's centering slack.
+        self.assertEqual(int(image_frame_row_cfg(1)['weight']), 0)
+
         # Row 1 (images + button_container) is the *shortfall* direction's
         # counterpart to the column weights above: when the window is
         # shorter than the block needs, this row gives up height first so
@@ -632,14 +638,31 @@ class TestStateAndLayout(_GuiTestBase):
             self.assertIn('disabled', str(widget.cget('state')))
 
     def test_arrange_widgets_image_frame_true_rows(self):
+        # progress_bar is no longer repositioned here -- see
+        # test_progress_bar_stays_pinned_above_batch_queue.
         self.gui.arrange_widgets(image_frame=True)
         self.assertEqual(int(self.gui.button_frame.grid_info()['row']), 2)
-        self.assertEqual(int(self.gui.progress_bar.grid_info()['row']), 3)
 
     def test_arrange_widgets_image_frame_false_rows(self):
         self.gui.arrange_widgets(image_frame=False)
         self.assertEqual(int(self.gui.button_frame.grid_info()['row']), 5)
-        self.assertEqual(int(self.gui.progress_bar.grid_info()['row']), 6)
+
+    def test_progress_bar_stays_pinned_above_batch_queue(self):
+        """Regression: the progress bar used to live inside
+        preview_content_frame, so it centered along with the titles/images/
+        buttons -- when a shorter preview left extra margin, the bar floated
+        up into the middle of image_frame instead of staying anchored beside
+        the batch queue below it. It's now a direct child of image_frame, in
+        its own pinned (weight=0) row below preview_content_frame's
+        (weight=1) row, so it always sits at the bottom of image_frame's
+        cell -- immediately above batch_frame -- regardless of how tall the
+        centered preview block is or whether a video is even loaded."""
+        self.assertEqual(self.gui.progress_bar.winfo_parent(),
+                         str(self.gui.image_frame))
+        info = self.gui.progress_bar.grid_info()
+        self.assertEqual(int(info['row']), 1)
+        self.assertIn('w', str(info['sticky']))
+        self.assertIn('e', str(info['sticky']))
 
     def test_highlight_frame_button_applies_styles(self):
         self.gui.highlight_frame_button(3)

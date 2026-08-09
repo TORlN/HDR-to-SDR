@@ -702,6 +702,14 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.button_frame.grid(row=2, column=0, columnspan=3, pady=(5, 0), sticky=tk.N)
         self.button_frame.grid_remove()
 
+        # Pinned directly to image_frame (not preview_content_frame) so it
+        # never centers along with the titles/images/buttons -- it always
+        # sits at the bottom of image_frame's cell, immediately above
+        # batch_frame, regardless of how tall the centered preview block is.
+        self.progress_bar = ttk.Progressbar(
+            self.image_frame, variable=self.progress_var, maximum=100)
+        self.progress_bar.grid(row=1, column=0, sticky=tk.W + tk.E, pady=(5, 0))
+
         self.action_frame = ttk.Frame(self.root)
         self.action_frame.grid(row=3, column=0, pady=(0, 10), sticky=tk.N)
 
@@ -719,10 +727,6 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.action_frame, text="Cancel", command=self.cancel_conversion)
         self.cancel_button.grid(row=1, column=2, padx=(5, 5), pady=(0, 10), sticky=tk.N)
         self.cancel_button.grid_remove()
-
-        self.progress_bar = ttk.Progressbar(
-            self.preview_content_frame, variable=self.progress_var, maximum=100)
-        self.progress_bar.grid(row=3, column=0, columnspan=3, sticky=tk.W + tk.E)
 
         self.footer_frame = ttk.Frame(self.root)
         self.footer_frame.grid(row=4, column=0, sticky=tk.W + tk.E, padx=10, pady=(0, 5))
@@ -805,32 +809,37 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         for i in range(9):
             self.control_frame.rowconfigure(i, weight=0)
 
-        # image_frame holds a single child (preview_content_frame) in a
-        # single weighted cell, with no sticky on that child -- so any
-        # leftover space image_frame gets from root (see below) becomes
-        # even margin around the preview block instead of stretching it.
+        # image_frame's row 0 holds preview_content_frame with no sticky --
+        # so any leftover space image_frame gets from root (see below)
+        # becomes even margin around the preview block instead of
+        # stretching it. Row 1 holds progress_bar directly (not inside
+        # preview_content_frame) at weight=0, so it always keeps its natural
+        # height and sits pinned at the bottom of image_frame's cell,
+        # immediately above batch_frame, instead of centering along with
+        # the rest of the block.
         self.image_frame.columnconfigure(0, weight=1)
         self.image_frame.rowconfigure(0, weight=1)
+        self.image_frame.rowconfigure(1, weight=0)
 
         # preview_content_frame carries the layout image_frame itself used
         # to have: two equal-width image columns, a fixed-width button
         # column, and content-sized rows (titles / images+buttons /
-        # button_frame spacer / progress bar).
+        # button_frame spacer). progress_bar is no longer one of its rows --
+        # see image_frame's own row 1, above.
         self.preview_content_frame.columnconfigure(0, weight=1)
         self.preview_content_frame.columnconfigure(1, weight=1)
         self.preview_content_frame.columnconfigure(2, weight=0)
         self.preview_content_frame.rowconfigure(0, weight=0)
         # Row 1 (images + button_container) is the shortfall absorber: when
-        # the window is too short for the full preview block, this is the
-        # row that shrinks first so the progress bar below still stays on
-        # screen. It has no effect in the (normal) surplus case, since
-        # preview_content_frame is gridded into image_frame with no sticky
-        # (see below) -- Tk sizes it to its own request and centers it
-        # whenever there's room, and an internal row weight distributes
-        # nothing when there's no slack to distribute.
+        # image_frame's row 0 cell is too short for the full preview block,
+        # this is the row that shrinks first so the titles above and the
+        # button_frame spacer below stay visible. It has no effect in the
+        # (normal) surplus case, since preview_content_frame is gridded into
+        # image_frame with no sticky (see below) -- Tk sizes it to its own
+        # request and centers it whenever there's room, and an internal row
+        # weight distributes nothing when there's no slack to distribute.
         self.preview_content_frame.rowconfigure(1, weight=1)
         self.preview_content_frame.rowconfigure(2, weight=0)
-        self.preview_content_frame.rowconfigure(3, weight=0)
 
         # image_frame is the row that absorbs window-resize slack. Its own
         # sizing is unchanged from before -- still weight=1, still fills the

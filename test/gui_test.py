@@ -219,6 +219,7 @@ class TestHDRConverterGUI(TestCase):
         self.gui.image_frame.winfo_height.return_value = _PREVIEW_HEIGHT_RESERVE - 20  # collapsed
 
         mock_image = MagicMock(spec=Image.Image)
+        mock_image.size = (3840, 2160)
         mock_image.resize.return_value = mock_image
         mock_photo_image.return_value = MagicMock()
         self.gui.adjust_gamma = MagicMock(return_value=mock_image)

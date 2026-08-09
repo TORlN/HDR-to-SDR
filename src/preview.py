@@ -218,10 +218,22 @@ class _HDRPreviewMixin:
 
     # ── Preview sizing ─────────────────────────────────────────────────────────
 
+    def _preview_source_size(self) -> tuple[int, int]:
+        """The real aspect ratio to fit preview panes to, taken from the most
+        recently extracted frame. Falls back to PREVIEW_SIZE's 16:9 box
+        before any frame has ever been extracted (original_image is None)."""
+        original = getattr(self, 'original_image', None)
+        if original is not None:
+            return original.size
+        return PREVIEW_SIZE
+
     @staticmethod
-    def _fit_preview_pane(available_width: float, available_height: float) -> tuple[int, int]:
-        """Size one 16:9 preview pane to fit a box, never upscaling past source."""
-        src_w, src_h = PREVIEW_SIZE
+    def _fit_preview_pane(
+        available_width: float, available_height: float, src_size: tuple[int, int]
+    ) -> tuple[int, int]:
+        """Size one preview pane to fit a box at src_size's aspect ratio,
+        never upscaling past src_size."""
+        src_w, src_h = src_size
         w = min(src_w, max(_MIN_PANE_W, int(available_width)))
         h = round(w * src_h / src_w)
         if available_height and h > available_height:
@@ -239,21 +251,21 @@ class _HDRPreviewMixin:
             return PREVIEW_SIZE
         avail_w = (frame_w - _PREVIEW_WIDTH_RESERVE) / 2
         avail_h = max(0, frame_h - _PREVIEW_HEIGHT_RESERVE) if frame_h > 1 else 0
-        return self._fit_preview_pane(avail_w, avail_h)
+        return self._fit_preview_pane(avail_w, avail_h, self._preview_source_size())
 
     def _initial_preview_size(self) -> tuple[int, int]:
         """Per-pane size for the very first preview, before the window auto-fits."""
-        pane_w, pane_h = INITIAL_PANE_SIZE
+        src_size = self._preview_source_size()
+        pane_w = INITIAL_PANE_SIZE[0]
         try:
             screen_w = self.root.winfo_screenwidth()
         except Exception:
-            return (pane_w, pane_h)
-        if not isinstance(screen_w, int):
-            return (pane_w, pane_h)
-        max_pane_w = (screen_w - 100 - _PREVIEW_WIDTH_RESERVE) // 2
-        if 0 < max_pane_w < pane_w:
-            return self._fit_preview_pane(max_pane_w, 0)
-        return (pane_w, pane_h)
+            return self._fit_preview_pane(pane_w, 0, src_size)
+        if isinstance(screen_w, int):
+            max_pane_w = (screen_w - 100 - _PREVIEW_WIDTH_RESERVE) // 2
+            if max_pane_w > 0:
+                pane_w = min(pane_w, max_pane_w)
+        return self._fit_preview_pane(pane_w, 0, src_size)
 
     # ── Rendering helpers ──────────────────────────────────────────────────────
 
@@ -312,12 +324,14 @@ class _HDRPreviewMixin:
 
     def resize_images(self, max_width: int, max_height: int) -> None:
         """Resize both preview panes to fit within max_width x max_height
-        (halved for side-by-side layout). Delegates to
-        _render_preview_at_size so _converted_preview_base/
-        _preview_render_size stay in sync -- otherwise a later gamma-slider
-        tick (_apply_gamma_to_preview) would reapply gamma to a stale,
-        pre-resize base."""
-        self._render_preview_at_size((max_width // 2, max_height // 2))
+        (halved for side-by-side layout), preserving the real source aspect
+        ratio. Delegates to _render_preview_at_size so
+        _converted_preview_base/_preview_render_size stay in sync --
+        otherwise a later gamma-slider tick (_apply_gamma_to_preview) would
+        reapply gamma to a stale, pre-resize base."""
+        size = self._fit_preview_pane(
+            max_width / 2, max_height / 2, self._preview_source_size())
+        self._render_preview_at_size(size)
 
     def clear_preview(self) -> None:
         """Clear the frame preview images and reset cached images."""

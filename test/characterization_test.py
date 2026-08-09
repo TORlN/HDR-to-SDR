@@ -1779,6 +1779,7 @@ class TestGuiErrorAndResizePaths(unittest.TestCase):
     def test_resize_images_rescales_present_frames(self, _mock_photo):
         gui = _bare_gui()
         img = MagicMock(spec=Image.Image)
+        img.size = (1920, 1080)
         img.resize.return_value = img
         gui.original_image = img
         gui.converted_image_base = img
@@ -1876,22 +1877,31 @@ class TestResponsivePreview(unittest.TestCase):
     def test_fit_pane_caps_at_source_size(self):
         # Plenty of room -> never upscale past the native preview size.
         self.assertEqual(
-            HDRConverterGUI._fit_preview_pane(5000, 5000), PREVIEW_SIZE)
+            HDRConverterGUI._fit_preview_pane(5000, 5000, PREVIEW_SIZE), PREVIEW_SIZE)
 
     def test_fit_pane_scales_to_width(self):
-        w, h = HDRConverterGUI._fit_preview_pane(600, 5000)
+        w, h = HDRConverterGUI._fit_preview_pane(600, 5000, PREVIEW_SIZE)
         self.assertEqual(w, 600)
         self.assertEqual(h, round(600 * PREVIEW_SIZE[1] / PREVIEW_SIZE[0]))  # 16:9
 
     def test_fit_pane_is_height_limited(self):
-        w, h = HDRConverterGUI._fit_preview_pane(900, 300)
+        w, h = HDRConverterGUI._fit_preview_pane(900, 300, PREVIEW_SIZE)
         self.assertEqual(h, 300)
         self.assertEqual(w, round(300 * PREVIEW_SIZE[0] / PREVIEW_SIZE[1]))
 
     def test_fit_pane_clamps_to_minimum_width(self):
         from src.preview import _MIN_PANE_W
-        w, _h = HDRConverterGUI._fit_preview_pane(10, 5000)
+        w, _h = HDRConverterGUI._fit_preview_pane(10, 5000, PREVIEW_SIZE)
         self.assertEqual(w, _MIN_PANE_W)  # don't shrink a pane to nothing
+
+    def test_fit_pane_respects_non_16_9_source(self):
+        # A portrait (9:16) source must fit against its own aspect ratio, not
+        # the hardcoded 16:9 PREVIEW_SIZE -- this was the reported bug: a
+        # portrait video rendered stretched into a 16:9-shaped box.
+        src_size = (1080, 1920)
+        w, h = HDRConverterGUI._fit_preview_pane(2000, 1000, src_size)
+        self.assertEqual(h, 1000)  # height-bound: available height is the limiter
+        self.assertEqual(w, round(1000 * src_size[0] / src_size[1]))
 
     @patch('src.preview.ImageTk.PhotoImage')
     def test_render_at_size_resizes_both_panes(self, _mock_photo):
@@ -1982,6 +1992,7 @@ class TestResponsivePreview(unittest.TestCase):
         # too-small transitional value and permanently render a tiny preview.
         gui = _bare_gui()
         gui.original_image = MagicMock()
+        gui.original_image.size = (3840, 2160)
         gui.loading_frame = MagicMock()
         gui.loading_frame.winfo_ismapped.return_value = False
         gui.image_frame = MagicMock()
@@ -2531,6 +2542,7 @@ class TestPreviewLoadingIndicator(unittest.TestCase):
     def test_render_hides_spinner_then_reveals(self):
         gui = _bare_gui()
         img = MagicMock(spec=Image.Image)
+        img.size = (3840, 2160)
         img.resize.return_value = img
         gui.gamma_var = MagicMock(); gui.gamma_var.get.return_value = 1.0
         gui.adjust_gamma = MagicMock(return_value=img)
@@ -2900,7 +2912,12 @@ class TestResizeImages(unittest.TestCase):
         next gamma-slider tick (_apply_gamma_to_preview) reapplies gamma to
         the stale pre-shrink base -- the converted pane would snap back to
         the original oversized dimensions while the original pane stays
-        correctly fit to the screen."""
+        correctly fit to the screen.
+
+        Uses a max_width/max_height pair whose halved value (800x450) stays
+        above _MIN_PANE_W, so the assertion isolates the state-sync behavior
+        this test is about rather than the separate minimum-width clamp
+        already covered by test_fit_pane_clamps_to_minimum_width."""
         gui = _bare_gui()
         gui.original_image = Image.new('RGB', (3840, 2160), (100, 120, 140))
         gui.converted_image_base = Image.new('RGB', (3840, 2160), (80, 100, 120))
@@ -2909,12 +2926,12 @@ class TestResizeImages(unittest.TestCase):
         gui.original_image_label = MagicMock()
         gui.converted_image_label = MagicMock()
         with patch('src.preview.ImageTk.PhotoImage'):
-            gui.resize_images(400, 300)
+            gui.resize_images(1600, 900)
         self.assertEqual(
-            gui._converted_preview_base.size, (200, 150),
+            gui._converted_preview_base.size, (800, 450),
             "_converted_preview_base must be refreshed to the fitted size")
         self.assertEqual(
-            gui._preview_render_size, (200, 150),
+            gui._preview_render_size, (800, 450),
             "_preview_render_size must track the size resize_images actually rendered")
 
 

@@ -618,8 +618,16 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.image_frame.grid(row=1, column=0, sticky=tk.W + tk.E + tk.N + tk.S)
         self.image_frame.grid_remove()
 
-        self.original_title_label = ttk.Label(self.image_frame, text="Original (HDR):")
-        self.converted_title_label = ttk.Label(self.image_frame, text="Converted (SDR):")
+        # image_frame fills its whole root row (see configure_grid); this
+        # inner frame holds everything that used to be parented directly to
+        # image_frame, and is gridded into it with no sticky, so Tk centers
+        # it -- any leftover space becomes even margin above/below instead
+        # of the block sitting pinned to the top with a blank gap below.
+        self.preview_content_frame = ttk.Frame(self.image_frame)
+        self.preview_content_frame.grid(row=0, column=0)
+
+        self.original_title_label = ttk.Label(self.preview_content_frame, text="Original (HDR):")
+        self.converted_title_label = ttk.Label(self.preview_content_frame, text="Converted (SDR):")
         if not self.display_image_var.get():
             self.original_title_label.grid_remove()
             self.converted_title_label.grid_remove()
@@ -628,15 +636,15 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.converted_title_label.grid(
                 row=0, column=1, columnspan=2, sticky=tk.W, padx=(10, 10))
 
-        self.original_image_label = ttk.Label(self.image_frame, anchor=tk.NW)
+        self.original_image_label = ttk.Label(self.preview_content_frame, anchor=tk.NW)
         self.original_image_label.grid(
             row=1, column=0, columnspan=1,
             sticky=tk.W + tk.E + tk.N + tk.S, padx=(10, 10))
-        self.converted_image_label = ttk.Label(self.image_frame, anchor=tk.NW)
+        self.converted_image_label = ttk.Label(self.preview_content_frame, anchor=tk.NW)
         self.converted_image_label.grid(
             row=1, column=1, sticky=tk.W + tk.E + tk.N + tk.S, padx=(10, 0))
 
-        self.button_container = ttk.Frame(self.image_frame)
+        self.button_container = ttk.Frame(self.preview_content_frame)
         self.button_container.grid(row=1, column=2, sticky=tk.N, padx=(5, 10))
         self.button_container.grid_remove()
 
@@ -661,7 +669,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.button_container, text="Go", width=4, command=self.on_custom_seek)
         self.custom_seek_button.grid(row=self.total_frames + 2, column=0, pady=(0, 5))
 
-        self.loading_frame = ttk.Frame(self.image_frame)
+        self.loading_frame = ttk.Frame(self.preview_content_frame)
         self.loading_label = ttk.Label(self.loading_frame, text="Rendering preview...")
         self.loading_label.grid(row=0, column=0, pady=(40, 8))
         self.loading_bar = ttk.Progressbar(self.loading_frame, mode='indeterminate', length=240)
@@ -690,7 +698,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             command=self._open_license_dialog,
         ).grid(row=0, column=1, padx=(12, 0))
 
-        self.button_frame = ttk.Frame(self.image_frame)
+        self.button_frame = ttk.Frame(self.preview_content_frame)
         self.button_frame.grid(row=2, column=0, columnspan=3, pady=(5, 0), sticky=tk.N)
         self.button_frame.grid_remove()
 
@@ -713,7 +721,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.cancel_button.grid_remove()
 
         self.progress_bar = ttk.Progressbar(
-            self.image_frame, variable=self.progress_var, maximum=100)
+            self.preview_content_frame, variable=self.progress_var, maximum=100)
         self.progress_bar.grid(row=3, column=0, columnspan=3, sticky=tk.W + tk.E)
 
         self.footer_frame = ttk.Frame(self.root)
@@ -797,22 +805,37 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         for i in range(9):
             self.control_frame.rowconfigure(i, weight=0)
 
+        # image_frame holds a single child (preview_content_frame) in a
+        # single weighted cell, with no sticky on that child -- so any
+        # leftover space image_frame gets from root (see below) becomes
+        # even margin around the preview block instead of stretching it.
         self.image_frame.columnconfigure(0, weight=1)
-        self.image_frame.columnconfigure(1, weight=1)
-        self.image_frame.columnconfigure(2, weight=0)
-        self.image_frame.rowconfigure(0, weight=0)
-        self.image_frame.rowconfigure(1, weight=1)
-        self.image_frame.rowconfigure(2, weight=0)
-        self.image_frame.rowconfigure(3, weight=0)
+        self.image_frame.rowconfigure(0, weight=1)
 
-        # image_frame is the row that absorbs window-resize slack: the
-        # preview panes re-render larger to fill it (see
-        # _rescale_preview_to_window), which is the only content in this
-        # window that actually benefits from extra space. batch_frame stays
-        # weight=0 -- a fixed, natural-sized row -- so it always sits
-        # directly above action_frame (the Convert button) with no gap,
-        # regardless of window height. It's still taller than the original
-        # default (see batch_listbox's height below).
+        # preview_content_frame carries the layout image_frame itself used
+        # to have: two equal-width image columns, a fixed-width button
+        # column, and content-sized rows (titles / images+buttons /
+        # button_frame spacer / progress bar).
+        self.preview_content_frame.columnconfigure(0, weight=1)
+        self.preview_content_frame.columnconfigure(1, weight=1)
+        self.preview_content_frame.columnconfigure(2, weight=0)
+        self.preview_content_frame.rowconfigure(0, weight=0)
+        self.preview_content_frame.rowconfigure(1, weight=0)
+        self.preview_content_frame.rowconfigure(2, weight=0)
+        self.preview_content_frame.rowconfigure(3, weight=0)
+
+        # image_frame is the row that absorbs window-resize slack. Its own
+        # sizing is unchanged from before -- still weight=1, still fills the
+        # row -- so _preview_target_size() can keep reading
+        # image_frame.winfo_height() as a non-circular height ceiling. What
+        # changed is only where the preview content sits *within* that
+        # space: preview_content_frame is no longer stretched to fill it
+        # (rowconfigure(1) above is now content-sized, not weight=1), so Tk
+        # centers it in image_frame's cell instead of pinning it to the top
+        # -- any leftover height becomes even margin above and below the
+        # block. batch_frame stays weight=0 -- a fixed, natural-sized row --
+        # so it always sits directly above action_frame (the Convert
+        # button) with no gap, regardless of window height.
         self.root.grid_rowconfigure(0, weight=0)
         self.root.grid_rowconfigure(1, weight=1)
         self.root.grid_rowconfigure(2, weight=0)

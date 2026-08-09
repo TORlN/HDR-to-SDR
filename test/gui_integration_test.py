@@ -288,10 +288,25 @@ class TestConstruction(_GuiTestBase):
         # absorb a third of the width (which left the buttons floating far to the
         # right of the converted image). The two image columns share the stretch;
         # the button column stays at its natural width, hugging the preview.
-        cfg = self.gui.image_frame.grid_columnconfigure
+        #
+        # Also covers the newer image_frame/preview_content_frame split:
+        # image_frame itself keeps filling its root row (see
+        # test_image_frame_row_absorbs_resize_slack) so _preview_target_size
+        # can keep reading its live height as a ceiling -- but it now holds
+        # exactly one weighted cell, with preview_content_frame gridded into
+        # it with no sticky, so Tk centers that block instead of stretching
+        # it to fill the row.
+        cfg = self.gui.preview_content_frame.grid_columnconfigure
         self.assertEqual(int(cfg(0)['weight']), 1)
         self.assertEqual(int(cfg(1)['weight']), 1)
         self.assertEqual(int(cfg(2)['weight']), 0)
+
+        image_frame_cfg = self.gui.image_frame.grid_columnconfigure
+        self.assertEqual(int(image_frame_cfg(0)['weight']), 1)
+        image_frame_row_cfg = self.gui.image_frame.grid_rowconfigure
+        self.assertEqual(int(image_frame_row_cfg(0)['weight']), 1)
+        info = self.gui.preview_content_frame.grid_info()
+        self.assertEqual(str(info.get('sticky', '')), '')
 
     def test_entries_bound_to_path_variables(self):
         self.assertEqual(self.gui.input_entry.cget('textvariable'),
@@ -630,22 +645,26 @@ class TestStateAndLayout(_GuiTestBase):
         self.assertEqual(self.gui.converted_image_label.cget('image'), '')
 
     def test_image_labels_anchor_top_of_expanded_row(self):
-        """Regression: image_frame's row 1 (images + button_container) has
-        rowconfigure weight=1, so it grows to fill any extra window height.
-        button_container is pinned with sticky=tk.N, but the image labels
-        left anchor at ttk.Label's default 'w' -- horizontally left but
-        vertically *centered* -- so the image sank toward the middle of the
-        tall cell, visibly below the "Original/Converted" titles and the
-        frame-jump buttons once the window was resized taller. 'nw' keeps
-        the existing left alignment and adds a top anchor."""
+        """Regression (now vestigial-but-harmless): this anchor used to
+        matter because the images+button_container row stretched to fill
+        image_frame's full height (rowconfigure weight=1), sinking a
+        vertically-centered default anchor toward the middle of that tall
+        cell. That row is content-sized now (see
+        test_button_column_does_not_stretch) -- the whole preview
+        block centers as a unit instead -- so 'nw' no longer changes what's
+        visible. Left as-is rather than removed: it costs nothing and
+        guards against the same regression if that row ever regains a
+        stretch weight."""
         self.assertEqual(str(self.gui.original_image_label.cget('anchor')), 'nw')
         self.assertEqual(str(self.gui.converted_image_label.cget('anchor')), 'nw')
 
     def test_image_frame_row_absorbs_resize_slack(self):
-        """image_frame is root's only weighted row: the preview panes
-        re-render larger to fill it on resize (see
-        _rescale_preview_to_window), which is the only content here that
-        benefits from extra space."""
+        """image_frame is root's only weighted row: it keeps the full
+        available height so _preview_target_size() has real room to size
+        against (see its winfo_height() read) and so any leftover space
+        centers the preview block within it (see
+        test_button_column_does_not_stretch) instead of the block
+        being pinned to the top with a blank gap below."""
         self.assertEqual(self.gui.root.grid_rowconfigure(1)['weight'], 1)
 
     def test_batch_queue_row_has_no_weight(self):

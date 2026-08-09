@@ -323,14 +323,16 @@ class _HDRPreviewMixin:
         self._render_preview_at_size(self._preview_target_size())
 
     def resize_images(self, max_width: int, max_height: int) -> None:
-        """Resize both preview panes to fit within max_width x max_height
-        (halved for side-by-side layout), preserving the real source aspect
-        ratio. Delegates to _render_preview_at_size so
+        """Resize both preview panes to fit within max_width x max_height,
+        preserving the real source aspect ratio. Width is halved -- the two
+        panes sit side by side, sharing the width -- but height is not: both
+        panes share the full height rather than splitting it vertically.
+        Delegates to _render_preview_at_size so
         _converted_preview_base/_preview_render_size stay in sync --
         otherwise a later gamma-slider tick (_apply_gamma_to_preview) would
         reapply gamma to a stale, pre-resize base."""
         size = self._fit_preview_pane(
-            max_width / 2, max_height / 2, self._preview_source_size())
+            max_width / 2, max_height, self._preview_source_size())
         self._render_preview_at_size(size)
 
     def clear_preview(self) -> None:

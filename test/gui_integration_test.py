@@ -284,10 +284,14 @@ class TestConstruction(_GuiTestBase):
                          str(self.gui.button_container))
 
     def test_button_column_does_not_stretch(self):
-        # Issue 1: when the window is maximized the frame-button column must not
-        # absorb a third of the width (which left the buttons floating far to the
-        # right of the converted image). The two image columns share the stretch;
-        # the button column stays at its natural width, hugging the preview.
+        # Issue 1: preview_content_frame has no sticky (see below), so
+        # maximizing the window changes nothing for it -- there's no slack
+        # to distribute; the frame just sits at its natural size, centered.
+        # The column weights matter in the opposite case: when the window is
+        # *narrower* than the block's natural width, grid shrinks the
+        # weighted image columns proportionally while the fixed button
+        # column holds its width (so the buttons never crowd out the
+        # images).
         #
         # Also covers the newer image_frame/preview_content_frame split:
         # image_frame itself keeps filling its root row (see
@@ -307,6 +311,17 @@ class TestConstruction(_GuiTestBase):
         self.assertEqual(int(image_frame_row_cfg(0)['weight']), 1)
         info = self.gui.preview_content_frame.grid_info()
         self.assertEqual(str(info.get('sticky', '')), '')
+
+        # Row 1 (images + button_container) is the *shortfall* direction's
+        # counterpart to the column weights above: when the window is
+        # shorter than the block needs, this row gives up height first so
+        # the progress bar below it stays on screen, instead of nothing
+        # yielding and the block overflowing past the bottom of image_frame.
+        # The no-sticky mechanism above only ever handles the surplus
+        # direction (centering); this weight is what handles the deficit
+        # direction.
+        self.assertEqual(
+            int(self.gui.preview_content_frame.grid_rowconfigure(1)['weight']), 1)
 
     def test_entries_bound_to_path_variables(self):
         self.assertEqual(self.gui.input_entry.cget('textvariable'),

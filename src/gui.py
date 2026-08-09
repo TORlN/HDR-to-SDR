@@ -820,7 +820,15 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.preview_content_frame.columnconfigure(1, weight=1)
         self.preview_content_frame.columnconfigure(2, weight=0)
         self.preview_content_frame.rowconfigure(0, weight=0)
-        self.preview_content_frame.rowconfigure(1, weight=0)
+        # Row 1 (images + button_container) is the shortfall absorber: when
+        # the window is too short for the full preview block, this is the
+        # row that shrinks first so the progress bar below still stays on
+        # screen. It has no effect in the (normal) surplus case, since
+        # preview_content_frame is gridded into image_frame with no sticky
+        # (see below) -- Tk sizes it to its own request and centers it
+        # whenever there's room, and an internal row weight distributes
+        # nothing when there's no slack to distribute.
+        self.preview_content_frame.rowconfigure(1, weight=1)
         self.preview_content_frame.rowconfigure(2, weight=0)
         self.preview_content_frame.rowconfigure(3, weight=0)
 

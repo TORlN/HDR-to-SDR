@@ -37,6 +37,11 @@ between colorspaces" on this ffmpeg build, so tag via ``setparams`` first):
 
   - ``sdr_h264_8bit.mp4``: same testsrc2 source, no zscale/HDR tagging at all,
     ``-c:v libx264``.
+  - ``sdr_1_1.mp4`` / ``sdr_9_16.mp4``: same testsrc2/sine recipe as
+    ``sdr_h264_8bit.mp4`` above, at 480x480 and 360x640 instead of 16:9 --
+    proves the preview's aspect-ratio fit (see src/preview.py's
+    _preview_source_size) against genuinely non-16:9 real ffmpeg output,
+    not just hand-supplied unit-test tuples.
   - ``hdr10_10bit.mp4``: the HDR10 recipe above at 960x540, AAC audio.
   - ``hdr10_12bit.mp4``: HDR10 recipe with ``format=yuv420p12le`` (moved in from
     a prior manual build rather than regenerated here -- kept as-is).
@@ -122,6 +127,8 @@ HDR10_12BIT_VIDEO = os.path.join(SMOKE_DIR, 'hdr10_12bit.mp4')
 TRUEHD_ASS_MKV = os.path.join(SMOKE_DIR, 'hdr10_10bit_truehd_ass.mkv')
 TRUEHD_PGS_MKV = os.path.join(SMOKE_DIR, 'hdr10_10bit_truehd_pgs.mkv')
 DOVI_VIDEO = os.path.join(SMOKE_DIR, 'dovi_p8.mp4')
+SDR_1_1_VIDEO = os.path.join(SMOKE_DIR, 'sdr_1_1.mp4')
+SDR_9_16_VIDEO = os.path.join(SMOKE_DIR, 'sdr_9_16.mp4')
 
 _FFMPEG_OK = bool(FFMPEG_EXECUTABLE) and os.path.exists(FFMPEG_EXECUTABLE)
 
@@ -131,6 +138,8 @@ _HDR10_12BIT_OK = _FFMPEG_OK and os.path.exists(HDR10_12BIT_VIDEO)
 _TRUEHD_ASS_OK = _FFMPEG_OK and os.path.exists(TRUEHD_ASS_MKV)
 _TRUEHD_PGS_OK = _FFMPEG_OK and os.path.exists(TRUEHD_PGS_MKV)
 _DOVI_OK = _FFMPEG_OK and os.path.exists(DOVI_VIDEO)
+_SDR_1_1_OK = _FFMPEG_OK and os.path.exists(SDR_1_1_VIDEO)
+_SDR_9_16_OK = _FFMPEG_OK and os.path.exists(SDR_9_16_VIDEO)
 
 _LIBPLACEBO_OK = _FFMPEG_OK and vulkan_libplacebo_available()
 
@@ -677,6 +686,56 @@ class TestRealDolbyVisionTierConversion(unittest.TestCase):
         self.assertEqual(audio['codec_name'], 'aac')
         self.assertEqual(audio['channels'], 2)
         self._assert_tonemapped_to_sdr(out_path)
+
+
+@unittest.skipUnless(_SDR_1_1_OK, "sample 'smoke_test_videos/sdr_1_1.mp4' / ffmpeg not available")
+class TestRealSquareAspectRatio(unittest.TestCase):
+    """A 1:1 source must extract and fit at its own aspect ratio, not the
+    hardcoded 16:9 PREVIEW_SIZE box -- see preview.py's _preview_source_size
+    and _fit_preview_pane. Uses real ffmpeg output, not a hand-supplied
+    src_size tuple (that's already covered by
+    characterization_test.py's test_fit_pane_respects_non_16_9_source)."""
+
+    def test_extracted_frame_is_square(self):
+        # extract_frame's scale filter (force_original_aspect_ratio=decrease)
+        # maximizes within the PREVIEW_SIZE box preserving aspect ratio -- it
+        # does not simply pass through the source's own 480x480 pixels
+        # unchanged, so this asserts the exact real ffmpeg output (verified
+        # against the actual bundled ffmpeg while writing this test), not a
+        # guessed value.
+        from src.preview import PREVIEW_SIZE
+        frame = extract_frame(SDR_1_1_VIDEO, width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1])
+        self.assertEqual(frame.size, (2160, 2160))
+
+    def test_fits_pane_without_distortion(self):
+        from src.gui import HDRConverterGUI
+        from src.preview import PREVIEW_SIZE
+        frame = extract_frame(SDR_1_1_VIDEO, width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1])
+        w, h = HDRConverterGUI._fit_preview_pane(800, 800, frame.size)
+        self.assertEqual((w, h), (800, 800))
+
+
+@unittest.skipUnless(_SDR_9_16_OK, "sample 'smoke_test_videos/sdr_9_16.mp4' / ffmpeg not available")
+class TestRealPortraitAspectRatio(unittest.TestCase):
+    """A 9:16 source must extract and fit at its own aspect ratio, not the
+    hardcoded 16:9 PREVIEW_SIZE box."""
+
+    def test_extracted_frame_is_portrait(self):
+        # Same note as TestRealSquareAspectRatio.test_extracted_frame_is_square:
+        # the scale filter maximizes within the PREVIEW_SIZE box (here,
+        # height-bound at 2160), it doesn't pass the source's own 360x640
+        # pixels through unchanged. Value verified against the actual
+        # bundled ffmpeg while writing this test.
+        from src.preview import PREVIEW_SIZE
+        frame = extract_frame(SDR_9_16_VIDEO, width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1])
+        self.assertEqual(frame.size, (1215, 2160))
+
+    def test_fits_pane_without_distortion(self):
+        from src.gui import HDRConverterGUI
+        from src.preview import PREVIEW_SIZE
+        frame = extract_frame(SDR_9_16_VIDEO, width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1])
+        w, h = HDRConverterGUI._fit_preview_pane(800, 800, frame.size)
+        self.assertEqual((w, h), (450, 800))
 
 
 if __name__ == '__main__':

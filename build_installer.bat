@@ -156,6 +156,14 @@ echo [OK] Cleaned dist and build cache
 :: the PyArmor branch uses the .spec instead of these CLI flags entirely, so a
 :: module added to one and not the other ships fine unobfuscated but silently
 :: drops out of obfuscated builds. Keep both lists in sync.
+:: --specpath below matters: when PyInstaller isn't given an existing .spec (the
+:: CLI branch's case), it always auto-generates one named "<--name>.spec" and
+:: writes it to --specpath (CWD by default) before building. Without an explicit
+:: --specpath, that write lands on top of the tracked, hand-maintained
+:: HDR_to_SDR_Converter.spec at the repo root -- silently replacing its
+:: SPECPATH-relative paths with this machine's absolute checkout path. Point it
+:: at the already-gitignored build\ dir instead so the generated throwaway spec
+:: never touches the tracked one.
 echo.
 echo [STEP 3] Running PyInstaller (--onedir)
 if exist "%REPO_ROOT%\_obf\main.pyw" (
@@ -170,6 +178,7 @@ if exist "%REPO_ROOT%\_obf\main.pyw" (
         --onedir ^
         --windowed ^
         --name "HDR_to_SDR_Converter" ^
+        --specpath "%REPO_ROOT%\build" ^
         --icon "%REPO_ROOT%\logo\icon.ico" ^
         --add-binary "%REPO_ROOT%\src\ffmpeg.exe;." ^
         --add-binary "%REPO_ROOT%\src\ffprobe.exe;." ^

@@ -214,6 +214,33 @@ class TestBundledFfmpegHasSoftwareAv1Decode(unittest.TestCase):
         self.assertIn('libdav1d', out, msg=out)
 
 
+@unittest.skipUnless(_LIBPLACEBO_OK, "Vulkan/libplacebo not available on this machine")
+class TestVulkanRgbaFrameRoundTrip(unittest.TestCase):
+    """Guard against the vulkan-video-encode-src regression: some NVIDIA
+    drivers report VK_IMAGE_USAGE_VIDEO_ENCODE_SRC_BIT_KHR support for rgba
+    that ffmpeg's own memory-type query then can't back, breaking
+    vulkan_pool_alloc ("No memory type found for flags 0x1") for every
+    Vulkan-uploaded rgba frame -- exactly the format the GPU-only
+    tonemappers' libplacebo chain hands to hwdownload before lut3d. Fixed by
+    tools/ffmpeg-patches/vulkan-video-encode-src.patch (see
+    C:\\MABS\\build\\ffmpeg_extra.sh on this dev machine); this must fail
+    loudly if a future ffmpeg rebuild drops that patch."""
+
+    def test_rgba_hwupload_hwdownload_round_trip_succeeds(self):
+        result = subprocess.run(
+            [FFMPEG_EXECUTABLE, '-hide_banner', '-loglevel', 'error',
+             '-init_hw_device', 'vulkan=vk:0', '-filter_hw_device', 'vk',
+             '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=30:duration=1',
+             '-filter_complex', '[0:v]format=rgba,hwupload,hwdownload,format=rgba[out]',
+             '-map', '[out]', '-f', 'null', '-'],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        self.assertEqual(
+            result.returncode, 0,
+            msg=f"ffmpeg failed:\n{result.stderr.decode('utf-8', 'replace')}",
+        )
+
+
 @unittest.skipUnless(_SDR_OK, "sample 'smoke_test_videos/sdr_h264_8bit.mp4' / ffmpeg not available")
 class TestRealSdrBaseline(unittest.TestCase):
     """Plain SDR H.264 input -- confirms non-HDR sources are correctly

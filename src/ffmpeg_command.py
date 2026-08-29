@@ -476,6 +476,18 @@ def build(request: RequestLike, properties: 'dict[str, Any]',
 
     cmd = [FFMPEG_EXECUTABLE, '-loglevel', 'info']
     cmd += gpu.pre_input_args
+    # The bundled ffmpeg is built without a software AV1 decoder, so its only
+    # AV1 decoder is the native `av1` one, which is hwaccel-only. With no
+    # decode device set up it can't produce a pixel format and the run aborts
+    # ("your platform doesn't support hardware accelerated AV1 decoding",
+    # issue #13) -- on every non-NVENC/QSV path, i.e. plain CPU encode, AMF,
+    # and the libplacebo Vulkan path. -hwaccel auto lets ffmpeg pick whatever
+    # AV1 decode accelerator the machine has (d3d11va/dxva2/nvdec/qsv/vulkan)
+    # and downloads frames to system memory for the filter chain. Skipped when
+    # a device path already set -hwaccel (NVENC cuda, QSV, cuda-interop).
+    if ((properties.get('codec_name') or '').lower() == 'av1'
+            and '-hwaccel' not in gpu.pre_input_args):
+        cmd += ['-hwaccel', 'auto']
     cmd += ['-i', os.path.normpath(request.input_path)]
     cmd += [
         '-filter_complex', f'[0:v:0]{filter_str}[vout]',

@@ -7,14 +7,16 @@ in the `licenses/` folder inside the installation directory.
 
 This application bundles unmodified `ffmpeg.exe` and `ffprobe.exe` binaries.
 
-- **Version:** `N-125146-gc6bb22dea0` (FFmpeg git revision `c6bb22dea0`)
+- **Version:** `N-126314-g3386acd2f9` (FFmpeg git revision `3386acd2f9`)
 - **License:** GNU General Public License, **version 2 or later** (GPLv2+).
   This build is configured with `--enable-gpl --enable-libx264 --enable-libx265`,
   which makes the resulting FFmpeg binaries GPL-licensed. It is **not** configured with
   `--enable-version3` or `--enable-nonfree`.
 - **Full license text:** `licenses/COPYING.GPLv2` and `licenses/ffmpeg-LICENSE.md`
 - **Project:** https://ffmpeg.org
-- **Build source:** https://www.gyan.dev/ffmpeg/builds/
+- **Build source:** compiled from the official FFmpeg git repository
+  (https://git.ffmpeg.org/ffmpeg.git) using media-autobuild_suite
+  (https://github.com/m-ab-s/media-autobuild_suite), not a prebuilt distribution.
 
 ### Written offer for source code
 
@@ -26,8 +28,14 @@ cost of physically performing the distribution. Contact: hdrtosdr.dev@outlook.co
 or https://github.com/TORlN/HDR-to-SDR/issues
 
 For convenience, the FFmpeg source code is also available from the upstream
-repository at revision `c6bb22dea0`:
-`git clone https://github.com/FFmpeg/FFmpeg && git checkout c6bb22dea0`
+repository at revision `3386acd2f9`:
+`git clone https://github.com/FFmpeg/FFmpeg && git checkout 3386acd2f9`
+
+## dav1d
+
+Bundled inside the FFmpeg binaries above (`--enable-libdav1d`), providing
+software AV1 decoding. BSD 2-Clause License (permissive, GPL-compatible;
+does not affect the GPLv2+ status above). Project: https://code.videolan.org/videolan/dav1d
 
 ## x264
 

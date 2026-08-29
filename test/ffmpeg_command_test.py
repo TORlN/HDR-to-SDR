@@ -481,6 +481,36 @@ class TestBuild(unittest.TestCase):
             _Req(use_gpu=True, bit_depth=12), self._PROPS,
             self._probes(resolve_gpu_encoder=_forbidden), view)
 
+    def test_av1_source_on_cpu_path_adds_hwaccel_auto_before_input(self):
+        """The bundled ffmpeg has no software AV1 decoder -- its native
+        `av1` decoder is hwaccel-only -- so an AV1 source with no decode
+        device set up aborts the whole run with "your platform doesn't
+        support hardware accelerated AV1 decoding" (issue #13). build()
+        must insert `-hwaccel auto` ahead of `-i` so ffmpeg picks whatever
+        AV1 decode accelerator the machine has."""
+        view = _RecordingView()
+        props = dict(self._PROPS, codec_name='av1')
+        cmd = ffmpeg_command.build(_Req(), props, self._probes(), view)
+        i = cmd.index('-i')
+        self.assertEqual(cmd[i - 2:i], ['-hwaccel', 'auto'], msg=cmd)
+
+    def test_non_av1_source_keeps_a_bare_cpu_input(self):
+        view = _RecordingView()
+        cmd = ffmpeg_command.build(_Req(), self._PROPS, self._probes(), view)
+        self.assertNotIn('-hwaccel', cmd, msg=cmd)
+
+    def test_av1_source_does_not_double_up_hwaccel_on_a_device_path(self):
+        """The nvenc path already prepends `-hwaccel cuda`; an AV1 source
+        must not also get a second, conflicting `-hwaccel auto`."""
+        view = _RecordingView()
+        props = dict(self._PROPS, codec_name='av1')
+        with patch('ffmpeg_command.platform.system', return_value='Windows'):
+            cmd = ffmpeg_command.build(
+                _Req(use_gpu=True), props,
+                self._probes(resolve_gpu_encoder=lambda: 'h264_nvenc'), view)
+        self.assertEqual(cmd.count('-hwaccel'), 1, msg=cmd)
+        self.assertIn('cuda', cmd, msg=cmd)
+
 
 if __name__ == '__main__':
     unittest.main()

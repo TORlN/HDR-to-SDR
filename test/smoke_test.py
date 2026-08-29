@@ -197,6 +197,23 @@ def _count_streams(path, codec_type):
                if s.get('codec_type') == codec_type)
 
 
+@unittest.skipUnless(_FFMPEG_OK, "ffmpeg not available")
+class TestBundledFfmpegHasSoftwareAv1Decode(unittest.TestCase):
+    """Guard against issue #13: FFmpeg's native `av1` decoder is
+    hwaccel-only, no software fallback, so a build without a real software
+    AV1 decoder (libdav1d) can't open AV1 sources at all on a machine with
+    no working AV1 hwaccel. Must fail loudly if a future ffmpeg rebuild
+    drops it, rather than silently shipping a binary that can't open AV1
+    files (see media-autobuild_suite.ini's dav1d= setting)."""
+
+    def test_libdav1d_decoder_is_present(self):
+        out = subprocess.check_output(
+            [FFMPEG_EXECUTABLE, '-hide_banner', '-decoders'],
+            stderr=subprocess.STDOUT,
+        ).decode('utf-8', 'replace')
+        self.assertIn('libdav1d', out, msg=out)
+
+
 @unittest.skipUnless(_SDR_OK, "sample 'smoke_test_videos/sdr_h264_8bit.mp4' / ffmpeg not available")
 class TestRealSdrBaseline(unittest.TestCase):
     """Plain SDR H.264 input -- confirms non-HDR sources are correctly

@@ -15,6 +15,15 @@ Three sharp edges, each documented at the code that resolves them:
     vendor probe would run, so resolve_gpu_encoder must be a lazy
     callable, not a pre-resolved value -- calling it unconditionally would
     add a probe subprocess call on a path that has none today.
+  - AMF/QSV-HEVC probe gap: ConversionManager._probe_encoder only ever
+    probes the H.264 variant (h264_amf/h264_qsv) at detection time, before
+    this module's own H.264->HEVC swap below is known to apply. A card
+    whose vendor SDK can encode H.264 but not HEVC (10-bit output, or an
+    already-HEVC source) would still pass detection and only fail here,
+    same shape of bug as issue #13 one level down. Not fixed -- no report
+    has pinned this as the actual failure mode yet; would need probing the
+    HEVC variant too (doubling probe subprocess calls on every app launch)
+    to close.
   - This module never imports vulkan_libplacebo_available or
     vulkan_cuda_interop_available from utils, even though it is the only
     code that calls them. Both are always parameters (see Probes). Two

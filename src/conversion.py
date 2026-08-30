@@ -414,19 +414,50 @@ class ConversionManager:
         except (FileNotFoundError, OSError):
             return ''
 
+    def _probe_encoder(self, encoder: str) -> bool:
+        """Actually attempt a tiny real encode with *encoder* instead of
+        trusting `ffmpeg -encoders`' static compiled-in list -- h264_amf and
+        h264_qsv are listed there on every machine regardless of whether
+        that vendor's GPU/driver is even present (unlike h264_nvenc, gated
+        on nvidia-smi), so a card whose AMF/QSV component can't actually
+        encode was getting "detected" anyway and only failing once a real
+        conversion was already underway (issue #13).
+
+        Runs synchronously on the GUI's construction path (_detect_gpu_acceleration),
+        so timeout is kept short (3s, well above the ~0.1-0.4s a real probe
+        takes) -- up to 3 of these can run back-to-back in the worst case
+        (every vendor compiled in but none actually working), and a slow
+        timeout there would stall the window appearing."""
+        try:
+            si, flags = _utils_startupinfo()
+            result = subprocess.run(
+                # 320x240: small but above NVENC's minimum encodable frame
+                # dimension (a 64x64 probe fails NVENC's own size floor,
+                # which would misreport a working NVIDIA GPU as unusable).
+                [FFMPEG_EXECUTABLE, '-hide_banner', '-loglevel', 'error',
+                 '-f', 'lavfi', '-i', 'color=black:s=320x240:d=0.1',
+                 '-frames:v', '1', '-c:v', encoder, '-f', 'null', '-'],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                startupinfo=si, creationflags=flags, timeout=3,
+            )
+            return result.returncode == 0
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+            return False
+
     def detect_gpu_encoder(self) -> str | None:
         """Detect best available H.264 GPU encoder; sets and returns self._gpu_encoder.
 
         Priority: NVENC (requires confirmed NVIDIA GPU) > AMF > QSV > None.
+        Each candidate must also pass a real probe encode -- see _probe_encoder.
         """
         encoders = self._list_encoders()
         nvidia = self._nvidia_present()
 
-        if nvidia and 'h264_nvenc' in encoders:
+        if nvidia and 'h264_nvenc' in encoders and self._probe_encoder('h264_nvenc'):
             self._gpu_encoder = 'h264_nvenc'
-        elif 'h264_amf' in encoders:
+        elif 'h264_amf' in encoders and self._probe_encoder('h264_amf'):
             self._gpu_encoder = 'h264_amf'
-        elif 'h264_qsv' in encoders:
+        elif 'h264_qsv' in encoders and self._probe_encoder('h264_qsv'):
             self._gpu_encoder = 'h264_qsv'
         else:
             self._gpu_encoder = None

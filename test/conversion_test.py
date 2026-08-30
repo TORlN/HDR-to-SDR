@@ -715,11 +715,18 @@ class TestStartSignalsFailureOnEarlyReturn(unittest.TestCase):
 class TestDetectGpuEncoder(unittest.TestCase):
     """detect_gpu_encoder finds the best available H.264 GPU encoder."""
 
-    def _manager_with_encoders(self, encoder_string, nvidia_present=False):
-        """Helper: patch _list_encoders and _nvidia_present, return manager."""
+    def _manager_with_encoders(self, encoder_string, nvidia_present=False,
+                               probe_ok=True):
+        """Helper: patch _list_encoders, _nvidia_present and _probe_encoder,
+        return manager. probe_ok can be a bool (every probe agrees) or a
+        set of encoder names that should probe as usable."""
         m = ConversionManager()
         m._list_encoders = MagicMock(return_value=encoder_string)
         m._nvidia_present = MagicMock(return_value=nvidia_present)
+        if isinstance(probe_ok, bool):
+            m._probe_encoder = MagicMock(return_value=probe_ok)
+        else:
+            m._probe_encoder = MagicMock(side_effect=lambda name: name in probe_ok)
         return m
 
     def test_nvenc_returned_when_nvidia_present(self):
@@ -744,6 +751,28 @@ class TestDetectGpuEncoder(unittest.TestCase):
         """Even if h264_nvenc is in ffmpeg, skip it when nvidia-smi says no GPU."""
         m = self._manager_with_encoders('h264_nvenc h264_amf', nvidia_present=False)
         self.assertEqual(m.detect_gpu_encoder(), 'h264_amf')
+
+    def test_amf_skipped_when_it_fails_a_real_probe_encode(self):
+        """ffmpeg -encoders lists h264_amf/h264_qsv on every machine, whether
+        or not that vendor's GPU/driver is actually present and working --
+        it's a compile-time list, not a hardware check (unlike h264_nvenc,
+        gated on nvidia-smi). issue #13: an AMD card whose AMF component
+        fails got "detected" anyway and only failed once a real conversion
+        was already underway. A listed-but-nonfunctional encoder must fall
+        through to the next tier instead of being trusted blind."""
+        m = self._manager_with_encoders(
+            'h264_amf h264_qsv', nvidia_present=False, probe_ok={'h264_qsv'})
+        self.assertEqual(m.detect_gpu_encoder(), 'h264_qsv')
+
+    def test_nvenc_skipped_when_it_fails_a_real_probe_encode(self):
+        m = self._manager_with_encoders(
+            'h264_nvenc h264_amf', nvidia_present=True, probe_ok={'h264_amf'})
+        self.assertEqual(m.detect_gpu_encoder(), 'h264_amf')
+
+    def test_none_when_every_listed_encoder_fails_its_probe(self):
+        m = self._manager_with_encoders(
+            'h264_amf h264_qsv', nvidia_present=False, probe_ok=set())
+        self.assertIsNone(m.detect_gpu_encoder())
 
     def test_gpu_acceleration_available_delegates_to_detect(self):
         m = ConversionManager()

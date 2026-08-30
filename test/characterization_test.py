@@ -851,6 +851,25 @@ class TestGuiInteractions(unittest.TestCase):
         mock_mb.showerror.assert_called_once()
         mock_mb.showwarning.assert_not_called()
 
+    @patch('src.gui.messagebox')
+    @patch('src.gui.conversion_manager')
+    def test_detect_gpu_acceleration_dev_env_var_forces_unavailable(self, mock_cm, mock_mb):
+        """HDRSDR_DEV_FORCE_NO_GPU=1 lets the red-GPU popup/tooltip/log-click
+        path be visually exercised on a machine whose real GPU always
+        detects fine (see launch.json's "Force No GPU" config)."""
+        gui = _bare_gui()
+        gui.gpu_accel_var = MagicMock()
+        gui.gpu_status_label = MagicMock()
+        mock_cm.is_gpu_acceleration_available.return_value = True
+
+        with patch.dict(os.environ, {'HDRSDR_DEV_FORCE_NO_GPU': '1'}):
+            gui._detect_gpu_acceleration()
+
+        mock_cm.is_gpu_acceleration_available.assert_not_called()
+        gui.gpu_accel_var.set.assert_called_once_with(False)
+        gui.gpu_status_label.config.assert_any_call(text="✗ GPU", foreground='red')
+        mock_mb.showwarning.assert_called_once()
+
     @patch('src.gui.conversion_manager')
     def test_gpu_status_tooltip_available_shows_gpu_name(self, mock_cm):
         """The GPU name lookup must be lazy -- only on hover, not at bind

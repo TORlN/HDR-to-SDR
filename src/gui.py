@@ -1632,17 +1632,24 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         """Probe GPU availability once, at construction. GPU acceleration is
         always attempted when available -- there is no user toggle -- so this
         replaces the old checkbox's on-click check."""
-        try:
-            available = conversion_manager.is_gpu_acceleration_available()
-        except Exception as e:
-            logging.error(f"Error checking GPU acceleration: {e}")
-            messagebox.showerror(
-                "Error",
-                f"An error occurred while checking GPU acceleration:\n{e}")
-            self.gpu_accel_var.set(False)
-            self.gpu_status_label.config(text="✗ GPU", foreground='red')
-            self._bind_gpu_status_tooltip(False)
-            return
+        if os.environ.get('HDRSDR_DEV_FORCE_NO_GPU') == '1':
+            # Dev-only visual test hook (see launch.json's "Force No GPU"
+            # config) -- lets the red-GPU popup/tooltip/log-click path be
+            # exercised on a machine whose real GPU always detects fine.
+            # Same pattern as HDRSDR_DEV_SHOW_UPDATE_DIALOG above.
+            available = False
+        else:
+            try:
+                available = conversion_manager.is_gpu_acceleration_available()
+            except Exception as e:
+                logging.error(f"Error checking GPU acceleration: {e}")
+                messagebox.showerror(
+                    "Error",
+                    f"An error occurred while checking GPU acceleration:\n{e}")
+                self.gpu_accel_var.set(False)
+                self.gpu_status_label.config(text="✗ GPU", foreground='red')
+                self._bind_gpu_status_tooltip(False)
+                return
         self.gpu_accel_var.set(available)
         if available:
             self.gpu_status_label.config(text="✓ GPU", foreground='green')

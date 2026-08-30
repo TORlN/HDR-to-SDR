@@ -5,9 +5,10 @@ in the `licenses/` folder inside the installation directory.
 
 ## FFmpeg
 
-This application bundles unmodified `ffmpeg.exe` and `ffprobe.exe` binaries.
+This application bundles `ffmpeg.exe` and `ffprobe.exe` binaries built from the
+official FFmpeg source with two small local patches (see below).
 
-- **Version:** `N-126314-g3386acd2f9` (FFmpeg git revision `3386acd2f9`)
+- **Version:** `N-126335-gb32f8d1c23` (FFmpeg git revision `b32f8d1c23`)
 - **License:** GNU General Public License, **version 2 or later** (GPLv2+).
   This build is configured with `--enable-gpl --enable-libx264 --enable-libx265`,
   which makes the resulting FFmpeg binaries GPL-licensed. It is **not** configured with
@@ -17,6 +18,11 @@ This application bundles unmodified `ffmpeg.exe` and `ffprobe.exe` binaries.
 - **Build source:** compiled from the official FFmpeg git repository
   (https://git.ffmpeg.org/ffmpeg.git) using media-autobuild_suite
   (https://github.com/m-ab-s/media-autobuild_suite), not a prebuilt distribution.
+- **Local patches:** two Vulkan usage-flag opportunistic-add sites are disabled
+  (`VIDEO_ENCODE_SRC_BIT_KHR`, `HOST_TRANSFER_BIT_EXT` in `hwcontext_vulkan.c`) --
+  this app uses neither capability, and on at least one affected GPU/driver
+  combination requesting them broke Vulkan-uploaded frame allocation entirely.
+  Patch source and full writeup: `tools/ffmpeg-patches/` in this repository.
 
 ### Written offer for source code
 
@@ -28,8 +34,9 @@ cost of physically performing the distribution. Contact: hdrtosdr.dev@outlook.co
 or https://github.com/TORlN/HDR-to-SDR/issues
 
 For convenience, the FFmpeg source code is also available from the upstream
-repository at revision `3386acd2f9`:
-`git clone https://github.com/FFmpeg/FFmpeg && git checkout 3386acd2f9`
+repository at revision `b32f8d1c23`:
+`git clone https://github.com/FFmpeg/FFmpeg && git checkout b32f8d1c23`
+Local patches on top of that revision are in `tools/ffmpeg-patches/` in this repository.
 
 ## dav1d
 

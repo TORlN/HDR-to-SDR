@@ -62,6 +62,11 @@ CLAUDE.md
 
 # Script files
 *.sh
+# ...except the ffmpeg source-patch hook: it's the actual patch logic that
+# tools/ffmpeg-patches/README.md documents and MABS runs on every rebuild,
+# not a throwaway script. Must stay after *.sh so the negation isn't
+# re-shadowed.
+!tools/ffmpeg-patches/ffmpeg_extra.sh
 *.bat
 # ...except the release build script: it carries the pre-build test gate, the
 # free-build confirmation alarm, the PyArmor branch, Azure code signing, and the

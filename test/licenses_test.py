@@ -17,7 +17,7 @@ class TestThirdPartyNotices(unittest.TestCase):
     def test_notices_name_ffmpeg_and_revision(self):
         text = open(self.notices_path, encoding='utf-8').read()
         self.assertIn('FFmpeg', text)
-        self.assertRegex(text, r'3386acd2f9',
+        self.assertRegex(text, r'b32f8d1c23',
                          msg='notices must cite the exact bundled revision')
 
     def test_notices_state_gpl_v2(self):

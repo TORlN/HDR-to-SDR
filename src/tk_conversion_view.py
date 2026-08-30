@@ -14,11 +14,8 @@ from tkinter import messagebox, ttk
 
 from conversion_view import Notice
 
-# Looked up by name at call time, not pre-bound to the function object here:
-# pre-binding would capture the real tkinter.messagebox functions at import
-# time, before a test's `patch('src.tk_conversion_view.messagebox')` ever has
-# a chance to take effect -- notify() would keep calling the real, unmocked
-# dialog functions regardless of the patch.
+# Looked up by name at call time, not pre-bound -- pre-binding would capture
+# the real messagebox functions before a test's patch() could take effect.
 _SHOW = {
     'info': 'showinfo',
     'warning': 'showwarning',
@@ -45,8 +42,7 @@ class TkConversionView:
         self._gui.root.after(0, fn)
 
     def set_progress(self, pct: float) -> None:
-        # Marshalling lives here so callers on the ffmpeg monitor thread are
-        # thread-safe by construction rather than by remembering to wrap.
+        # Marshalled here so ffmpeg-monitor-thread callers are thread-safe by construction.
         self._gui.root.after(0, lambda: self._progress_var.set(pct))
         self._gui.root.after(0, self._gui.root.update_idletasks)
 
@@ -55,9 +51,7 @@ class TkConversionView:
             if not enabled:
                 element.config(state='disabled')
                 continue
-            # A ttk.Combobox re-enabled to 'normal' becomes freely typeable,
-            # not just clickable -- these are only ever built 'readonly', so
-            # restore that instead of clobbering it with 'normal'.
+            # Comboboxes are only ever built 'readonly' -- restore that, not 'normal'.
             state = 'readonly' if isinstance(element, ttk.Combobox) else 'normal'
             element.config(state=state)
 

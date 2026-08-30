@@ -16,12 +16,8 @@ DEFAULTS = {
     'quality_mode': 'cq',          # 'cq' (Constant Quality) | 'bitrate' (Target Bitrate)
     'quality_bitrate_kbps': 8000,  # last chosen Target Bitrate value, in kbps
     'filetype': 'MP4',
-    # Applies the BT.2020->BT.709 gamut-correction LUT on GPU exports. Costs
-    # a CPU round-trip on GPU exports (~2x slower at 4K -- libplacebo has no
-    # working native GPU path for this, see build_libplacebo_filter's
-    # docstring); has no effect on CPU exports, which always apply it. On by
-    # default for color accuracy; users who want raw GPU export speed can opt
-    # out.
+    # BT.2020->BT.709 gamut LUT on GPU exports (~2x slower at 4K, see
+    # build_libplacebo_filter); no effect on CPU exports, which always apply it.
     'lut_enabled': True,
 }
 

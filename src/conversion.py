@@ -13,14 +13,10 @@ import platform_utils
 from utils import (get_video_properties, FFMPEG_EXECUTABLE,
                    vulkan_libplacebo_available, vulkan_cuda_interop_available,
                    _startupinfo as _utils_startupinfo)
-import platform  # noqa: F401 -- unused directly, but `import platform` (not
-# `from platform import system`) must stay so `src.conversion.platform` still
-# resolves: test/conversion_test.py's @patch('src.conversion.platform.system',
-# ...) digs through this module's `platform` attribute to reach the one real,
-# globally-shared platform module that ffmpeg_command.py's own `platform.system()`
-# call (inside _gpu_device_args) actually reads. Deleting this import doesn't
-# just remove dead code -- it breaks those patches with an AttributeError
-# before the mocked value ever takes effect.
+import platform  # noqa: F401 -- unused directly, but must stay as `import
+# platform` (not `from ... import system`): test/conversion_test.py's
+# @patch('src.conversion.platform.system', ...) relies on this attribute to
+# reach the real, shared platform module ffmpeg_command.py's _gpu_device_args reads.
 
 
 @dataclass(frozen=True)
@@ -72,10 +68,8 @@ class ConversionManager:
         constructing the view. The GPU->CPU retry re-enters here with a
         request derived via replace().
         """
-        # Guarded (not a bare abspath()): verify_paths' "both paths given" check
-        # relies on an empty string staying falsy. os.path.abspath('') resolves
-        # to the cwd, which is truthy, so that guard would silently stop firing
-        # on a blank path if abspath ran unconditionally here.
+        # Guarded, not a bare abspath(): '' must stay falsy for verify_paths'
+        # "both paths given" check -- abspath('') resolves to the truthy cwd.
         request = replace(
             request,
             input_path=(os.path.abspath(request.input_path)
@@ -84,12 +78,8 @@ class ConversionManager:
                          if request.output_path else request.output_path),
         )
 
-        # Every guard below rejects via self._reject(message, view), which
-        # calls on_complete(False, message) itself -- verify_paths calls
-        # _reject internally for its own two checks. Skipping _reject would
-        # leave a batch item stuck at 'Converting' forever (nothing else
-        # advances the queue), and a single-file caller wouldn't know the
-        # conversion never started.
+        # Every guard below rejects via self._reject, which calls on_complete
+        # itself -- skipping it would leave a batch item stuck 'Converting' forever.
         if not self.verify_paths(request.input_path, request.output_path, view):
             return False
 
@@ -107,8 +97,8 @@ class ConversionManager:
             self._reject("Failed to retrieve video properties.", view)
             return False
 
-        # A missing/zero duration would make progress tracking divide by zero in
-        # the monitor thread (which would then die silently, leaving the UI stuck).
+        # Missing/zero duration would divide by zero in the monitor thread,
+        # which dies silently and leaves the UI stuck.
         if not properties.get('duration'):
             self._reject(
                 "Could not determine the video's duration, so it can't be converted.",
@@ -121,12 +111,8 @@ class ConversionManager:
         try:
             cmd = self.construct_ffmpeg_command(request, properties, view)
         except Exception:
-            # The UI was already disabled and the cancel button gridded above,
-            # but self.process hasn't been assigned yet -- Cancel would be a
-            # no-op and gui.py's generic error handler doesn't re-enable the
-            # UI. Undo both here so the app isn't left permanently disabled,
-            # then let the original exception propagate unchanged so callers
-            # still see/log/report it exactly as before.
+            # UI was already disabled and Cancel gridded, but self.process isn't
+            # assigned yet -- undo both so the app isn't left permanently disabled.
             view.set_inputs_enabled(True)
             view.set_cancel_visible(False)
             raise
@@ -229,10 +215,8 @@ class ConversionManager:
         error_messages: list[str] = []
         gpu_error_detected = False
 
-        # Capture a stable local reference at thread-entry time.  cancel_conversion
-        # on the main thread can set self.process = None concurrently; using `proc`
-        # throughout this function prevents AttributeError if that happens between
-        # the loop ending and proc.returncode being read.
+        # Stable local reference: cancel_conversion (main thread) can set
+        # self.process = None concurrently, so use `proc` throughout instead.
         proc = self.process
         if proc is None or proc.stderr is None:
             return
@@ -248,11 +232,8 @@ class ConversionManager:
                 progress = (elapsed_time / duration) * 100
                 view.set_progress(progress)
 
-            # ffmpeg's own banner lines echo the input/output path verbatim
-            # ("Input #0, ..., from '<path>':" / "Output #0, ..., to
-            # '<path>':"), so a file merely named e.g. 'cuda_test.mp4' would
-            # otherwise match these keywords and misdiagnose an unrelated
-            # failure (bad codec, full disk) as a GPU error.
+            # Skip ffmpeg's banner lines (echo the path verbatim), or a file
+            # named e.g. 'cuda_test.mp4' would misdiagnose an unrelated failure as GPU.
             is_path_banner_line = "from '" in decoded_line or " to '" in decoded_line
             if not is_path_banner_line and any(
                     k in decoded_line.lower() for k in ('cuda', 'nvcuda.dll', 'amf', 'mfx')):
@@ -262,18 +243,13 @@ class ConversionManager:
             proc.wait()
             returncode = proc.returncode
             if returncode != 0 and request.use_gpu and gpu_error_detected and not self.cancelled:
-                # Real ffmpeg output, not just the fixed string below -- this
-                # is app.log's only record of *why* GPU encoding failed
-                # (the red GPU status label's click-to-open-log action in
-                # gui.py depends on it), same reasoning as _probe_encoder's
-                # own failure logging above. issue #13.
+                # Real ffmpeg output goes to app.log -- the red GPU status
+                # label's click-to-open-log action in gui.py depends on it.
                 tail = '\n'.join(error_messages[-50:])
                 logging.warning(
                     f"GPU acceleration failed. Retrying with CPU encoding. "
                     f"ffmpeg output:\n{tail}")
-                # The retry touches Tk (gpu checkbox, dialog, UI state) and must run
-                # on the main thread, not this worker thread.
-                view.schedule(lambda: self._retry_with_cpu(request, view))
+                view.schedule(lambda: self._retry_with_cpu(request, view))  # must run on main thread (Tk)
             else:
                 self.handle_completion(request, view, error_messages, returncode)
 
@@ -281,14 +257,10 @@ class ConversionManager:
                         view: ConversionView) -> None:
         """Restart the conversion on the CPU after a GPU failure. Main thread.
 
-        The retry derives its request from the original with replace() rather
-        than re-reading the GUI: a path edited mid-conversion used to redirect
-        the retry to a different file. *request* is the snapshot monitor_progress
-        was handed for this run, not self._run.request -- self._run.request can
-        already belong to a different, later-started conversion by the time
-        this after(0) callback fires (e.g. cancel + immediately start another
-        file).
-        """
+        Derives the retry request via replace() from *request* (the snapshot
+        monitor_progress was handed), not self._run.request or the GUI --
+        both can already point at a different, later-started conversion by
+        the time this after(0) callback fires."""
         view.notify(Notice.warning(
             "GPU Acceleration Failed",
             "GPU acceleration failed. Switching to CPU encoding. "
@@ -296,14 +268,9 @@ class ConversionManager:
         try:
             self.start(replace(request, use_gpu=False), view)
         except Exception as e:
-            # E.g. a GPU-only tonemapper (BT.2390/Spline) with no CPU
-            # implementation, raised from construct_ffmpeg_command -- start
-            # restores UI state before re-raising in that case. But start can
-            # also raise from start_ffmpeg_process (e.g. a missing ffmpeg
-            # binary), which sits outside that try/except and leaves the UI
-            # disabled. Either way, nothing else in this call path calls
-            # on_complete -- without this the batch item would be stuck at
-            # 'Converting' forever.
+            # start() can raise (e.g. GPU-only tonemapper, missing ffmpeg
+            # binary) without calling on_complete -- do it here or the batch
+            # item would be stuck 'Converting' forever.
             logging.error(f"CPU retry failed to start ({request.tonemapper}): {e}")
             if view.on_complete is not None:
                 view.on_complete(False, str(e))
@@ -315,17 +282,13 @@ class ConversionManager:
     def handle_completion(self, request: ConversionRequest, view: ConversionView,
                           error_messages: list[str], returncode: int) -> None:
         def _handle() -> None:
-            # returncode is the value monitor_progress already read from its
-            # own locally-captured proc, not re-read from self.process here:
-            # cancel_conversion (main thread) can set self.process = None
-            # between monitor_progress finishing and this after(0)-scheduled
-            # callback actually running, which would otherwise misreport a
-            # conversion that had already finished successfully.
+            # returncode is monitor_progress's locally-captured value, not
+            # re-read from self.process (which cancel_conversion can null out
+            # concurrently, misreporting an already-finished conversion).
             on_complete = view.on_complete
             if on_complete is not None:
-                # Batch/queue mode: no per-file dialog and the UI stays disabled
-                # between files. The callback marks status and advances the queue
-                # (the final summary + UI re-enable happen when the queue drains).
+                # Batch/queue mode: callback marks status and advances the
+                # queue; final summary + UI re-enable happen when it drains.
                 success = returncode == 0
                 reason = None
                 if not success:
@@ -333,9 +296,8 @@ class ConversionManager:
                         tail = '\n'.join(error_messages[-50:])
                         logging.error(f"Batch item failed with code "
                                       f"{returncode}: {tail}")
-                    # ffmpeg's fatal error typically appears at or near the
-                    # end of stderr before the process exits; fall back to
-                    # the exit code if the process never produced output.
+                    # ffmpeg's fatal error is usually near stderr's end; fall
+                    # back to the exit code if nothing was captured.
                     reason = next(
                         (line for line in reversed(error_messages) if line),
                         f"Failed with exit code {returncode}")
@@ -424,25 +386,19 @@ class ConversionManager:
             return ''
 
     def _probe_encoder(self, encoder: str) -> bool:
-        """Actually attempt a tiny real encode with *encoder* instead of
-        trusting `ffmpeg -encoders`' static compiled-in list -- h264_amf and
-        h264_qsv are listed there on every machine regardless of whether
-        that vendor's GPU/driver is even present (unlike h264_nvenc, gated
-        on nvidia-smi), so a card whose AMF/QSV component can't actually
-        encode was getting "detected" anyway and only failing once a real
-        conversion was already underway (issue #13).
+        """Attempt a tiny real encode with *encoder* instead of trusting
+        `ffmpeg -encoders`' static list -- h264_amf/h264_qsv are listed
+        there regardless of whether that vendor's GPU/driver is present
+        (unlike h264_nvenc, gated on nvidia-smi), so a non-functional card
+        was getting "detected" and only failing mid-conversion (issue #13).
 
-        Runs synchronously on the GUI's construction path (_detect_gpu_acceleration),
-        so timeout is kept short (3s, well above the ~0.1-0.4s a real probe
-        takes) -- up to 3 of these can run back-to-back in the worst case
-        (every vendor compiled in but none actually working), and a slow
-        timeout there would stall the window appearing."""
+        Runs synchronously during GUI construction, so timeout stays short
+        (3s, well above the ~0.1-0.4s a real probe takes) to avoid stalling
+        the window appearing when up to 3 run back-to-back."""
         try:
             si, flags = _utils_startupinfo()
             result = subprocess.run(
-                # 320x240: small but above NVENC's minimum encodable frame
-                # dimension (a 64x64 probe fails NVENC's own size floor,
-                # which would misreport a working NVIDIA GPU as unusable).
+                # 320x240: above NVENC's minimum frame size (64x64 fails its floor).
                 [FFMPEG_EXECUTABLE, '-hide_banner', '-loglevel', 'error',
                  '-f', 'lavfi', '-i', 'color=black:s=320x240:d=0.1',
                  '-frames:v', '1', '-c:v', encoder, '-f', 'null', '-'],
@@ -451,12 +407,8 @@ class ConversionManager:
                 startupinfo=si, creationflags=flags, timeout=3,
             )
             if result.returncode != 0:
-                # WARNING, not debug: app.log is written at WARNING by
-                # default (utils.setup_logging), and this is the one place
-                # a listed-but-nonfunctional encoder's real failure reason
-                # gets recorded anywhere -- the red GPU status label's
-                # click-to-open-log action in gui.py depends on it landing
-                # here (issue #13).
+                # WARNING, not debug: app.log is WARNING by default, and this is
+                # the only place a non-functional encoder's real failure is recorded.
                 logging.warning(
                     f"GPU probe failed for {encoder} (exit {result.returncode}): "
                     f"{result.stderr.strip()}")

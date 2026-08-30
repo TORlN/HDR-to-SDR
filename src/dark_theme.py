@@ -86,10 +86,8 @@ def apply_dark_theme(root):
               selectbackground=[('readonly', FIELD)],
               selectforeground=[('readonly', FG)])
 
-    # Sliders: dark trough, a single solid-color accent knob. clam normally
-    # bevels the knob (light/dark edges over the fill), which read as "blue
-    # edges, dark middle"; pin fill + border + both bevel colors to the same
-    # accent so the knob is one flat color.
+    # Sliders: pin fill + border + both bevel colors to accent, so clam's
+    # normal light/dark bevel doesn't show as "blue edges, dark middle".
     for orient in ('Horizontal', 'Vertical'):
         style.configure(f'{orient}.TScale', background=ACCENT, troughcolor=FIELD,
                         bordercolor=ACCENT, lightcolor=ACCENT, darkcolor=ACCENT)

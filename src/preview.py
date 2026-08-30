@@ -207,13 +207,8 @@ class _HDRPreviewMixin:
             self.resize_images(screen_width - 100, screen_height - 100)
             self.root.geometry("")
             self.root.update_idletasks()
-        # geometry("") hands the toplevel to Tk's automatic sizing, which
-        # stays in effect until geometry() is called again -- so without
-        # this, every later preview-loading spinner (which grid_removes the
-        # big preview images) would shrink the real window, then slowly grow
-        # it back once the images return. Re-pin the settled natural size
-        # explicitly so the window holds still through future content
-        # changes, the same way it already does once maximized.
+        # Re-pin the settled size explicitly: geometry("") leaves Tk's auto-sizing
+        # in effect, so a later loading spinner would shrink/regrow the window.
         self.root.geometry(f"{self.root.winfo_width()}x{self.root.winfo_height()}")
         self._window_auto_fitted = True
 
@@ -308,18 +303,12 @@ class _HDRPreviewMixin:
         self._resize_job = None
         if getattr(self, 'original_image', None) is None:
             return
-        # A live window move/resize (e.g. Windows pumps <Configure> events
-        # during a native drag) can leave Tk's geometry manager with a
-        # pending recompute queued when this debounced callback fires.
-        # Flush it first so winfo_width()/height() below reflect the
-        # settled layout, not a stale, too-small transitional value.
+        # Flush any pending geometry recompute (e.g. mid native drag) so
+        # winfo_width()/height() below reflect the settled layout.
         self.root.update_idletasks()
         if self.loading_frame.winfo_ismapped():
-            # A new file's frames are still being extracted: the image this
-            # would re-render is the PREVIOUS file's (hidden) preview, and the
-            # window may still be mid-drag, so any size measured now can be
-            # unreliable. Skip it entirely rather than caching a bad size --
-            # _render_preview_images measures fresh once the new frame lands.
+            # A new file is still being extracted -- skip rather than cache a
+            # bad size; _render_preview_images measures fresh once it lands.
             return
         self._render_preview_at_size(self._preview_target_size())
 
@@ -373,11 +362,8 @@ class _HDRPreviewMixin:
 
     def _show_preview_loading(self) -> None:
         """Show the loading spinner and hide the preview until frames are ready."""
-        # A window move/resize while this load is in flight (see
-        # _rescale_preview_to_window) can cache a size measured under
-        # unreliable conditions into _preview_render_size. Invalidate it so
-        # the eventual render always measures the settled frame fresh,
-        # instead of possibly reusing a stale/bad size from mid-load.
+        # Invalidate so the eventual render measures fresh, not a size
+        # cached under unreliable conditions mid-load.
         self._preview_render_size = None
         self.original_title_label.grid_remove()
         self.converted_title_label.grid_remove()
@@ -782,10 +768,7 @@ class _HDRPreviewMixin:
                     video_path, duration, tonemapper, generation, lut_enabled)
             except Exception as e:
                 # A stale (superseded) job's error must not clobber a newer
-                # preview the same way its success path already guards
-                # against above -- otherwise a slow-to-fail worker for a file
-                # the user already navigated away from can wipe out a newer,
-                # already-rendered valid preview.
+                # preview, like the success path already guards against above.
                 if generation == self._preview_generation:
                     self._schedule_on_main(lambda err=e: self.handle_preview_error(err))
 

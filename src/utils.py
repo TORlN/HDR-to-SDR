@@ -14,56 +14,38 @@ from platform_utils import _startupinfo, log_dir
 
 # Constants and initialization
 TONEMAP = ["Reinhard", "Mobius", "Hable", "BT.2390", "Spline"]
-# npl=100 is the SDR reference white (100 nits). Lower values push the average
-# frame toward full white and crush highlight detail; higher values darken the
-# output. 100 is the correct target for standard SDR displays.
+# npl=100 is the SDR reference white (100 nits) -- correct target for SDR displays.
 #
-# The final zscale step deliberately omits p=bt709: dropping it leaves the
-# frame's transfer/matrix/range correct for bt709 but the primaries tag
-# still inherited from the source (bt2020) -- confirmed via ffprobe against
-# a real encode. lut3d then performs the actual gamut correction on those
-# gamma-encoded values (see src/luts/rec2020_to_rec709.cube,
-# tools/generate_lut.py), and setparams retags color_primaries/color_trc/
-# colorspace to bt709 (a metadata-only fix, no further pixel changes --
-# confirmed the retag is necessary, not redundant, by comparing ffprobe
-# output with and without it).
+# Final zscale omits p=bt709 on purpose: it leaves primaries tagged bt2020,
+# and lut3d does the actual gamut correction (src/luts/rec2020_to_rec709.cube,
+# tools/generate_lut.py); setparams then retags to bt709 (metadata only,
+# confirmed via ffprobe both ways).
 #
-# interp=tetrahedral: the gamut correction has a hard per-channel clamp at
-# the BT.709 boundary (a real kink, not a smooth curve -- matches zscale's
-# own p=bt709 clamping behavior). lut3d's default trilinear interpolation
-# rounds off that kink; tetrahedral interpolation (the standard, more
-# accurate mode used by professional color tools) measurably reduces the
-# resulting error -- confirmed via real-ffmpeg pixel comparison against
-# zscale's own conversion on real HDR10 content.
+# interp=tetrahedral: the gamut correction clamps hard at the BT.709
+# boundary; trilinear (lut3d's default) rounds off that kink, tetrahedral
+# measurably doesn't (confirmed via real-ffmpeg pixel comparison).
 FFMPEG_CONVERT_FILTER = (
     'zscale=t=linear:npl=100,tonemap={tonemapper},zscale=t=bt709:m=bt709:r=tv,'
     'lut3d=file={lut_path}:interp=tetrahedral,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709,'
     'eq=gamma={gamma}'
 )
 
-# The preview chain is the export chain plus a downscale, so it is derived from
-# it rather than restated -- the two must never drift apart.
+# Preview chain = export chain + a downscale, derived so the two can't drift apart.
 FFMPEG_FILTER = (
     FFMPEG_CONVERT_FILTER
     + ',scale={width}:{height}:force_original_aspect_ratio=decrease'
 )
 
-# Zscale-only gamut correction (no LUT). Used by the CPU preview path when
-# the user has the permanent "Accurate GPU Color" setting (lut_export_var)
-# switched off -- see _effective_lut_enabled in preview.py. Never used by
-# real export: CPU export always applies the LUT regardless of this setting
-# (see construct_ffmpeg_command in conversion.py), and the GPU/libplacebo
-# export path builds its own filter string rather than referencing this one.
+# Zscale-only gamut correction (no LUT) for the CPU preview path when
+# lut_export_var is off (see _effective_lut_enabled in preview.py). Real
+# export always applies the LUT regardless -- never uses this.
 FFMPEG_FILTER_LEGACY_NO_LUT = (
     'zscale=t=linear:npl=100,tonemap={tonemapper},zscale=t=bt709:m=bt709:r=tv:p=bt709,'
     'eq=gamma={gamma},scale={width}:{height}:force_original_aspect_ratio=decrease'
 )
 
-# Tonemappers with no zscale/CPU implementation -- confirmed via
-# `ffmpeg -h filter=tonemap` against the real bundled build (only
-# none/linear/gamma/clip/reinhard/hable/mobius exist there). These two exist
-# only via libplacebo, so they require the GPU tonemap path both for preview
-# and for final conversion. Lowercase, matching libplacebo's own spelling.
+# Tonemappers with no zscale/CPU implementation (confirmed via `ffmpeg -h
+# filter=tonemap`) -- require the GPU/libplacebo path. Lowercase to match libplacebo.
 GPU_ONLY_TONEMAPPERS = {'bt.2390', 'spline'}
 
 
@@ -73,34 +55,27 @@ def is_gpu_only_tonemapper(tonemapper: str) -> bool:
     return tonemapper.lower() in GPU_ONLY_TONEMAPPERS
 
 
-# Shared "All Video Files" file-dialog filter entry, used by both the
-# single-file Browse dialog (gui.py) and the multi-select batch-add dialog
-# (batch.py) so the supported-extension list can't silently drift apart
-# between the two.
+# Shared "All Video Files" filter for both Browse (gui.py) and batch-add
+# (batch.py) dialogs, so the extension list can't drift apart between them.
 VIDEO_FILE_FILTER = ("All Video Files", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v")
 
 
 def parse_drop_paths(data: str) -> list:  # type: ignore[type-arg]
     """Split a tkdnd drop payload into individual file paths.
 
-    Pure string parsing with no licensing logic. Shared by gui.py's Community
-    Edition _BatchMixin fallback (handle_file_drop calls this for every drop,
-    single-file included, before it ever checks self._licensed) and Pro's
-    real _BatchMixin in pro/batch.py -- living here, in a public leaf module
-    both sides already import, means there is exactly one implementation
-    instead of two that have to be kept in sync by hand across a git repo
-    boundary.
+    Pure string parsing, no licensing logic -- shared by gui.py's Community
+    Edition fallback and Pro's real _BatchMixin (pro/batch.py) so there's one
+    implementation instead of two kept in sync by hand.
     """
     tokens = re.findall(r'\{[^}]*\}|\S+', data or '')
     return [t.strip('{}') for t in tokens if t.strip('{}')]
 
-# Flags that create the Vulkan device libplacebo runs on. Prepended to the ffmpeg
-# command (before -i) when the GPU tonemap path is active (CPU decode fallback).
+# Flags creating the Vulkan device libplacebo runs on; prepended before -i
+# when the GPU tonemap path is active (CPU decode fallback).
 VULKAN_DEVICE_ARGS = ['-init_hw_device', 'vulkan=vk:0', '-filter_hw_device', 'vk']
 
-# NVIDIA fast path: CUDA device for NVDEC hardware decode, linked to a Vulkan
-# device so libplacebo can consume CUDA frames via hwmap without a CPU round-trip.
-# Also sets -hwaccel cuda so ffmpeg routes decode through NVDEC.
+# NVIDIA fast path: CUDA device for NVDEC decode, linked to Vulkan so
+# libplacebo consumes CUDA frames via hwmap with no CPU round-trip.
 VULKAN_CUDA_DEVICE_ARGS = [
     '-init_hw_device', 'cuda=cu:0',
     '-init_hw_device', 'vulkan=vk@cu',
@@ -188,20 +163,12 @@ def get_resource_path(relative_path: str) -> str:
 
 
 def _escape_path_for_filter(path: str) -> str:
-    """Escape an absolute Windows path for embedding as a value inside an
-    ffmpeg -vf filtergraph string (e.g. lut3d=file=..., libplacebo's lut=...).
+    """Escape an absolute Windows path for embedding in an ffmpeg -vf
+    filtergraph value (lut3d=file=..., libplacebo's lut=...).
 
-    Confirmed empirically against the bundled ffmpeg build: a raw path
-    breaks the parser at the drive-letter colon ("No option name near
-    '/Users/...'"), and neither a bare colon nor a single '\\:' fixes it --
-    the parser needs the colon escaped as '\\\\:' (two literal backslashes
-    then the colon), with all '\\' elsewhere converted to '/'.
-
-    Always targets literal '\\' rather than os.sep: the input is always a
-    Windows path (this app only ships on Windows), but the test suite also
-    runs on Linux CI, where os.sep is '/' and would leave the backslashes
-    untouched.
-    """
+    ffmpeg's parser needs the drive-letter colon escaped as '\\\\:', with
+    all other '\\' converted to '/' (confirmed against the bundled build).
+    Targets literal '\\', not os.sep, since CI also runs this on Linux."""
     forward = path.replace('\\', '/')
     return forward.replace(':', '\\\\:', 1)
 
@@ -211,12 +178,10 @@ _LUT_FILTER_PATH = None
 
 def get_lut_filter_path() -> str:
     """Resolve and cache the bundled Rec.2020->Rec.709 LUT's path, pre-escaped
-    for direct embedding in FFMPEG_FILTER / FFMPEG_CONVERT_FILTER /
-    build_libplacebo_filter's lut3d=file=... / lut=... values.
+    for embedding in FFMPEG_FILTER / build_libplacebo_filter's lut3d=/lut=.
 
-    Raises FileNotFoundError if the bundled .cube file is missing --  a
-    missing bundled asset means the install itself is broken, and this must
-    surface as a hard, obvious failure rather than silently degrading."""
+    Raises FileNotFoundError if the bundled .cube file is missing -- a
+    broken install should fail hard, not degrade silently."""
     global _LUT_FILTER_PATH
     if _LUT_FILTER_PATH is not None:
         return _LUT_FILTER_PATH
@@ -225,15 +190,9 @@ def get_lut_filter_path() -> str:
     return _LUT_FILTER_PATH
 
 def verify_ffmpeg_files():
-    """Locate ffmpeg/ffprobe and publish their paths as module globals.
-
-    Keys are extension-free ('ffmpeg', not 'ffmpeg.exe') so callers stay
-    platform-agnostic. get_executable_path already logs and raises
-    FileNotFoundError when one is missing, so there is nothing to add here.
-    """
+    """Locate ffmpeg/ffprobe and publish their paths as module globals."""
     global FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE
-    # Resolve both before publishing either: a half-initialized pair (ffmpeg
-    # set, ffprobe still None) is worse than neither being set.
+    # Resolve both before publishing either -- no half-initialized pair.
     found = {name: get_executable_path(name) for name in ('ffmpeg', 'ffprobe')}
     FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE = found['ffmpeg'], found['ffprobe']
     return found
@@ -243,38 +202,28 @@ def initialize_ffmpeg():
     try:
         verify_ffmpeg_files()
     except Exception as e:
-        # Surfacing the error is the caller's job (the GUI shows it on startup);
-        # a utility module must not pop a dialog.
+        # Surfacing the error is the caller's job (GUI shows it on startup).
         logging.error(f"Error setting up ffmpeg: {str(e)}", exc_info=True)
         raise
 
-# Call initialization functions
 setup_logging()
 try:
     initialize_ffmpeg()
 except Exception:
-    # Importing this module must never crash or block on a dialog when ffmpeg is
-    # missing; FFMPEG_EXECUTABLE/FFPROBE_EXECUTABLE stay None and the GUI reports
-    # it to the user on startup (see HDRConverterGUI.__init__).
+    # Import must never crash/block on a dialog -- FFMPEG_EXECUTABLE stays
+    # None and the GUI reports it on startup (see HDRConverterGUI.__init__).
     logging.error("ffmpeg could not be initialized at import time", exc_info=True)
 
 
-# Rest of your existing functions...
 def run_ffmpeg_command(cmd):
     """Run an FFmpeg command with proper path handling"""
     startupinfo, creationflags = _startupinfo()
-    
-    # Replace the ffmpeg command with the bundled/system executable path
+
     cmd[0] = FFMPEG_EXECUTABLE
 
-    # Normalize path-like args (e.g. input/output file paths) to the native
-    # separator. The -vf value is a filtergraph string, not a file path -- it
-    # can contain a deliberately pre-escaped LUT path (see
-    # _escape_path_for_filter: doubled backslash before the drive-letter
-    # colon, forward slashes elsewhere) that os.path.normpath would corrupt by
-    # collapsing the doubled backslash and swapping '/' back to '\\', breaking
-    # ffmpeg's filtergraph parser. Skip normalization for the arg immediately
-    # following -vf.
+    # Normalize path-like args to the native separator, but not the arg right
+    # after -vf: that's a filtergraph string that may hold a pre-escaped LUT
+    # path (see _escape_path_for_filter) which normpath would corrupt.
     cmd = [
         str(arg) if (i > 0 and cmd[i - 1] == '-vf') or os.path.sep not in str(arg)
         else os.path.normpath(str(arg))
@@ -355,18 +304,13 @@ def _probe_hdr_metadata(video_path):
         )
         data = json.loads(out.decode('utf-8'))
     except (subprocess.SubprocessError, OSError, json.JSONDecodeError, ValueError) as e:
-        # A stream that passes the basic ffprobe (get_video_properties) can
-        # still fail this second frame-level probe (e.g. truncated/corrupt
-        # HDR data) -- degrade to "no HDR metadata" like get_video_properties
-        # already does, instead of raising uncaught out of the load path.
+        # Degrade to "no HDR metadata" (e.g. truncated data) instead of raising.
         logging.error(f"Error probing HDR metadata for {video_path}: {e}")
         return result
     for frame in data.get('frames', []):
         for sd in frame.get('side_data_list', []):
             if sd.get('side_data_type') == 'Content light level metadata':
-                # A legitimately-reported 0 must not be treated the same as
-                # an absent key -- 'if mc:' would silently drop it.
-                mc = sd.get('max_content')
+                mc = sd.get('max_content')  # 'if mc:' would drop a legitimate 0
                 if mc is not None:
                     result['maxcll'] = float(mc)
     return result
@@ -395,49 +339,31 @@ def build_libplacebo_filter(gamma, tonemapper, width: 'int | str' = 'iw',
                             lut_enabled: bool = True) -> str:
     """Build the GPU tonemapping filter chain (HDR->SDR) using libplacebo.
 
-    Always uses peak_detect=1 (per-scene peak detection).  When cuda_input is
-    False (default / CPU decode path) frames are uploaded from system RAM via
-    format=p010,hwupload.  When cuda_input is True (NVIDIA CUDA→Vulkan interop
-    path) frames arrive in CUDA memory from NVDEC; hwmap=derive_device=vulkan
-    transfers them to Vulkan without touching system RAM.
-
-    For the gamma=1.0 case with CUDA interop the frame never touches the CPU:
-    after libplacebo the Vulkan frame is remapped back to CUDA via hwmap and
-    fed directly to NVENC.  For gamma≠1.0 we still download to CPU for the eq
-    filter since FFmpeg has no GPU-native gamma correction outside libplacebo.
+    Always peak_detect=1. cuda_input=False uploads from system RAM
+    (format=p010,hwupload); cuda_input=True arrives via NVDEC in CUDA memory
+    and hwmap=derive_device=vulkan transfers it with no CPU round-trip.
+    For gamma=1.0 + CUDA interop the frame never touches the CPU; otherwise
+    we download for the eq filter (ffmpeg has no GPU-native gamma outside
+    libplacebo).
 
     lut_enabled: applies the same BT.2020->BT.709 3D LUT the CPU path uses.
-        libplacebo's own native lut=/lut_type= option cannot reproduce
-        lut3d's semantics -- measured the full cross product of all 4
-        lut_type values x both color_primaries settings against a
-        verified-correct reference and none matched (see the
-        gpu-lut-libplacebo-native-broken memory / project notes). Root
-        cause, confirmed by reading libplacebo's renderer.c: the custom-LUT
-        hook it exposes runs *before* the main tonemap/gamut-conversion
-        pass (or replaces it entirely for lut_type=conversion) -- there is
-        no exposed hook for "after tonemap, before final gamut convert",
-        which is the slot our gamut-only correction needs. So instead this
-        applies the identical CPU lut3d filter the CPU path uses, after
-        downloading the tonemapped frame -- verified pixel-identical to the
-        CPU reference. This is real, measured cost (~2.1-2.4x slower GPU
-        exports at 4K): it forces a hwdownload even on the CUDA zero-copy
-        interop path, and disables that path's fully-GPU fast route
-        entirely. lut_enabled=False restores the exact pre-LUT-feature
-        behavior (including the zero-copy fast path) for callers that want
-        raw export speed over gamut correction accuracy.
+        libplacebo's native lut=/lut_type= can't reproduce lut3d's
+        semantics -- measured against all 4 lut_type x primaries
+        combinations, none matched (see gpu-lut-libplacebo-native-broken
+        notes; root cause is renderer.c's custom-LUT hook running before
+        tonemap/gamut-conversion, with no post-tonemap hook available). So
+        this downloads and runs the identical CPU lut3d filter instead
+        (verified pixel-identical). Real cost: ~2.1-2.4x slower GPU exports
+        at 4K, since it disables the CUDA zero-copy fast path.
+        lut_enabled=False restores that fast path.
     """
     tm = tonemapper.lower()
     prefix = ('hwmap=derive_device=vulkan,'
               if cuda_input else 'format=p010,hwupload,')
-    # When the LUT is on, libplacebo must not do its own gamut mapping too --
-    # color_primaries=auto (keep source primaries) leaves gamut correction
-    # entirely to our lut3d stage below, avoiding a double conversion.
+    # LUT on: keep source primaries (auto) and let lut3d below do gamut correction.
     primaries = 'auto' if lut_enabled else 'bt709'
-    # lut3d (CPU) only accepts RGB-family pixel formats, not nv12 -- feeding
-    # it nv12 makes ffmpeg silently auto-insert an nv12->rgb24 swscale
-    # conversion before lut3d that appears nowhere in this filter string
-    # (confirmed via -loglevel verbose: "auto-inserting filter auto_scale
-    # ... fmt:nv12 -> fmt:rgb24"). Downloading directly as rgba when the LUT
+    # lut3d only accepts RGB formats; nv12 triggers a hidden auto_scale to
+    # rgb24 (confirmed via -loglevel verbose). Downloading as rgba when the LUT
     # runs skips that hidden conversion -- measured ~5% faster over 300
     # synthetic 4K frames. Without the LUT, nv12 is still right: it feeds the
     # encoder directly with no RGB-family stage in between.
@@ -449,9 +375,7 @@ def build_libplacebo_filter(gamma, tonemapper, width: 'int | str' = 'iw',
     )
     gamma_is_identity = abs(gamma - 1.0) < 1e-9
     if lut_enabled:
-        # lut3d is CPU-only, so the frame must come down to system RAM
-        # regardless of cuda_input -- there is no GPU-native path that
-        # reproduces this correctly (see docstring above).
+        # lut3d is CPU-only, so the frame must come down regardless of cuda_input.
         lut_stage = (f'lut3d=file={get_lut_filter_path()}:interp=tetrahedral,'
                      f'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709')
         if gamma_is_identity:
@@ -459,20 +383,16 @@ def build_libplacebo_filter(gamma, tonemapper, width: 'int | str' = 'iw',
         else:
             suffix = f',hwdownload,format={download_fmt},{lut_stage},eq=gamma={gamma}'
     elif cuda_input and gamma_is_identity:
-        # Fully-GPU path: remap Vulkan→CUDA after libplacebo; NVENC encodes
-        # CUDA frames directly with no CPU round-trip.
+        # Fully-GPU: remap Vulkan->CUDA after libplacebo, NVENC encodes directly.
         suffix = ',hwmap=reverse=1:derive_device=cuda'
     elif gamma_is_identity:
-        # Plain Vulkan path: NVENC needs CPU frames, so we still download, but
-        # skip the no-op eq=gamma=1 filter to avoid wasted work.
-        suffix = ',hwdownload,format=nv12'
+        suffix = ',hwdownload,format=nv12'  # skip the no-op eq=gamma=1
     else:
         suffix = f',hwdownload,format=nv12,eq=gamma={gamma}'
     return f'{prefix}{libplacebo}{suffix}'
 
-# Cached result of the Vulkan/libplacebo capability probe: None = not yet probed.
+# None = not yet probed.
 _libplacebo_available = None
-# Cached result of the CUDA→Vulkan interop probe.
 _cuda_interop_available = None
 
 
@@ -487,24 +407,19 @@ def reset_cuda_interop_probe():
     global _cuda_interop_available
     _cuda_interop_available = None
 
-# Ceiling for the startup GPU probe below. It runs inside create_widgets --
-# i.e. between main.pyw's root.withdraw() and root.deiconify() -- so an
-# unbounded wait there is a startup hang with no window and no error. Measured
-# at ~1s on a healthy machine; 20s leaves a wide margin for a cold driver or
-# first-run shader compilation while still bounding a wedged one. Erring
-# generous on purpose: a premature timeout silently costs that customer GPU
-# tonemapping, so a false negative is worse than a slow true positive.
+# Ceiling for the startup GPU probe below. Runs between main.pyw's
+# root.withdraw()/deiconify(), so an unbounded wait is a hang with no window.
+# Measured ~1s on a healthy machine; 20s margins a cold driver/shader
+# compile while still bounding a wedged one. Erring generous on purpose --
+# a false negative silently costs that customer GPU tonemapping.
 _GPU_PROBE_TIMEOUT = 20
 
 
 def vulkan_libplacebo_available():
     """Return True if this ffmpeg can tonemap on the GPU via Vulkan + libplacebo.
 
-    Probes once and caches the result. The probe runs the real filter chain on a
-    tiny synthetic frame, so a success genuinely proves the path works on this
-    machine; on any failure -- including an inconclusive one -- we fall back to
-    the CPU tonemap path.
-    """
+    Probes once and caches the result via a real filter chain on a tiny
+    synthetic frame; any failure falls back to the CPU tonemap path."""
     global _libplacebo_available
     if _libplacebo_available is not None:
         return _libplacebo_available
@@ -530,10 +445,7 @@ def vulkan_libplacebo_available():
         )
         _libplacebo_available = (result.returncode == 0)
     except subprocess.TimeoutExpired:
-        # Listed separately because TimeoutExpired subclasses SubprocessError,
-        # not OSError -- the clause below does not catch it, and letting it
-        # escape would turn a startup hang into an uncaught exception on the
-        # same pre-window path.
+        # Separate clause: TimeoutExpired subclasses SubprocessError, not OSError.
         logging.warning(
             f"libplacebo probe exceeded {_GPU_PROBE_TIMEOUT}s; assuming "
             f"unavailable and falling back to CPU tonemapping")
@@ -549,11 +461,8 @@ def vulkan_libplacebo_available():
 def vulkan_cuda_interop_available() -> bool:
     """Return True if CUDA→Vulkan interop works for hardware-decoded frames.
 
-    Probes once and caches. Validates the full chain NVIDIA uses for the fast
-    path: CUDA frames (from NVDEC) mapped to Vulkan via hwmap, then processed
-    by libplacebo.  A success proves both the driver support and the linked
-    device creation work on this machine.
-    """
+    Probes once and caches, validating the full NVIDIA fast-path chain:
+    CUDA frames (NVDEC) mapped to Vulkan via hwmap, then libplacebo."""
     global _cuda_interop_available
     if _cuda_interop_available is not None:
         return _cuda_interop_available
@@ -564,8 +473,6 @@ def vulkan_cuda_interop_available() -> bool:
 
     startupinfo, creationflags = _startupinfo()
 
-    # Simulate CUDA frames going through the interop chain: upload a synthetic
-    # frame to CUDA memory, hwmap to Vulkan, run libplacebo, then download.
     cmd = [
         FFMPEG_EXECUTABLE, '-loglevel', 'error',
         '-init_hw_device', 'cuda=cu:0',
@@ -719,20 +626,11 @@ def extract_frames_with_conversion_batch(
 def extract_frame_with_conversion(video_path, gamma, tonemapper='reinhard',
                                   time_position=None, width: 'int | str' = 'iw',
                                   height: 'int | str' = 'ih', lut_enabled: bool = True):
-    """
-    Extracts a frame from the video and applies tonemapping conversion.
-    Args:
-        video_path (str): The path to the video file.
-        gamma (float): The gamma correction value.
-        tonemapper (str): The tonemapping algorithm to use.
-        time_position (float, optional): The time position to extract the frame from.
-        width, height: output scale for the filter chain. Default ('iw'/'ih') keeps
-            the source resolution; pass concrete sizes (e.g. 960, 540) to have ffmpeg
-            scale the preview down, decoding far less data for a snappier preview.
-        lut_enabled: TEMPORARY, dev-verification only -- see FFMPEG_FILTER_LEGACY_NO_LUT.
-    Returns:
-        PIL.Image: The extracted and converted frame as a PIL image.
-    """
+    """Extract a frame and apply tonemapping conversion; returns a PIL Image.
+
+    width/height: default ('iw'/'ih') keeps source resolution; pass concrete
+    sizes to have ffmpeg scale the preview down for snappier decoding.
+    lut_enabled: TEMPORARY, dev-verification only -- see FFMPEG_FILTER_LEGACY_NO_LUT."""
     properties = get_video_properties(video_path)
     if not properties or properties['duration'] == 0:
         raise ValueError("Invalid video properties or duration.")
@@ -768,13 +666,10 @@ def extract_frame_with_conversion(video_path, gamma, tonemapper='reinhard',
 def extract_frame_with_gpu_conversion(video_path, gamma, tonemapper='bt.2390',
                                       time_position=None, width: 'int | str' = 'iw',
                                       height: 'int | str' = 'ih', lut_enabled: bool = True):
-    """GPU (libplacebo) counterpart to extract_frame_with_conversion.
-
-    Used for tonemappers with no zscale/CPU implementation (see
-    GPU_ONLY_TONEMAPPERS) -- preview must render the true algorithm, not an
-    approximation, so these route through libplacebo/Vulkan instead of
-    zscale. Uses the plain-Vulkan (CPU-decode) path, not CUDA interop:
-    interop optimizes full-length encodes, not single preview frames.
+    """GPU (libplacebo) counterpart to extract_frame_with_conversion, for
+    tonemappers with no CPU implementation (see GPU_ONLY_TONEMAPPERS). Uses
+    the plain-Vulkan (CPU-decode) path -- CUDA interop isn't worth it for a
+    single preview frame.
 
     lut_enabled: TEMPORARY, dev-verification only -- see build_libplacebo_filter.
     """
@@ -826,16 +721,10 @@ def extract_frames_with_gpu_conversion_batch(
 
 def extract_frame(video_path, time_position=None, width: 'int | None' = None,
                   height: 'int | None' = None):
-    """
-    Extracts a frame from the video.
-    Args:
-        video_path (str): The path to the video file.
-        time_position (float, optional): The time position to extract the frame from.
-        width, height (int, optional): when both given, ffmpeg scales the frame to
-            this size on the way out, so the preview decodes far less data.
-    Returns:
-        PIL.Image: The extracted frame as a PIL image.
-    """
+    """Extract a frame from the video; returns a PIL Image.
+
+    width/height: when both given, ffmpeg scales the frame on the way out,
+    so the preview decodes far less data."""
     properties = get_video_properties(video_path)
     if not properties or properties['duration'] == 0:
         raise ValueError("Invalid video properties or duration.")
@@ -982,12 +871,8 @@ def _probe_video_properties(input_file):
         if not video_stream:
             return None
             
-        # avg_frame_rate can be '0/0' (denominator-zero, seen on some VFR
-        # sources) or the literal string 'N/A' (no '/' at all) -- either
-        # would otherwise become frame_rate=0.0 and reach ffmpeg as '-r 0'
-        # (rejected outright), or raise ValueError from float('N/A').
-        # r_frame_rate is the nominal rate and is almost always usable, so
-        # fall back to it before giving up.
+        # avg_frame_rate can be '0/0' (VFR sources) or 'N/A'; fall back to
+        # r_frame_rate (the nominal rate) before giving up.
         frame_rate = (_parse_frame_rate_fraction(video_stream.get('avg_frame_rate'))
                       or _parse_frame_rate_fraction(video_stream.get('r_frame_rate')))
         if not frame_rate:
@@ -999,12 +884,8 @@ def _probe_video_properties(input_file):
 
         is_dolby_vision, dovi_profile = _parse_dovi(video_stream)
 
-        # Matroska rarely declares a per-stream bit_rate the way MP4's stsd/esds
-        # boxes do -- ffprobe then omits the video stream's bit_rate entirely.
-        # Fall back to the container's overall bit_rate (format.bit_rate, which
-        # ffprobe already computes as file_size*8/duration) rather than showing
-        # nothing. It includes audio/subtitle overhead, so it's an estimate, not
-        # the exact video-only figure a real per-stream reading would give.
+        # Matroska rarely declares a per-stream bit_rate -- fall back to the
+        # container's overall bit_rate (an estimate, includes audio overhead).
         bit_rate = _int_or_zero(video_stream.get('bit_rate'))
         bit_rate_estimated = False
         if not bit_rate:
@@ -1015,16 +896,9 @@ def _probe_video_properties(input_file):
 
         audio_bit_rate = _int_or_zero(audio_stream.get('bit_rate')) if audio_stream else 0
 
-        # Windows Explorer's Properties -> Details tab computes "Data rate"
-        # (video-only) and "Total bitrate" (video+audio) from each stream's
-        # reconstructed byte count (that stream's own bit_rate * its own
-        # duration), divided by the CONTAINER's total duration rounded to the
-        # nearest whole second. ffprobe's raw per-stream bit_rate instead
-        # divides by the stream's own duration without that rounding -- and
-        # that duration can be shorter than the container's when the stream
-        # has a start-time offset -- which is why the app's reading ran a few
-        # percent higher than what Windows shows for the same file. Re-derive
-        # both figures the same way Windows does so they agree exactly.
+        # Match Windows Explorer's Properties->Details: reconstruct each
+        # stream's byte count and divide by the CONTAINER's duration
+        # (rounded), not the stream's own (possibly offset-shortened) one.
         total_bit_rate = bit_rate
         rounded_duration = round(duration) if duration > 0 else 0
         if rounded_duration and bit_rate and not bit_rate_estimated:

@@ -32,16 +32,8 @@ __all__ = [
     'deactivate_license',
 ]
 
-# Imported as a module object, not `from pro.licensing import (...)`. A
-# `from`-import of an unresolved module leaves pyright treating the
-# unresolved import *declaration* as authoritative for these names -- it
-# wins over the perfectly good `def`s in the `except` block below, so every
-# consumer's `from licensing import activate_license` would fail to
-# type-check even though the free stub is defined right here. Going through
-# `importlib.import_module` sidesteps that: there is no unresolved `from`
-# target for pyright to bind these names to, so the free-edition `def`s
-# below are what consumers see whenever `pro/` is absent (i.e. in CI, and in
-# every Community Edition build).
+# Imported as a module object, not `from pro.licensing import (...)` -- same
+# pyright unresolved-import trick as src/gui.py/src/dialogs.py.
 try:
     _pro = importlib.import_module('pro.licensing')
 except ImportError:  # Community Edition — no Pro backend in this build.

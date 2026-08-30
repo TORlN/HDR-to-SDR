@@ -45,10 +45,7 @@ def log_dir() -> str:
 def setup_dpi_awareness() -> None:
     """Enable Per-Monitor DPI awareness so Windows doesn't bitmap-scale the window."""
     if sys.platform != 'win32':
-        # No-op on macOS: a real implementation gap, not handled here. Tk/
-        # Info.plist's NSHighResolutionCapable setting handles Retina scaling
-        # differently on macOS -- deferred to the actual Mac build.
-        return
+        return  # macOS handles Retina scaling via Info.plist -- deferred to Mac build
     try:
         import ctypes
         ctypes.windll.shcore.SetProcessDpiAwareness(1)

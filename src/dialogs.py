@@ -20,17 +20,8 @@ from dialog_theme import (
     _center_over_master,
 )
 
-# Imported as a module object, not `from pro.license_dialog import (...)`. As
-# in src/licensing.py: a `from`-import of an unresolved module leaves pyright
-# treating the unresolved import *declaration* as authoritative for these
-# names -- it wins over the perfectly good `class`/`def`s in the `except`
-# block below, so every consumer's `from dialogs import _LicenseDialog` (and
-# gui.py's second-hop `from dialogs import _LicenseDialog, ...`) would fail
-# to type-check even though the free stub is defined right here. Going
-# through `importlib.import_module` sidesteps that: there is no unresolved
-# `from` target for pyright to bind these names to, so the free-edition
-# definitions below are what consumers see whenever `pro/` is absent (i.e.
-# in CI, and in every Community Edition build).
+# Imported as a module object, not `from pro.license_dialog import (...)` --
+# same pyright unresolved-import trick as src/licensing.py.
 try:
     _pro_license_dialog = importlib.import_module('pro.license_dialog')
 except ImportError:  # Community Edition — no Pro backend in this build.
@@ -150,10 +141,8 @@ class _UpdateDialog(tk.Toplevel):
         self._progress.pack(pady=(6, 0))
         self.protocol('WM_DELETE_WINDOW', lambda: None)
 
-        # A prior failed attempt's temp dir is only cleaned up here, right
-        # before minting a new one -- not in _on_download_error -- so a
-        # successful download's directory (still needed while the detached
-        # installer runs from it) is never touched.
+        # Clean up a prior failed attempt's temp dir here, not in
+        # _on_download_error -- a successful one is still needed by the installer.
         if self._tmp_dir is not None:
             shutil.rmtree(self._tmp_dir, ignore_errors=True)
         self._tmp_dir = tempfile.mkdtemp(prefix='hdr_to_sdr_update_')
@@ -198,11 +187,8 @@ class _UpdateDialog(tk.Toplevel):
         self.protocol('WM_DELETE_WINDOW', self.destroy)
 
     def destroy(self) -> None:
-        # Reached via Later or window-close, both after a failed download
-        # (during an active download the close protocol is disarmed, and a
-        # successful download closes via self.master.destroy(), never this).
-        # The failed attempt's directory has no installer left to run from,
-        # so it must not be left behind.
+        # Reached via Later/window-close after a failed download -- clean up
+        # the now-orphaned attempt's directory.
         if self._tmp_dir is not None:
             shutil.rmtree(self._tmp_dir, ignore_errors=True)
             self._tmp_dir = None

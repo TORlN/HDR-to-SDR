@@ -22,16 +22,10 @@ from concurrent.futures import Future, ThreadPoolExecutor
 
 from dialogs import _LicenseDialog, _UpdateDialog
 from preview import DEFAULT_MIN_SIZE, _PREVIEW_POOL_WORKERS, _HDRPreviewMixin
-# Imported as a module object, not `from pro.batch import _BatchMixin`. As in
-# src/licensing.py and src/dialogs.py: a `from`-import of an unresolved
-# module leaves pyright treating the unresolved import *declaration* as
-# authoritative for this name -- it wins over the perfectly good `class`
-# in the `else` branch below, so `class HDRConverterGUI(_BatchMixin, ...)`
-# would fail to type-check even though the free stub is defined right here.
-# Going through `importlib.import_module` sidesteps that: there is no
-# unresolved `from` target for pyright to bind this name to, so the
-# free-edition class below is what's in effect whenever `pro/` is absent
-# (i.e. in CI, and in every Community Edition build).
+# Imported as a module object, not `from pro.batch import _BatchMixin` --
+# a `from`-import of an unresolved module makes pyright bind the name to
+# the import declaration, not the free-edition `class` below (same trick
+# as src/licensing.py and src/dialogs.py).
 try:
     _pro_batch = importlib.import_module('pro.batch')
 except ImportError:  # Community Edition — no Pro backend in this build.
@@ -41,39 +35,18 @@ if _pro_batch is not None:
     _BatchMixin = _pro_batch._BatchMixin
 else:
     class _BatchMixin:  # type: ignore[no-redef]
-        """Community Edition: Batch Queue is a Pro feature and is absent.
+        """Community Edition stand-in: Batch Queue is Pro-only.
 
-        Every user-facing batch action (add/remove/clear/apply-to-all,
-        selecting a queue row, starting/reviewing a batch run) is reachable
-        only through a widget this build permanently disables or hides
-        (add_files_button etc. via _apply_license_state) or a call site
-        gated by `if self._licensed:` -- _licensed can never be True without
-        pro/, so none of that behavior is ever actually reached. This class
-        defines none of it. test/gui_free_edition_test.py verifies that
-        rather than assuming it.
+        Every batch action is gated by a disabled/hidden widget or an
+        `if self._licensed:` check, so these bodies never actually run --
+        test/gui_free_edition_test.py verifies that. They still need to
+        exist as real no-op methods (not missing symbols) because gui.py
+        wires `command=self.browse_batch_files` etc. at construction time
+        regardless of license state, and pyright needs a concrete
+        `_BatchMixin` shape to type-check against.
 
-        Every method below is a no-op stub, not a missing symbol -- for two
-        independent reasons:
-
-        1. Runtime: gui.py builds every batch widget's `command=`/`bind()`
-           target as a bare attribute lookup at construction time (e.g.
-           `command=self.browse_batch_files`), which Python evaluates
-           immediately regardless of whether the widget is ever clickable,
-           and a few call sites (convert_video, handle_file_drop,
-           _write_back_current_settings) reach into the queue unconditionally
-           for every file, licensed or not -- so these names must exist even
-           where their bodies never actually run.
-        2. Static: `_pro_batch = importlib.import_module('pro.batch')`
-           resolves to `Any` for pyright, so `class HDRConverterGUI
-           (_BatchMixin, ...)` can only see ONE concrete shape for
-           `_BatchMixin` -- this class's -- regardless of which branch runs
-           at import time. Every batch method gui.py's own body calls via
-           `self.<name>(...)` therefore has to exist here too, or pyright
-           reports it as unknown even in a normal (pro/ present) checkout.
-
-        _batch_item_for_current_input and _parse_drop_paths are the only two
-        that need real, working, non-Pro-secret bodies rather than an
-        inert stub -- see each one's own docstring.
+        _batch_item_for_current_input and _parse_drop_paths need real,
+        working bodies rather than stubs -- see their own docstrings.
         """
 
         def browse_batch_files(self) -> None:
@@ -107,38 +80,26 @@ else:
             pass  # Only reached from a branch that requires a real queue item.
 
         def _batch_item_for_current_input(self) -> None:
-            """No queue ever exists in this build, so no file is ever
-            "the current queue item" -- called unconditionally by
-            _write_back_current_settings/_load_input_file for every file."""
+            """No queue exists in this build, so no file is ever "the
+            current queue item" -- called unconditionally elsewhere."""
             return None
 
-        # Real implementation lives in utils.parse_drop_paths (a public leaf
-        # module both this fallback and pro/batch.py's real _BatchMixin
-        # import), not duplicated here -- see that function's docstring.
-        # handle_file_drop calls this for every drop, single-file included,
-        # before it ever checks self._licensed, so it must exist as a real,
-        # working, non-Pro-secret body rather than an inert stub.
+        # Real implementation lives in utils.parse_drop_paths, which
+        # handle_file_drop calls for every drop before checking
+        # self._licensed, so this needs a real body, not a stub.
         _parse_drop_paths = staticmethod(_shared_parse_drop_paths)
 
-# Register the split-out modules under their src.* names so that
-# patch('src.dialogs.X'), patch('src.preview.X') target the same module
-# objects that the code actually runs in. Without this, Python would load a
-# second copy under each dotted name. batch.py is no longer one of these: it
-# now lives at pro.batch (or is absent), which already has its own natural
-# dotted identity as a real subpackage import -- there is no bare top-level
-# 'batch' module to alias anymore.
+# Register the split-out modules under their src.* names so
+# patch('src.dialogs.X')/patch('src.preview.X') target the module objects
+# actually running, instead of loading a second copy under that name.
 import sys as _sys
 _sys.modules.update({
     'src.dialogs': _sys.modules['dialogs'],
     'src.preview': _sys.modules['preview'],
 })
-# mock.patch() looks up 'src.dialogs'/'src.preview' via
-# getattr(sys.modules['src'], 'dialogs'/'preview') before falling back to
-# sys.modules — and that fallback is a no-op when the key is already
-# present, so it never links the attribute. Set it directly so patch() finds
-# it on the first getattr, both when running under the 'src' package (tests)
-# and when 'src' isn't imported at all (production, gui.py loaded as a bare
-# top-level module).
+# mock.patch() resolves 'src.dialogs' via getattr(sys.modules['src'],
+# 'dialogs') before falling back to sys.modules, so set the attribute
+# directly too -- otherwise patch() misses it on the first getattr.
 if 'src' in _sys.modules:
     _src_pkg = _sys.modules['src']
     setattr(_src_pkg, 'dialogs', _sys.modules['dialogs'])
@@ -146,8 +107,7 @@ if 'src' in _sys.modules:
     del _src_pkg
 del _sys
 
-# Re-export webbrowser so existing patches (patch('src.gui.webbrowser')) still resolve.
-# (The name was importable from this module before the dialogs split.)
+# Re-export so existing patch('src.gui.webbrowser') calls still resolve.
 webbrowser = webbrowser  # noqa: F811
 
 
@@ -178,17 +138,13 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
     _BITRATE_FLOOR_KBPS = 1000
     _BITRATE_FALLBACK_KBPS = 8000  # matches conversion.py's nvenc/qsv zero-bitrate guard
 
-    # Coalesces rapid-fire batch-listbox rebuilds (e.g. every tick of a
-    # gamma/quality slider drag) into one refresh -- see
-    # _write_back_current_settings/_schedule_batch_list_refresh.
+    # Coalesces rapid-fire batch-listbox rebuilds (e.g. slider drags) into one refresh.
     _BATCH_LIST_REFRESH_DEBOUNCE_MS = 150
 
     _QUALITY_MODE_TO_INTERNAL = {'Constant Quality': 'cq', 'Target Bitrate': 'bitrate'}
     _QUALITY_MODE_FROM_INTERNAL = {'cq': 'Constant Quality', 'bitrate': 'Target Bitrate'}
 
-    # Appended to a GPU-only tonemapper's combobox label when it's unselectable
-    # (GPU tonemapping isn't active) -- the entry stays visible/greyed instead
-    # of being removed from the list, per _apply_tonemap_choices.
+    # Appended to a GPU-only tonemapper's label when it's greyed out but still listed.
     _GPU_ONLY_SUFFIX = " (GPU Only)"
 
     def __init__(self, root: "TkinterDnD.Tk", licensed: bool = False) -> None:
@@ -213,41 +169,28 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.original_image = None
         self.converted_image_base = None
         self.gpu_accel_var = tk.BooleanVar(value=False)  # gpu_accel is no longer persisted
-        # Persisted export setting: applies the gamut-correction LUT on GPU
-        # exports (costs a CPU round-trip, ~2x slower at 4K -- see
-        # build_libplacebo_filter's docstring). No effect on CPU exports,
-        # which always apply it. Also drives the preview pane (see
-        # preview.py's display_frames), so toggling it shows the same
-        # difference real GPU export would produce.
+        # Applies the gamut-correction LUT on GPU exports (CPU exports always
+        # apply it); also drives the preview pane so it matches real export.
         self.lut_export_var = tk.BooleanVar(value=_s['lut_enabled'])
         self.tonemap_var = tk.StringVar(value=_s['tonemapper'])
-        # Tracks the last selection that was actually valid, so a click on a
-        # greyed-out GPU-only row (still clickable -- see _on_tonemap_selected)
-        # has something sane to revert to.
+        # Last valid selection, to revert to if a greyed-out GPU-only row is clicked.
         self._last_valid_tonemapper = self.tonemap_var.get()
         self.quality_var = tk.IntVar(value=_s['quality'])
         self.bitrate_var = tk.IntVar(value=_s['quality_bitrate_kbps'])
         self.quality_mode_var = tk.StringVar(
             value=self._QUALITY_MODE_FROM_INTERNAL.get(_s['quality_mode'], 'Constant Quality'))
         self.quality_display_var = tk.StringVar()
-        # Target Bitrate reseeds to 50% of the source whenever a new file is
-        # loaded (see _update_info_label) -- set True there, consumed here.
+        # Set True by _update_info_label on new file load; consumed here to reseed 50%.
         self._bitrate_needs_reseed = False
         self.quality_var.trace_add('write', self._sync_quality_display)
         self.bitrate_var.trace_add('write', self._sync_quality_display)
         self._sync_quality_display()
         self.format_var = tk.StringVar(value=_s['filetype'])
-        # Not persisted to settings -- resets per file load, since it's only
-        # meaningful for the current source (see _update_bit_depth_choice).
-        # Queued files keep their own choice via the item's
-        # settings['bit_depth_choice'] key, restored on (re)load (see
-        # _on_bit_depth_toggle).
+        # Not persisted -- per-source only. Queued files keep their own choice
+        # via settings['bit_depth_choice'], restored on (re)load.
         self.bit_depth_var = tk.StringVar(value='10-bit')
-        # Mirrors settings['bitrate_customized'] for whichever item is
-        # currently loaded, exactly like bit_depth_var mirrors
-        # bit_depth_choice: True once the user has deliberately dragged this
-        # item's bitrate slider, so the Target Bitrate reseed (see
-        # _apply_bitrate_range) stops overriding their choice for this item.
+        # Mirrors settings['bitrate_customized'] for the loaded item: True once
+        # the user drags the bitrate slider, so reseeding stops overriding it.
         self._bitrate_customized_for_current_item = False
         self.custom_time_var = tk.StringVar()
         self.custom_time_position: float | None = None
@@ -366,10 +309,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
 
         self.quality_slider.config(state=pro)
         self.quality_entry.config(state=pro)
-        # A ttk.Combobox must stay 'readonly' when enabled, not 'normal' (which
-        # would let the user free-type into it) -- matching format_combobox's
-        # existing pattern, where 'state' is never set to the plain pro/disabled
-        # toggle directly.
+        # Combobox must stay 'readonly' when enabled, not 'normal' (free-typing).
         self.quality_mode_combobox.config(state='readonly' if licensed else 'disabled')
         self.custom_time_entry.config(state=pro)
         self.custom_seek_button.config(state=pro)
@@ -382,10 +322,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             current = self.output_path_var.get()
             if current:
                 self.output_path_var.set(self._output_path_with_format(current, 'MP4'))
-            # The mode combobox only gets disabled below, not reset -- a
-            # Target Bitrate choice saved while licensed would otherwise
-            # survive into an unlicensed session (convert_video has no
-            # license gate of its own on quality_mode).
+            # Reset mode too: a saved Target Bitrate choice would otherwise
+            # survive into an unlicensed session (convert_video has no license
+            # gate of its own on quality_mode).
             if self.quality_mode_var.get() != 'Constant Quality':
                 self.quality_mode_var.set('Constant Quality')
                 self._apply_quality_mode()
@@ -395,9 +334,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.clear_batch_button.config(state=pro)
         self.apply_settings_button.config(state=pro)
 
-        # Refresh the 12-bit toggle's label/enabled state and the info strip's
-        # Pro hint immediately, in case a >10-bit file is already loaded when
-        # the license is activated.
+        # Refresh in case a >10-bit file is already loaded when license activates.
         self._update_bit_depth_choice()
         self._refresh_info_label_text()
 
@@ -540,11 +477,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             '<Enter>', lambda e: self.show_tooltip(e, tooltip_text_lut_export))
         info_button_lut_export.bind('<Leave>', self.hide_tooltip)
 
-        # Conditional 10/12-bit toggle: hidden unless the loaded source has
-        # more than 10 bits to preserve (see _update_bit_depth_choice). Nested
-        # inside tonemap_frame so it sits next to the tonemapper selector but
-        # lives in control_frame's stretchy column 1 -- gridding it into
-        # column 2 would widen the Browse/format/gamma widgets stacked there.
+        # Hidden unless the loaded source has more than 10 bits to preserve
+        # (see _update_bit_depth_choice). Nested in tonemap_frame, not
+        # control_frame's column 2, so it doesn't widen the widgets there.
         self.bit_depth_frame = ttk.Frame(self.tonemap_frame)
         self.bit_depth_frame.grid(row=0, column=3, sticky=tk.W, padx=(15, 0))
         ttk.Label(self.bit_depth_frame, text="Bit Depth:").grid(row=0, column=0, sticky=tk.W)
@@ -577,10 +512,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         info_button_quality_mode.bind('<Leave>', self.hide_tooltip)
 
         quality_label_row = ttk.Frame(self.control_frame)
-        # pady matches quality_frame's own pady below: without it, this frame
-        # would center against row 3's full cell height while quality_frame
-        # (and the slider inside it) centers against that height minus its
-        # own top pady, landing a couple pixels apart.
+        # pady must match quality_frame's below, or the two rows land a couple pixels apart.
         quality_label_row.grid(row=3, column=0, sticky=tk.W, pady=(5, 0))
         ttk.Label(quality_label_row, text="Quality:").grid(row=0, column=0, sticky=tk.W)
         self.quality_info_button = ttk.Label(quality_label_row, text="ⓘ", cursor="hand2")
@@ -596,13 +528,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             quality_frame, from_=self._CRF_RANGE[0], to=self._CRF_RANGE[1],
             orient=tk.HORIZONTAL, length=200, command=self._on_quality_change)
         self.quality_slider.grid(row=0, column=0, sticky=tk.W + tk.E, padx=(10, 10))
-        # ttk.Scale.set() fires its own -command (_on_quality_change) even for
-        # this construction-time priming call. If a persisted session left
-        # quality_mode_var as 'Target Bitrate', that fires before the slider
-        # has been ranged for bitrate mode (_apply_quality_mode runs later in
-        # create_widgets), misreading this CRF value as kbps and corrupting
-        # the just-restored bitrate_var. Suppress it the same way
-        # _apply_bitrate_range suppresses its own programmatic .set() calls.
+        # .set() fires -command even here; if quality_mode_var is 'Target
+        # Bitrate' this CRF value would misread as kbps before the slider is
+        # re-ranged later in create_widgets. Suppress it, like _apply_bitrate_range does.
         self._applying_bitrate_range = True
         try:
             self.quality_slider.set(self.quality_var.get())
@@ -619,11 +547,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.image_frame.grid(row=1, column=0, sticky=tk.W + tk.E + tk.N + tk.S)
         self.image_frame.grid_remove()
 
-        # image_frame fills its whole root row (see configure_grid); this
-        # inner frame holds everything that used to be parented directly to
-        # image_frame, and is gridded into it with no sticky, so Tk centers
-        # it -- any leftover space becomes even margin above/below instead
-        # of the block sitting pinned to the top with a blank gap below.
+        # Gridded with no sticky so Tk centers it in image_frame, instead of
+        # pinning it to the top with a gap below.
         self.preview_content_frame = ttk.Frame(self.image_frame)
         self.preview_content_frame.grid(row=0, column=0)
 
@@ -703,10 +628,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.button_frame.grid(row=2, column=0, columnspan=3, pady=(5, 0), sticky=tk.N)
         self.button_frame.grid_remove()
 
-        # Pinned directly to image_frame (not preview_content_frame) so it
-        # never centers along with the titles/images/buttons -- it always
-        # sits at the bottom of image_frame's cell, immediately above
-        # batch_frame, regardless of how tall the centered preview block is.
+        # Parented to image_frame, not preview_content_frame, so it stays
+        # pinned at the bottom instead of centering with the preview block.
         self.progress_bar = ttk.Progressbar(
             self.image_frame, variable=self.progress_var, maximum=100)
         self.progress_bar.grid(row=1, column=0, sticky=tk.W + tk.E, pady=(5, 0))
@@ -810,50 +733,25 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         for i in range(9):
             self.control_frame.rowconfigure(i, weight=0)
 
-        # image_frame's row 0 holds preview_content_frame with no sticky --
-        # so any leftover space image_frame gets from root (see below)
-        # becomes even margin around the preview block instead of
-        # stretching it. Row 1 holds progress_bar directly (not inside
-        # preview_content_frame) at weight=0, so it always keeps its natural
-        # height and sits pinned at the bottom of image_frame's cell,
-        # immediately above batch_frame, instead of centering along with
-        # the rest of the block.
+        # Row 0 (preview_content_frame, no sticky) absorbs leftover space as
+        # even margin. Row 1 (progress_bar) stays weight=0, pinned at the
+        # bottom just above batch_frame.
         self.image_frame.columnconfigure(0, weight=1)
         self.image_frame.rowconfigure(0, weight=1)
         self.image_frame.rowconfigure(1, weight=0)
 
-        # preview_content_frame carries the layout image_frame itself used
-        # to have: two equal-width image columns, a fixed-width button
-        # column, and content-sized rows (titles / images+buttons /
-        # button_frame spacer). progress_bar is no longer one of its rows --
-        # see image_frame's own row 1, above.
         self.preview_content_frame.columnconfigure(0, weight=1)
         self.preview_content_frame.columnconfigure(1, weight=1)
         self.preview_content_frame.columnconfigure(2, weight=0)
         self.preview_content_frame.rowconfigure(0, weight=0)
-        # Row 1 (images + button_container) is the shortfall absorber: when
-        # image_frame's row 0 cell is too short for the full preview block,
-        # this is the row that shrinks first so the titles above and the
-        # button_frame spacer below stay visible. It has no effect in the
-        # (normal) surplus case, since preview_content_frame is gridded into
-        # image_frame with no sticky (see below) -- Tk sizes it to its own
-        # request and centers it whenever there's room, and an internal row
-        # weight distributes nothing when there's no slack to distribute.
+        # Shortfall absorber: shrinks first when image_frame's cell is too
+        # short, keeping the titles above and button_frame below visible.
         self.preview_content_frame.rowconfigure(1, weight=1)
         self.preview_content_frame.rowconfigure(2, weight=0)
 
-        # image_frame is the row that absorbs window-resize slack. Its own
-        # sizing is unchanged from before -- still weight=1, still fills the
-        # row -- so _preview_target_size() can keep reading
-        # image_frame.winfo_height() as a non-circular height ceiling. What
-        # changed is only where the preview content sits *within* that
-        # space: preview_content_frame is no longer stretched to fill it
-        # (rowconfigure(1) above is now content-sized, not weight=1), so Tk
-        # centers it in image_frame's cell instead of pinning it to the top
-        # -- any leftover height becomes even margin above and below the
-        # block. batch_frame stays weight=0 -- a fixed, natural-sized row --
-        # so it always sits directly above action_frame (the Convert
-        # button) with no gap, regardless of window height.
+        # image_frame (weight=1) absorbs window-resize slack; preview_content_frame
+        # is gridded with no sticky so Tk centers it inside that space instead of
+        # stretching it. batch_frame stays weight=0, always directly above action_frame.
         self.root.grid_rowconfigure(0, weight=0)
         self.root.grid_rowconfigure(1, weight=1)
         self.root.grid_rowconfigure(2, weight=0)
@@ -878,8 +776,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         if not file_path:
             return
         if self._licensed:
-            # Mirrors handle_file_drop's single-file licensed path: route
-            # through the queue so Browse and drag-and-drop behave the same.
+            # Route through the queue, like handle_file_drop's licensed path.
             self.add_batch_files([file_path])
             if self.input_path_var.get() != file_path:
                 self._load_input_file(file_path)
@@ -898,9 +795,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._restoring_batch_item_settings = True
         try:
             item = self._batch_item_for_current_input()
-            # A queued item's own (possibly user-edited) output path wins over
-            # recomputing the auto default, so a prior edit survives reselect
-            # instead of being silently overwritten back to <name>_sdr.<ext>.
+            # A queued item's own edited output path wins over the auto default.
             if item is not None and item.get('output'):
                 self.output_path_var.set(item['output'])
             else:
@@ -927,16 +822,11 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._converted_preview_base = None
         self._reset_custom_seek()
         self._reset_preview_cache()
-        # Drop the probe state so nothing (info strip, bit-depth toggle) can be
-        # re-rendered later from a file that is no longer loaded.
+        # Drop the probe state so it can't be re-rendered for a file no longer loaded.
         self._source_bit_depth = 8
         self._cached_props = None
         self._cached_maxcll = None
-        # A deliberate Target Bitrate customization is only meaningful for
-        # the file it was made on -- without this, a later unrelated file
-        # queued while nothing is loaded would inherit the stale flag (and
-        # get seeded from a bogus fraction computed against the
-        # unknown-source fallback ceiling, since it hasn't been probed yet).
+        # Only meaningful for the file it was made on -- don't leak into the next one.
         self._bitrate_customized_for_current_item = False
         self._update_bit_depth_choice()  # hides the 10/12-bit toggle
         if hasattr(self, 'info_label'):
@@ -990,9 +880,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             return  # bare/partially-initialized instance (test contexts only)
         source = getattr(self, '_source_bit_depth', 8)
         if source > 10:
-            # Default to 10-bit, but a queued file remembers its own choice
-            # (stored by _on_bit_depth_toggle) so batch runs and queue clicks
-            # restore it instead of silently reverting to 10-bit.
+            # Default to 10-bit; a queued file remembers its own choice instead.
             choice = '10-bit'
             if self._licensed:
                 item = self._batch_item_for_current_input()
@@ -1040,20 +928,11 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
 
     def _restore_settings_dict(self, settings: dict) -> None:  # type: ignore[type-arg]
         """Push a stored settings snapshot into the live controls (the
-        counterpart to _current_settings_dict), then re-run the existing
-        range/fallback logic so the restored values are re-validated against
-        whichever file is now loaded -- e.g. Target Bitrate's ceiling clamps
-        to this file's own source bitrate, and a GPU-only tonemapper falls
-        back to Mobius if this machine's GPU accel (a fixed, machine-wide
-        capability, not a per-file setting) is off.
+        counterpart to _current_settings_dict), then re-validate against the
+        now-loaded file -- e.g. re-clamp Target Bitrate to its ceiling.
 
-        Self-guarded against _write_back_current_settings: the slider moves
-        below are internal, intermediate state, not a user edit, and must
-        not be stamped onto whichever item is currently loaded before this
-        restore completes. _load_input_file (the only production caller)
-        already wraps this in the same guard, but that's a caller
-        convention, not an enforced invariant -- guarding here too means a
-        future direct caller can't reintroduce the leak."""
+        Self-guards against _write_back_current_settings, since the slider
+        moves below are intermediate state, not a user edit."""
         already_restoring = getattr(self, '_restoring_batch_item_settings', False)
         self._restoring_batch_item_settings = True
         try:
@@ -1067,10 +946,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             if self._bitrate_customized_for_current_item:
                 ceiling = self._bitrate_ceiling_kbps()
                 fraction = settings.get('bitrate_fraction', 0.5)
-                # Round to the nearest whole kbps, not the nearest 500: a
-                # typed exact value (see _on_quality_entry_change) is not
-                # necessarily a 500 kbps multiple, and re-snapping it here
-                # would silently truncate it right back on the next reselect.
+                # Nearest whole kbps, not nearest 500 -- a typed value need not be a multiple.
                 value = round(fraction * ceiling)
                 value = _clamp(value, self._BITRATE_FLOOR_KBPS, ceiling)
                 self.bitrate_var.set(value)
@@ -1085,30 +961,17 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self._restoring_batch_item_settings = already_restoring
 
     def _write_back_current_settings(self, debounce_listbox: bool = False) -> None:
-        """Persist the live controls' current values onto whichever queue
-        item is loaded, if any -- the counterpart to _restore_settings_dict.
-        Called from every control's change handler so editing a control
-        while a file is selected edits that file's settings only.
+        """Persist the live controls onto whichever queue item is loaded,
+        if any -- the counterpart to _restore_settings_dict. Called from
+        every control's change handler.
 
-        No-ops while _load_input_file is mid-restore: _update_info_label's
-        internal slider-range remap (_apply_quality_mode) and
-        _restore_settings_dict's own re-validation calls both move the
-        quality slider programmatically, which synchronously fires this
-        method via the slider's command callback -- before the target
-        item's settings have actually been restored into the live
-        controls. Without this guard, that premature write-back stamps
-        the *previous* item's stale live-control values onto the
-        newly-selected item, which _restore_settings_dict then faithfully
-        restores back into the widgets -- corrupting the newly-loaded
-        item's settings on every queue reselect.
+        No-ops while _load_input_file is mid-restore, since programmatic
+        slider moves there would otherwise stamp the previous item's stale
+        values onto the newly-selected item.
 
-        debounce_listbox=True (used by the gamma/quality slider drag
-        handlers, whose command= callback fires on every tick of a drag, not
-        just on release) always writes the settings dict immediately -- that
-        part is cheap -- but coalesces the listbox rebuild itself (a full
-        delete+reinsert with a per-item settings comparison) into a single
-        refresh shortly after the last call, the same debounce pattern
-        already used for window-resize (_on_window_configure/_resize_job)."""
+        debounce_listbox=True (slider drag handlers) always writes the
+        settings dict immediately but coalesces the listbox rebuild into a
+        single refresh shortly after the last call."""
         if getattr(self, '_restoring_batch_item_settings', False):
             return
         item = self._batch_item_for_current_input()
@@ -1193,11 +1056,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         props = getattr(self, '_cached_props', None) or {}
         bit_rate = props.get('bit_rate') or 0
         if props.get('bit_rate_estimated') and props.get('audio_bit_rate'):
-            # An estimated bit_rate is format.bit_rate -- the whole
-            # container's total (video+audio+overhead), not a per-stream
-            # video reading. Net out the known audio share so the Target
-            # Bitrate ceiling/default reflect the video stream alone rather
-            # than inflating both by the audio track's own bitrate.
+            # Estimated bit_rate is the container total; net out audio to isolate video.
             bit_rate = max(bit_rate - props['audio_bit_rate'], 0)
         return (bit_rate // 1000) or self._BITRATE_FALLBACK_KBPS
 
@@ -1217,24 +1076,17 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         ceiling = self._bitrate_ceiling_kbps()
         has_file = getattr(self, '_cached_props', None) is not None
         if has_file and self._bitrate_needs_reseed:
-            # A new file was just loaded (see _update_info_label): reseed to
-            # 50% of its bitrate rather than keeping a value left over from
-            # a previous file or session.
+            # New file just loaded -- reseed to 50%, not a stale prior value.
             seed = _clamp(round(ceiling * 0.5 / 500) * 500, self._BITRATE_FLOOR_KBPS, ceiling)
             self.bitrate_var.set(seed)
             self._bitrate_needs_reseed = False
         elif not has_file:
-            # No file has been probed yet (e.g. this is the startup call in
-            # __init__, or the input was cleared): _bitrate_ceiling_kbps() is
-            # only the unknown-source fallback here, not a real file's
-            # bitrate, so it must not clamp down a real saved choice.
+            # No file probed yet -- ceiling is just the unknown-source fallback,
+            # so it must not clamp down a real saved choice.
             ceiling = max(ceiling, self.bitrate_var.get())
         value = _clamp(self.bitrate_var.get(), self._BITRATE_FLOOR_KBPS, ceiling)
         self.quality_slider.configure(from_=self._BITRATE_FLOOR_KBPS, to=ceiling)
-        # ttk.Scale.set() fires its own -command (_on_quality_change) even for
-        # this purely programmatic call, which would otherwise misread the
-        # reseed/clamp as a deliberate user drag and wrongly mark this file
-        # "customized". Suppress just that side effect for this one call.
+        # Suppress -command so this programmatic .set() isn't misread as a user drag.
         self._applying_bitrate_range = True
         try:
             self.quality_slider.set(value)
@@ -1252,12 +1104,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         if mode == 'Target Bitrate':
             self._apply_bitrate_range()
         elif switched or getattr(self, '_restoring_batch_item_settings', False):
-            # Direct restore: either coming from Target Bitrate's unrelated
-            # kbps range (or the first build), or mid-restore of a batch item
-            # whose GPU setting may differ from whatever item's range the
-            # slider widget currently reflects. In both cases a fractional
-            # remap against that (unrelated or stale) range would be
-            # meaningless -- restore quality_var's own value directly instead.
+            # Coming from Target Bitrate's unrelated kbps range, or a stale
+            # slider range mid-restore -- a fractional remap would be
+            # meaningless, so restore quality_var's value directly.
             worst, best = self._CQ_RANGE if self.gpu_accel_var.get() else self._CRF_RANGE
             lo, hi = min(worst, best), max(worst, best)
             value = _clamp(self.quality_var.get(), lo, hi)
@@ -1273,13 +1122,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         old_from = float(self.quality_slider.cget('from'))
         old_to = float(self.quality_slider.cget('to'))
         if getattr(self, '_restoring_batch_item_settings', False):
-            # Mid-restore (see _load_input_file): _restore_settings_dict just
-            # set quality_var directly without moving the slider widget, so
-            # the widget's position is stale -- trust the var instead. Outside
-            # a restore (e.g. a GPU toggle), the widget and quality_var are
-            # always in sync, so reading the widget's exact float position is
-            # both correct and preserves knob-position precision across
-            # repeated toggles (see test_knob_position_held_across_gpu_toggle).
+            # Mid-restore, the slider widget is stale -- trust quality_var instead.
             current = float(self.quality_var.get())
         else:
             current = float(self.quality_slider.get())
@@ -1354,13 +1197,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         mode, or 500 kbps increments in Target Bitrate mode (the scale emits
         floats either way)."""
         if getattr(self, '_applying_bitrate_range', False):
-            # A purely programmatic .set(), not a user drag -- either
-            # _apply_bitrate_range's own reseed/clamp (which already applies
-            # bitrate_var itself, with every caller writing settings back
-            # explicitly afterward) or create_widgets' construction-time
-            # priming (before any file/batch item exists, so there is
-            # nothing to write back). Either way, nothing left to do here.
-            return
+            return  # programmatic .set(), not a user drag -- nothing to do here
         if self.quality_mode_var.get() == 'Target Bitrate':
             self.bitrate_var.set(round(float(value) / 500) * 500)
             self._bitrate_customized_for_current_item = True
@@ -1446,10 +1283,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         source_bit_depth = properties.get('bit_depth', 8)
         if source_bit_depth != bit_depth:
             bit_depth_str = f"{source_bit_depth}-bit -> {bit_depth}-bit"
-            # Only call out the license as the reason when it's actually the
-            # reason: an unlicensed source that got capped to 10-bit. A
-            # licensed user's own 10-bit toggle choice (or a 16-bit source
-            # still exceeding even Pro's 12-bit ceiling) isn't a license issue.
+            # Only blame the license when it's actually the reason (unlicensed cap to 10-bit).
             if source_bit_depth > 10 and not licensed:
                 bit_depth_str += " (Pro Only)"
         else:
@@ -1457,10 +1291,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         format_tags = []
         if properties.get('is_dolby_vision'):
             format_tags.append('Dolby Vision')
-        # total_bit_rate (video+audio, container-duration-rounded) is what
-        # matches Windows Explorer's Properties -> Details "Total bitrate"
-        # exactly -- bit_rate alone (video-only) is reserved for the Target
-        # Bitrate slider's ceiling, see _source_bitrate_kbps.
+        # total_bit_rate matches Windows Explorer's "Total bitrate"; bit_rate
+        # (video-only) is reserved for the Target Bitrate slider's ceiling.
         bit_rate = properties.get('total_bit_rate') or properties.get('bit_rate') or 0
         parts = [f"{w}×{h}", fps_str, codec, *format_tags,
                  f"{hdr_tag}{maxcll_str}", bit_depth_str]
@@ -1479,9 +1311,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._update_bit_depth_choice()
         self._cached_props = props
         self._cached_maxcll = get_maxcll(file_path) if props else None
-        # A newly-loaded file gets its own 50%-of-source Target Bitrate seed,
-        # not whatever was left over from a previous file or session.
-        self._bitrate_needs_reseed = True
+        self._bitrate_needs_reseed = True  # reseed to 50% of this file, not a stale value
         if hasattr(self, 'quality_slider'):
             self._apply_quality_mode()
         self._refresh_info_label_text()
@@ -1527,11 +1357,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             if not file_path:
                 return
             if self._licensed:
-                # Licensed drops route through the queue so single- and
-                # multi-file drops behave consistently: the queue is the work
-                # list, and dropping onto a populated queue adds to it instead
-                # of bypassing it. add_batch_files may already load the file
-                # (first-load path); only load explicitly if it didn't.
+                # Route through the queue so single- and multi-file drops behave
+                # consistently; add_batch_files may already load the file.
                 self.add_batch_files([file_path])
                 if self.input_path_var.get() != file_path:
                     self._load_input_file(file_path)
@@ -1582,11 +1409,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 f"Starting conversion - Input: {input_path}, "
                 f"Output: {output_path}, Gamma: {gamma}")
 
-            # Only touch drag-and-drop/Cancel once the conversion has actually
-            # started -- start returns False (without raising) when
-            # a guard rejects the file (e.g. undetermined duration), and doing
-            # this beforehand would leave DnD permanently unregistered with the
-            # Cancel button stuck visible with no process behind it.
+            # Only touch DnD/Cancel once conversion has actually started -- start()
+            # can return False without raising (e.g. a rejected guard).
             request = ConversionRequest(
                 input_path=input_path, output_path=output_path, gamma=gamma,
                 use_gpu=use_gpu,
@@ -1633,10 +1457,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         always attempted when available -- there is no user toggle -- so this
         replaces the old checkbox's on-click check."""
         if os.environ.get('HDRSDR_DEV_FORCE_NO_GPU') == '1':
-            # Dev-only visual test hook (see launch.json's "Force No GPU"
-            # config) -- lets the red-GPU popup/tooltip/log-click path be
-            # exercised on a machine whose real GPU always detects fine.
-            # Same pattern as HDRSDR_DEV_SHOW_UPDATE_DIALOG above.
+            # Dev-only visual test hook -- see launch.json's "Force No GPU" config.
             available = False
         else:
             try:
@@ -1664,14 +1485,10 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._bind_gpu_status_tooltip(available)
 
     def _bind_gpu_status_tooltip(self, available: bool) -> None:
-        """Hover text for the GPU status label.
-
-        The GPU name is only looked up (and shelled out for) if a hover
-        actually happens, not at construction time. When unavailable, the
-        label also becomes clickable to open app.log -- the only place a
-        GPU detection/encode failure's real ffmpeg output gets recorded
-        (see conversion.py's _probe_encoder and monitor_progress). issue #13.
-        """
+        """Hover text for the GPU status label. GPU name is looked up lazily
+        on hover, not at construction. When unavailable, the label also
+        becomes clickable to open app.log (real failure details, see
+        conversion.py's _probe_encoder/monitor_progress)."""
         def _text(_available=available):
             if not _available:
                 return ("No GPU Detected. GPU Acceleration Disabled\n"

@@ -1,49 +1,31 @@
 """Decide the ffmpeg command for one conversion (audit item 6).
 
-Split out of ConversionManager.construct_ffmpeg_command, which was a
-253-line, complexity-45 function doing six separable jobs. Pure functions
+Split out of ConversionManager.construct_ffmpeg_command. Pure functions
 only -- no tkinter, no gui, no conversion.py -- so each is testable with no
 ConversionView or test double. build() is the one impure piece: it owns
 the ConversionView and decides notice-emission order.
 
 Three sharp edges, each documented at the code that resolves them:
   - HEVC-swap ordering: active_encoder can be reassigned by the H.264->HEVC
-    preservation swap. CodecPlan.produces_hevc is computed at the
-    point of the swap so no caller has to reconstruct it from a
-    possibly-stale value.
-  - GPU-probe laziness: a 12-bit request forces use_gpu off before any GPU
-    vendor probe would run, so resolve_gpu_encoder must be a lazy
-    callable, not a pre-resolved value -- calling it unconditionally would
-    add a probe subprocess call on a path that has none today.
-  - AMF/QSV-HEVC probe gap: ConversionManager._probe_encoder only ever
-    probes the H.264 variant (h264_amf/h264_qsv) at detection time, before
-    this module's own H.264->HEVC swap below is known to apply. A card
-    whose vendor SDK can encode H.264 but not HEVC (10-bit output, or an
-    already-HEVC source) would still pass detection and only fail here,
-    same shape of bug as issue #13 one level down. Not fixed -- no report
-    has pinned this as the actual failure mode yet; would need probing the
-    HEVC variant too (doubling probe subprocess calls on every app launch)
-    to close.
-  - This module never imports vulkan_libplacebo_available or
-    vulkan_cuda_interop_available from utils, even though it is the only
-    code that calls them. Both are always parameters (see Probes). Two
-    reasons, not one: it preserves their laziness exactly like
-    resolve_gpu_encoder above, and -- the one that actually bit this refactor
-    during implementation -- conversion.py's own `from utils import X`
-    creates an independent name binding per importing module, so
-    test/conversion_test.py's and the golden master's
-    patch('src.conversion.vulkan_libplacebo_available', ...) mocks would
-    silently stop affecting anything the moment this module imported and
-    called its own copy directly. conversion.py keeps the real imports and
-    passes them through unchanged; that is what keeps ~30 pre-existing test
-    mocks working without editing a single one of them. Do not "simplify"
-    this module by importing these two directly -- confirmed by reproducing
-    the failure: 13 golden-master subtests and 8 conversion_test.py tests
-    broke on the first attempt. platform.system() has no such treatment
-    because `import platform` (not `from platform import system`) shares
-    one singleton module object across every importer, so a patch on it
-    from anywhere stays globally effective regardless of which module's
-    code calls platform.system().
+    preservation swap. CodecPlan.produces_hevc is computed at the point of
+    the swap so no caller reconstructs it from a possibly-stale value.
+  - GPU-probe laziness: a 12-bit request forces use_gpu off before any probe
+    would run, so resolve_gpu_encoder must be a lazy callable, not a
+    pre-resolved value.
+  - AMF/QSV-HEVC probe gap: ConversionManager._probe_encoder only probes the
+    H.264 variant at detection time, before this module's H.264->HEVC swap
+    is known to apply. A card that encodes H.264 but not HEVC would still
+    pass detection and only fail here -- same shape as issue #13 one level
+    down. Not fixed; unconfirmed as an actual failure mode.
+  - This module never imports vulkan_libplacebo_available/
+    vulkan_cuda_interop_available from utils directly -- always parameters
+    (see Probes). conversion.py's own `from utils import X` creates an
+    independent binding per importing module, so test mocks like
+    patch('src.conversion.vulkan_libplacebo_available', ...) would silently
+    stop working if this module imported its own copy (confirmed: 13
+    golden-master + 8 conversion_test.py tests broke on the first attempt).
+    platform.system() needs no such treatment since `import platform`
+    shares one singleton module object across every importer.
 """
 from __future__ import annotations
 
@@ -62,16 +44,13 @@ from utils import (VULKAN_DEVICE_ARGS, VULKAN_CUDA_DEVICE_ARGS,
 
 class RequestLike(Protocol):
     """The subset of ConversionRequest this module needs, described
-    structurally so this module never imports conversion.py -- conversion.py
-    imports this module, and the layer table forbids a cycle.
-    ConversionRequest, being a plain dataclass with matching attribute
-    names, satisfies this automatically.
+    structurally so this module never imports conversion.py (which imports
+    this module -- the layer table forbids a cycle). ConversionRequest
+    satisfies this automatically as a plain dataclass.
 
     Declared as read-only @property members, not plain annotations: plain
     Protocol attributes are structurally writable, but ConversionRequest is
-    a frozen dataclass (no setter) -- pyright flags that mismatch as a
-    reportArgumentType error at the one real call site (conversion.py:172's
-    `ffmpeg_command.build(request, properties, probes, view)`) otherwise."""
+    frozen (no setter) -- pyright would flag that mismatch otherwise."""
     @property
     def input_path(self) -> str: ...
     @property
@@ -136,12 +115,8 @@ def _tonemap_plan(request: RequestLike, properties: 'dict[str, Any]',
             "which isn't available on this system. The output colors may "
             "look wrong (green/purple cast)."))
     elif dovi_needs_rpu and not use_gpu:
-        # use_gpu is False here, so without this notice the override is
-        # silent -- GPU acceleration is off for this run (e.g. this machine
-        # has no GPU, or bit_depth forced CPU), yet GPU tonemapping still ran
-        # for this source, and the user has no other way to know that (only
-        # the tonemap step; encoding still follows the vendor dispatch, so
-        # it stays on the CPU encoder).
+        # GPU tonemapping still ran for this source despite use_gpu=False
+        # (encoding stays on CPU); tell the user or the override is silent.
         notices.append(Notice.info(
             "Dolby Vision Profile 5",
             "This Dolby Vision (profile 5) source has no HDR10-compatible "
@@ -348,12 +323,10 @@ class CodecPlan:
 def _codec_and_pix_fmt(request: RequestLike, properties: 'dict[str, Any]',
                        active_encoder: 'str | None') -> CodecPlan:
     """Pixel format, the two H.264->HEVC preservation/mandatory swaps, and
-    codec selection -- including produces_hevc, computed here rather than
-    left for a caller to reconstruct from active_encoder plus want_libx265,
-    since active_encoder can be reassigned inside this same function by the
-    swap below and a caller holding the pre-swap value would compute the
-    wrong hvc1-tag decision (see the module docstring's HEVC-swap-ordering
-    note)."""
+    codec selection -- including produces_hevc, computed here since
+    active_encoder can be reassigned below and a caller holding the
+    pre-swap value would compute the wrong hvc1-tag decision (see the
+    module docstring's HEVC-swap-ordering note)."""
     bit_depth = request.bit_depth
     codec_name = (properties.get('codec_name') or '').lower()
     source_is_hevc = codec_name == 'hevc'
@@ -485,15 +458,10 @@ def build(request: RequestLike, properties: 'dict[str, Any]',
 
     cmd = [FFMPEG_EXECUTABLE, '-loglevel', 'info']
     cmd += gpu.pre_input_args
-    # The bundled ffmpeg is built without a software AV1 decoder, so its only
-    # AV1 decoder is the native `av1` one, which is hwaccel-only. With no
-    # decode device set up it can't produce a pixel format and the run aborts
-    # ("your platform doesn't support hardware accelerated AV1 decoding",
-    # issue #13) -- on every non-NVENC/QSV path, i.e. plain CPU encode, AMF,
-    # and the libplacebo Vulkan path. -hwaccel auto lets ffmpeg pick whatever
-    # AV1 decode accelerator the machine has (d3d11va/dxva2/nvdec/qsv/vulkan)
-    # and downloads frames to system memory for the filter chain. Skipped when
-    # a device path already set -hwaccel (NVENC cuda, QSV, cuda-interop).
+    # The bundled ffmpeg's only AV1 decoder is hwaccel-only; with no decode
+    # device it aborts (issue #13) on CPU encode, AMF, and Vulkan paths.
+    # -hwaccel auto picks whatever accelerator exists and downloads frames
+    # for the filter chain. Skipped if a device path already set -hwaccel.
     if ((properties.get('codec_name') or '').lower() == 'av1'
             and '-hwaccel' not in gpu.pre_input_args):
         cmd += ['-hwaccel', 'auto']

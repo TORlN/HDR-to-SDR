@@ -262,7 +262,15 @@ class ConversionManager:
             proc.wait()
             returncode = proc.returncode
             if returncode != 0 and request.use_gpu and gpu_error_detected and not self.cancelled:
-                logging.warning("GPU acceleration failed. Retrying with CPU encoding.")
+                # Real ffmpeg output, not just the fixed string below -- this
+                # is app.log's only record of *why* GPU encoding failed
+                # (the red GPU status label's click-to-open-log action in
+                # gui.py depends on it), same reasoning as _probe_encoder's
+                # own failure logging above. issue #13.
+                tail = '\n'.join(error_messages[-50:])
+                logging.warning(
+                    f"GPU acceleration failed. Retrying with CPU encoding. "
+                    f"ffmpeg output:\n{tail}")
                 # The retry touches Tk (gpu checkbox, dialog, UI state) and must run
                 # on the main thread, not this worker thread.
                 view.schedule(lambda: self._retry_with_cpu(request, view))
@@ -283,7 +291,8 @@ class ConversionManager:
         """
         view.notify(Notice.warning(
             "GPU Acceleration Failed",
-            "GPU acceleration failed. Switching to CPU encoding."))
+            "GPU acceleration failed. Switching to CPU encoding. "
+            "See app.log for details."))
         try:
             self.start(replace(request, use_gpu=False), view)
         except Exception as e:
@@ -437,11 +446,24 @@ class ConversionManager:
                 [FFMPEG_EXECUTABLE, '-hide_banner', '-loglevel', 'error',
                  '-f', 'lavfi', '-i', 'color=black:s=320x240:d=0.1',
                  '-frames:v', '1', '-c:v', encoder, '-f', 'null', '-'],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                universal_newlines=True,
                 startupinfo=si, creationflags=flags, timeout=3,
             )
-            return result.returncode == 0
-        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+            if result.returncode != 0:
+                # WARNING, not debug: app.log is written at WARNING by
+                # default (utils.setup_logging), and this is the one place
+                # a listed-but-nonfunctional encoder's real failure reason
+                # gets recorded anywhere -- the red GPU status label's
+                # click-to-open-log action in gui.py depends on it landing
+                # here (issue #13).
+                logging.warning(
+                    f"GPU probe failed for {encoder} (exit {result.returncode}): "
+                    f"{result.stderr.strip()}")
+                return False
+            return True
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as e:
+            logging.warning(f"GPU probe failed for {encoder}: {e}")
             return False
 
     def detect_gpu_encoder(self) -> str | None:

@@ -819,7 +819,7 @@ class TestGuiInteractions(unittest.TestCase):
         gui._detect_gpu_acceleration()
 
         gui.gpu_accel_var.set.assert_called_once_with(True)
-        gui.gpu_status_label.config.assert_called_once_with(text="✓ GPU", foreground='green')
+        gui.gpu_status_label.config.assert_any_call(text="✓ GPU", foreground='green')
         mock_mb.showwarning.assert_not_called()
 
     @patch('src.gui.messagebox')
@@ -833,7 +833,7 @@ class TestGuiInteractions(unittest.TestCase):
         gui._detect_gpu_acceleration()
 
         gui.gpu_accel_var.set.assert_called_once_with(False)
-        gui.gpu_status_label.config.assert_called_once_with(text="✗ GPU", foreground='red')
+        gui.gpu_status_label.config.assert_any_call(text="✗ GPU", foreground='red')
         mock_mb.showwarning.assert_called_once()
 
     @patch('src.gui.messagebox')
@@ -847,7 +847,7 @@ class TestGuiInteractions(unittest.TestCase):
         gui._detect_gpu_acceleration()
 
         gui.gpu_accel_var.set.assert_called_once_with(False)
-        gui.gpu_status_label.config.assert_called_once_with(text="✗ GPU", foreground='red')
+        gui.gpu_status_label.config.assert_any_call(text="✗ GPU", foreground='red')
         mock_mb.showerror.assert_called_once()
         mock_mb.showwarning.assert_not_called()
 
@@ -882,8 +882,32 @@ class TestGuiInteractions(unittest.TestCase):
         enter_callback(MagicMock())
 
         gui.show_tooltip.assert_called_once_with(
-            ANY, "No GPU Detected. GPU Acceleration Disabled")
+            ANY, "No GPU Detected. GPU Acceleration Disabled\n"
+                 "Click for the log file with the failure details.")
         mock_cm.gpu_name.assert_not_called()
+
+    @patch('src.gui.conversion_manager')
+    def test_gpu_status_click_when_unavailable_opens_log(self, mock_cm):
+        gui = _bare_gui()
+        gui.gpu_status_label = MagicMock()
+
+        gui._bind_gpu_status_tooltip(False)
+        click_callback = gui.gpu_status_label.bind.call_args_list[2].args[1]
+        with patch('src.gui._utils_log_file_path', return_value='C:\\logs\\app.log'), \
+                patch('src.gui.webbrowser') as mock_browser:
+            click_callback(MagicMock())
+        mock_browser.open.assert_called_once_with('C:\\logs\\app.log')
+
+    @patch('src.gui.conversion_manager')
+    def test_gpu_status_available_unbinds_click(self, mock_cm):
+        """A GPU that starts unavailable then becomes available on a later
+        rebind (e.g. driver fixed, app relaunched) must not keep opening the
+        log on click -- there's nothing to diagnose anymore."""
+        gui = _bare_gui()
+        gui.gpu_status_label = MagicMock()
+
+        gui._bind_gpu_status_tooltip(True)
+        gui.gpu_status_label.unbind.assert_called_once_with('<Button-1>')
 
     def test_apply_lut_export_availability_disables_when_gpu_off(self):
         gui = _bare_gui()

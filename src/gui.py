@@ -11,7 +11,8 @@ from conversion import ConversionRequest, conversion_manager
 from tk_conversion_view import TkConversionView
 from utils import (get_video_properties, get_maxcll, TONEMAP,
                    is_gpu_only_tonemapper, vulkan_libplacebo_available,
-                   VIDEO_FILE_FILTER, parse_drop_paths as _shared_parse_drop_paths)
+                   VIDEO_FILE_FILTER, parse_drop_paths as _shared_parse_drop_paths,
+                   _log_file_path as _utils_log_file_path)
 from settings import load_settings, save_settings
 from PIL import Image
 from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -1656,17 +1657,32 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._bind_gpu_status_tooltip(available)
 
     def _bind_gpu_status_tooltip(self, available: bool) -> None:
-        """Hover text for the non-interactive GPU status label.
+        """Hover text for the GPU status label.
 
         The GPU name is only looked up (and shelled out for) if a hover
-        actually happens, not at construction time.
+        actually happens, not at construction time. When unavailable, the
+        label also becomes clickable to open app.log -- the only place a
+        GPU detection/encode failure's real ffmpeg output gets recorded
+        (see conversion.py's _probe_encoder and monitor_progress). issue #13.
         """
         def _text(_available=available):
             if not _available:
-                return "No GPU Detected. GPU Acceleration Disabled"
+                return ("No GPU Detected. GPU Acceleration Disabled\n"
+                        "Click for the log file with the failure details.")
             return f"GPU Detected: {conversion_manager.gpu_name()}. GPU Acceleration Enabled"
         self.gpu_status_label.bind('<Enter>', lambda e: self.show_tooltip(e, _text()))
         self.gpu_status_label.bind('<Leave>', self.hide_tooltip)
+        if available:
+            self.gpu_status_label.unbind('<Button-1>')
+            self.gpu_status_label.config(cursor='')
+        else:
+            self.gpu_status_label.bind('<Button-1>', lambda e: self._open_gpu_log())
+            self.gpu_status_label.config(cursor='hand2')
+
+    def _open_gpu_log(self) -> None:
+        """Open app.log in the OS default viewer, for the red GPU status
+        label's click action."""
+        webbrowser.open(_utils_log_file_path())
 
     # ── Tooltips ───────────────────────────────────────────────────────────────
 

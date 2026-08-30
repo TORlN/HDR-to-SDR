@@ -1,5 +1,6 @@
 import sys
 import os
+import logging
 import subprocess  # Added import
 import multiprocessing  # Added import
 import ctypes  # Added import for SW_HIDE
@@ -791,6 +792,47 @@ class TestDetectGpuEncoder(unittest.TestCase):
              patch('src.conversion.vulkan_libplacebo_available', return_value=False):
             self.assertTrue(m.is_gpu_acceleration_available())
             mock_detect.assert_not_called()
+
+
+class TestProbeEncoderLogging(unittest.TestCase):
+    """_probe_encoder must log the real ffmpeg failure output at WARNING
+    (app.log's level) when a candidate encoder fails its probe -- otherwise
+    a listed-but-nonfunctional encoder fails silently and there's nothing
+    for the red GPU status label's click-to-open-log action to show.
+    issue #13."""
+
+    def setUp(self):
+        previous_disable = logging.root.manager.disable
+        self.addCleanup(logging.disable, previous_disable)
+        logging.disable(logging.NOTSET)
+
+    def test_failed_probe_logs_encoder_name_and_stderr(self):
+        m = ConversionManager()
+        fake_result = MagicMock(returncode=1, stderr='Failed to initialize encoder: -22')
+        with patch('src.conversion.subprocess.run', return_value=fake_result), \
+                self.assertLogs(level=logging.WARNING) as captured:
+            ok = m._probe_encoder('h264_amf')
+        self.assertFalse(ok)
+        joined = '\n'.join(captured.output)
+        self.assertIn('h264_amf', joined, msg=joined)
+        self.assertIn('Failed to initialize encoder', joined, msg=joined)
+
+    def test_successful_probe_does_not_log_a_warning(self):
+        m = ConversionManager()
+        fake_result = MagicMock(returncode=0, stderr='')
+        with patch('src.conversion.subprocess.run', return_value=fake_result):
+            with self.assertRaises(AssertionError):  # assertLogs: no warnings raised
+                with self.assertLogs(level=logging.WARNING):
+                    m._probe_encoder('h264_nvenc')
+
+    def test_probe_exception_logs_encoder_name_and_reason(self):
+        m = ConversionManager()
+        with patch('src.conversion.subprocess.run', side_effect=FileNotFoundError('no ffmpeg')), \
+                self.assertLogs(level=logging.WARNING) as captured:
+            ok = m._probe_encoder('h264_qsv')
+        self.assertFalse(ok)
+        joined = '\n'.join(captured.output)
+        self.assertIn('h264_qsv', joined, msg=joined)
 
 
 class TestGpuName(unittest.TestCase):
@@ -1592,6 +1634,38 @@ class TestGpuErrorDetectionFalsePositive(unittest.TestCase):
         mock_retry.assert_called_once()
 
 
+class TestGpuRetryLogsRealErrorContent(unittest.TestCase):
+    """The GPU->CPU retry fallback must log the actual ffmpeg failure output,
+    not just a fixed generic string -- otherwise app.log (which the red GPU
+    status label's click action opens, see gui.py) has nothing in it for a
+    user to hand back for diagnosis. issue #13: the AMD reporter's actual
+    AMF-stage error was never captured anywhere."""
+
+    def test_retry_warning_includes_the_real_ffmpeg_error_line(self):
+        manager = ConversionManager()
+        manager.cancelled = False
+        mock_proc = MagicMock()
+        mock_proc.stderr = iter([
+            "Input #0, mov,mp4,m4a, from 'movie.mp4':\n",
+            "[h264_amf @ 0x1234] Failed to initialize encoder: -22\n",
+        ])
+        mock_proc.returncode = 1
+        manager.process = mock_proc
+
+        # test/__init__.py disables all logging suite-wide; assertLogs needs
+        # it lifted for this one test (see TestBatchConversionView in
+        # tk_conversion_view_test.py for the same pattern/rationale).
+        previous_disable = logging.root.manager.disable
+        self.addCleanup(logging.disable, previous_disable)
+        logging.disable(logging.NOTSET)
+        with patch.object(manager, '_retry_with_cpu'), \
+                self.assertLogs(level=logging.WARNING) as captured:
+            manager.monitor_progress(
+                _req(output_path='out.mkv', use_gpu=True), _view(), 10.0)
+        joined = '\n'.join(captured.output)
+        self.assertIn('Failed to initialize encoder', joined, msg=joined)
+
+
 class TestDolbyVisionTierCommands(unittest.TestCase):
     """License-tier guardrails for Dolby Vision sources.
 
@@ -1968,7 +2042,8 @@ class TestRetryUsesTheRequest(unittest.TestCase):
         m._retry_with_cpu(_req(use_gpu=True), view)
         self.assertEqual(view.notices, [Notice.warning(
             "GPU Acceleration Failed",
-            "GPU acceleration failed. Switching to CPU encoding.")])
+            "GPU acceleration failed. Switching to CPU encoding. "
+            "See app.log for details.")])
 
     def test_cpu_retry_uses_the_request_it_was_handed_not_self_run_request(self):
         """FINDING 1 regression pin: monitor_progress hands _retry_with_cpu a

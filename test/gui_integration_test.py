@@ -796,8 +796,15 @@ class TestTooltip(_GuiTestBase):
 
         labels = [w for w in gui.tooltip.winfo_children() if isinstance(w, ttk.Label)]
         self.assertTrue(labels)
-        self.assertEqual(labels[0].cget('text'), "No GPU Detected. GPU Acceleration Disabled")
+        self.assertEqual(
+            labels[0].cget('text'),
+            "No GPU Detected. GPU Acceleration Disabled\n"
+            "Click for the log file with the failure details.")
         gui.hide_tooltip()
+
+        with patch('src.gui.webbrowser') as mock_browser:
+            gui.gpu_status_label.event_generate('<Button-1>')
+        mock_browser.open.assert_called_once()
 
 
 class TestUserActions(_GuiTestBase):

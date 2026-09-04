@@ -60,6 +60,14 @@ claude/
 # prohibition is mechanical rather than remembered.
 CLAUDE.md
 
+# Same rule, extended to the OpenAI Codex handoff docs (2026-09-04 migration):
+# they describe src/pro/ internals in detail, so they stay local-only, same
+# as CLAUDE.md above.
+AGENTS.md
+PROJECT_CONTEXT.md
+CURRENT_WORK.md
+DECISIONS.md
+
 # Script files
 *.sh
 # ...except the ffmpeg source-patch hook: it's the actual patch logic that

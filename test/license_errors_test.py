@@ -32,3 +32,11 @@ class TestExceptionIdentity(unittest.TestCase):
         self.assertTrue(issubclass(errors.DeviceLimitError, errors.LicenseError))
         self.assertTrue(issubclass(errors.NetworkError, errors.LicenseError))
         self.assertTrue(issubclass(errors.LicenseError, Exception))
+
+    def test_storage_error_is_reexported_as_a_license_error(self):
+        import license_errors as errors
+        import licensing as lic
+        storage_error = getattr(errors, 'LicenseStorageError', None)
+        self.assertIsNotNone(storage_error)
+        self.assertIs(getattr(lic, 'LicenseStorageError', None), storage_error)
+        self.assertTrue(issubclass(storage_error, errors.LicenseError))

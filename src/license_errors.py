@@ -21,3 +21,7 @@ class DeviceLimitError(LicenseError):
 
 class NetworkError(LicenseError):
     """The licensing server could not be reached."""
+
+
+class LicenseStorageError(LicenseError):
+    """A validated activation could not be saved on this machine."""

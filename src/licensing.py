@@ -18,6 +18,7 @@ from license_errors import (
     DeviceLimitError,
     InvalidKeyError,
     LicenseError,
+    LicenseStorageError,
     NetworkError,
 )
 
@@ -25,6 +26,7 @@ __all__ = [
     'DeviceLimitError',
     'InvalidKeyError',
     'LicenseError',
+    'LicenseStorageError',
     'NetworkError',
     'activate_license',
     'check_license',

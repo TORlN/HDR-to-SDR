@@ -261,10 +261,19 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         """Warn the user if ffmpeg/ffprobe could not be located on startup."""
         from utils import FFMPEG_EXECUTABLE, FFPROBE_EXECUTABLE
         if not FFMPEG_EXECUTABLE or not FFPROBE_EXECUTABLE:
+            if getattr(sys, 'frozen', False):
+                message = (
+                    "A bundled ffmpeg or ffprobe executable is missing. "
+                    "Please reinstall the application."
+                )
+            else:
+                message = (
+                    "ffmpeg/ffprobe could not be located. The converter cannot run "
+                    "without them. Please reinstall the application or install both tools."
+                )
             messagebox.showerror(
                 "FFmpeg Not Found",
-                "ffmpeg/ffprobe could not be located. The converter cannot run "
-                "without them. Please reinstall the application or install ffmpeg.")
+                message)
             return False
         return True
 

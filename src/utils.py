@@ -133,6 +133,8 @@ def get_executable_path(filename):
         logging.debug(f"Looking for {disk_name} at: {executable}")
 
         if not os.path.exists(executable):
+            if getattr(sys, 'frozen', False):
+                raise FileNotFoundError(f"{base} not found in bundled application")
             system_exec = shutil.which(disk_name)
             if system_exec:
                 executable = system_exec

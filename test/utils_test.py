@@ -480,6 +480,20 @@ class TestExecutableResolution(unittest.TestCase):
     def test_falls_back_to_system_path(self, _exists, _which):
         self.assertEqual(get_executable_path('ffmpeg.exe'), '/usr/bin/ffmpeg')
 
+    @patch('src.utils.shutil.which', return_value=r'C:\attacker\ffmpeg.exe')
+    @patch('src.utils.os.path.exists', return_value=False)
+    def test_frozen_build_rejects_path_fallback(self, _exists, which):
+        """A packaged app must not execute a same-named PATH executable when
+        its bundled FFmpeg is missing."""
+        for filename in ('ffmpeg.exe', 'ffprobe.exe'):
+            with self.subTest(filename=filename), \
+                    patch.object(sys, 'frozen', True, create=True), \
+                    patch.object(sys, '_MEIPASS', r'C:\missing_bundle', create=True):
+                with self.assertRaisesRegex(
+                        FileNotFoundError, rf'{filename[:-4]} not found in bundled application'):
+                    get_executable_path(filename)
+        which.assert_not_called()
+
     @patch('src.utils.shutil.which', return_value=None)
     @patch('src.utils.os.path.exists', return_value=False)
     def test_missing_everywhere_raises(self, _exists, _which):

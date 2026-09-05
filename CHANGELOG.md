@@ -28,3 +28,5 @@ this header and an empty `Unreleased` section after each new version is pushed.
 - In-app updates now verify GitHub's asset size and SHA-256 digest, restrict
   download redirects to GitHub hosts, and require a valid installer signature
   from the expected publisher before launch.
+- Packaged builds now fail safely when a bundled FFmpeg executable is missing
+  instead of using an unrelated executable found on `PATH`.

@@ -1,5 +1,6 @@
 import os
 import unittest
+import sys
 from unittest import TestCase
 from unittest.mock import patch, MagicMock, call
 import tkinter as tk
@@ -353,6 +354,20 @@ def _safe_stop(patcher):
         patcher.stop()
     except RuntimeError:
         pass
+
+
+class TestFfmpegAvailabilityMessage(TestCase):
+
+    @patch('src.gui.messagebox.showerror')
+    def test_frozen_build_advises_reinstall_only(self, showerror):
+        gui = object.__new__(HDRConverterGUI)
+        with patch('utils.FFMPEG_EXECUTABLE', None), \
+                patch('utils.FFPROBE_EXECUTABLE', None), \
+                patch.object(sys, 'frozen', True, create=True):
+            self.assertFalse(gui.check_ffmpeg_available())
+        message = showerror.call_args.args[1].lower()
+        self.assertIn('reinstall', message)
+        self.assertNotIn('or install', message)
 
 
 class TestWindowIcon(unittest.TestCase):

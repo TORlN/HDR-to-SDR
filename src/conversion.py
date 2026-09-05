@@ -55,6 +55,10 @@ class ConversionRun:
 
 
 class ConversionManager:
+    _PATH_IDENTITY_ERROR = (
+        "Could not safely verify that input and output are different files. "
+        "Check that both paths are accessible and try again.")
+
     def __init__(self) -> None:
         self.process: subprocess.Popen[str] | None = None
         self.cancelled: bool = False
@@ -161,14 +165,32 @@ class ConversionManager:
             self._reject(
                 "Please select both an input file and specify an output file.", view)
             return False
-        # normcase folds case on Windows (NTFS is case-insensitive) and is a
-        # no-op elsewhere -- without it, 'movie.mp4' vs 'Movie.mp4' would
-        # pass this guard and ffmpeg (-y) would read and write the same file.
-        if os.path.normcase(os.path.abspath(input_path)) == \
-                os.path.normcase(os.path.abspath(output_path)):
+        try:
+            same_file = self._paths_refer_to_same_file(input_path, output_path)
+        except FileNotFoundError:
+            same_file = False
+        except OSError as error:
+            logging.error(
+                f"Could not compare input {input_path} with output "
+                f"{output_path}: {error}")
+            self._reject(self._PATH_IDENTITY_ERROR, view)
+            return False
+        if same_file:
             self._reject("Input and output file cannot be the same.", view)
             return False
         return True
+
+    @staticmethod
+    def _paths_refer_to_same_file(input_path: str, output_path: str) -> bool:
+        # normcase folds case on Windows and is a no-op elsewhere.
+        input_absolute = os.path.normcase(os.path.abspath(input_path))
+        output_absolute = os.path.normcase(os.path.abspath(output_path))
+        if input_absolute == output_absolute:
+            return True
+        if (os.path.normcase(os.path.realpath(input_absolute)) ==
+                os.path.normcase(os.path.realpath(output_absolute))):
+            return True
+        return os.path.samefile(input_absolute, output_absolute)
 
     def _resolve_gpu_encoder(self) -> 'str | None':
         if self._gpu_encoder is None:
@@ -272,13 +294,34 @@ class ConversionManager:
                 if (returncode == 0 and not self.cancelled
                         and temporary_output_path is not None):
                     try:
-                        os.replace(temporary_output_path, request.output_path)
+                        same_file = self._paths_refer_to_same_file(
+                            request.input_path, request.output_path)
+                    except FileNotFoundError:
+                        same_file = False
                     except OSError as error:
-                        completion_error = (
-                            f"Could not save completed output to "
-                            f"{request.output_path}: {error}")
-                        logging.error(completion_error)
+                        same_file = False
+                        completion_error = self._PATH_IDENTITY_ERROR
+                        logging.error(
+                            f"Could not compare input {request.input_path} "
+                            f"with output {request.output_path} before "
+                            f"publication: {error}")
                         self._discard_temporary_output(temporary_output_path)
+                    if completion_error is None:
+                        if same_file:
+                            completion_error = (
+                                "Input and output file cannot be the same.")
+                            self._discard_temporary_output(temporary_output_path)
+                        else:
+                            try:
+                                os.replace(
+                                    temporary_output_path, request.output_path)
+                            except OSError as error:
+                                completion_error = (
+                                    f"Could not save completed output to "
+                                    f"{request.output_path}: {error}")
+                                logging.error(completion_error)
+                                self._discard_temporary_output(
+                                    temporary_output_path)
                 elif temporary_output_path is not None:
                     self._discard_temporary_output(temporary_output_path)
                 self.handle_completion(

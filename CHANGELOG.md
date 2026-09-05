@@ -18,3 +18,6 @@ this header and an empty `Unreleased` section after each new version is pushed.
 - Existing output files are now replaced only after a conversion finishes
   successfully. Cancellation, encoding failure, and fallback failure preserve
   the previous file instead of leaving a partial replacement.
+- Input and output paths that identify the same file through links, junctions,
+  mapped drives, or other filesystem aliases are now rejected before conversion
+  and checked again before the completed output is published.

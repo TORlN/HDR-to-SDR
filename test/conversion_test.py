@@ -107,9 +107,11 @@ class TestTransactionalOutput(unittest.TestCase):
                          msg='the monitor cannot publish or clean up the temp path')
         self.assertEqual(monitor_args[3], temp_path)
 
+    @patch('src.conversion.os.path.samefile',
+           side_effect=FileNotFoundError('new output'))
     @patch('src.conversion.os.replace')
     def test_success_atomically_publishes_before_reporting_or_opening(
-            self, mock_replace):
+            self, mock_replace, _mock_samefile):
         """Removing or moving the replace call would expose a partial final
         file or report success before the completed output was published."""
         events = []
@@ -135,15 +137,70 @@ class TestTransactionalOutput(unittest.TestCase):
         manager.process = process
         view = OrderedView()
 
-        manager.monitor_progress(
-            _req(output_path=final_path, open_after_conversion=True),
-            view, 120.0, temp_path)
+        try:
+            manager.monitor_progress(
+                _req(output_path=final_path, open_after_conversion=True),
+                view, 120.0, temp_path)
+        except FileNotFoundError as error:
+            self.fail(f'new destination was rejected before publication: {error}')
 
         self.assertEqual(events, [
             ('replace', temp_path, final_path),
             ('notice', 'info'),
             ('open', final_path),
         ])
+
+    @patch('src.conversion.os.replace')
+    @patch('src.conversion.os.remove')
+    def test_publish_rejects_destination_that_became_input_alias(
+            self, mock_remove, mock_replace):
+        """Removing the publication-time identity check would let a path
+        redirected during conversion replace the original HDR source."""
+        manager = ConversionManager()
+        manager._paths_refer_to_same_file = MagicMock(return_value=True)
+        process = MagicMock()
+        process.stderr = iter([])
+        process.returncode = 0
+        manager.process = process
+        complete = MagicMock()
+        temp_path = os.path.abspath('.complete.mkv')
+
+        manager.monitor_progress(
+            _req(), _view(on_complete=complete), 120.0, temp_path)
+
+        complete.assert_called_once_with(
+            False, 'Input and output file cannot be the same.')
+        mock_remove.assert_called_once_with(temp_path)
+        mock_replace.assert_not_called()
+
+    @patch('src.conversion.os.replace')
+    @patch('src.conversion.os.remove')
+    def test_publish_fails_closed_when_identity_cannot_be_read(
+            self, mock_remove, mock_replace):
+        """Allowing a publication-time identity error to escape would strand
+        completion, while ignoring it could replace the original source."""
+        manager = ConversionManager()
+        manager._paths_refer_to_same_file = MagicMock(
+            side_effect=PermissionError('access denied'))
+        process = MagicMock()
+        process.stderr = iter([])
+        process.returncode = 0
+        manager.process = process
+        complete = MagicMock()
+        temp_path = os.path.abspath('.complete.mkv')
+
+        try:
+            manager.monitor_progress(
+                _req(), _view(on_complete=complete), 120.0, temp_path)
+        except PermissionError as error:
+            self.fail(f'publication identity error escaped: {error}')
+
+        complete.assert_called_once_with(
+            False,
+            "Could not safely verify that input and output are different "
+            "files. Check that both paths are accessible and try again.")
+        mock_remove.assert_called_once_with(temp_path)
+        mock_replace.assert_not_called()
 
     @patch('src.conversion.os.replace')
     @patch('src.conversion.os.remove')
@@ -516,7 +573,13 @@ class TestConversionManager(unittest.TestCase):
             "Warning", "Please select both an input file and specify an output file.")])
 
         view = _view()
-        self.assertTrue(manager.verify_paths('input.mp4', 'output.mkv', view))
+        with patch('src.conversion.os.path.samefile',
+                   side_effect=FileNotFoundError('new output')):
+            try:
+                valid = manager.verify_paths('input.mp4', 'output.mkv', view)
+            except FileNotFoundError as error:
+                self.fail(f'new output was rejected as an identity error: {error}')
+        self.assertTrue(valid)
         self.assertEqual(view.notices, [])
 
     def test_verify_paths_rejects_same_input_and_output(self):
@@ -532,6 +595,51 @@ class TestConversionManager(unittest.TestCase):
         self.assertFalse(manager.verify_paths('./video.mp4', 'video.mp4', view))
         self.assertEqual(view.notices, [Notice.warning(
             "Warning", "Input and output file cannot be the same.")])
+
+        view = _view()
+        with patch('src.conversion.os.path.realpath',
+                   return_value='C:/canonical/video.mp4'):
+            self.assertFalse(manager.verify_paths(
+                'C:/linked/video.mp4', 'C:/canonical/video.mp4', view))
+        self.assertEqual(view.notices, [Notice.warning(
+            "Warning", "Input and output file cannot be the same.")])
+
+    def test_verify_paths_uses_filesystem_identity_for_existing_files(self):
+        """Removing samefile would accept different path spellings that
+        identify one existing file, including hardlinks and mapped paths."""
+        manager = ConversionManager()
+        with patch('src.conversion.os.path.realpath', side_effect=lambda path: path), \
+                patch('src.conversion.os.path.samefile', side_effect=(True, False)):
+            alias_view = _view()
+            self.assertFalse(manager.verify_paths(
+                'C:/source/video.mp4', 'Z:/alias/video.mp4', alias_view))
+            distinct_view = _view()
+            self.assertTrue(manager.verify_paths(
+                'C:/source/video.mp4', 'Z:/other/video.mp4', distinct_view))
+
+        self.assertEqual(alias_view.notices, [Notice.warning(
+            "Warning", "Input and output file cannot be the same.")])
+        self.assertEqual(distinct_view.notices, [])
+
+    def test_verify_paths_fails_closed_when_identity_cannot_be_read(self):
+        """Allowing a non-missing identity error would risk replacing the
+        input when the filesystem cannot prove the existing paths distinct."""
+        manager = ConversionManager()
+        view = _view()
+        with patch('src.conversion.os.path.realpath', side_effect=lambda path: path), \
+                patch('src.conversion.os.path.samefile',
+                      side_effect=PermissionError('access denied')):
+            try:
+                valid = manager.verify_paths(
+                    'C:/source/video.mp4', 'Z:/output/video.mp4', view)
+            except PermissionError as error:
+                self.fail(f'identity inspection error escaped: {error}')
+
+        self.assertFalse(valid)
+        self.assertEqual(view.notices, [Notice.warning(
+            "Warning",
+            "Could not safely verify that input and output are different "
+            "files. Check that both paths are accessible and try again.")])
 
     @unittest.skipUnless(sys.platform == 'win32', "NTFS case-insensitivity is Windows-only")
     def test_verify_paths_rejects_case_variant_of_same_file(self):

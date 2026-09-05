@@ -15,4 +15,6 @@ this header and an empty `Unreleased` section after each new version is pushed.
   while Community single-file conversion remains available.
 - Malformed local license data is now rejected safely instead of causing a
   startup error or an unnecessary online request.
-
+- Existing output files are now replaced only after a conversion finishes
+  successfully. Cancellation, encoding failure, and fallback failure preserve
+  the previous file instead of leaving a partial replacement.

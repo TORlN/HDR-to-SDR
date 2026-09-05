@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tempfile
 import threading
 import re
 import logging
@@ -105,22 +106,35 @@ class ConversionManager:
                 view)
             return False
 
+        descriptor, temporary_output_path = tempfile.mkstemp(
+            dir=os.path.dirname(request.output_path),
+            prefix='.hdr-to-sdr-',
+            suffix=os.path.splitext(request.output_path)[1])
+        os.close(descriptor)
+
         view.set_inputs_enabled(False)
         view.set_cancel_visible(True, on_cancel=self.cancel_conversion)
 
         try:
-            cmd = self.construct_ffmpeg_command(request, properties, view)
+            cmd = self.construct_ffmpeg_command(
+                replace(request, output_path=temporary_output_path),
+                properties, view)
         except Exception:
+            self._discard_temporary_output(temporary_output_path)
             # UI was already disabled and Cancel gridded, but self.process isn't
             # assigned yet -- undo both so the app isn't left permanently disabled.
             view.set_inputs_enabled(True)
             view.set_cancel_visible(False)
             raise
-        self.process = self.start_ffmpeg_process(cmd)
+        try:
+            self.process = self.start_ffmpeg_process(cmd)
+        except Exception:
+            self._discard_temporary_output(temporary_output_path)
+            raise
 
         thread = threading.Thread(
             target=self.monitor_progress,
-            args=(request, view, properties['duration']))
+            args=(request, view, properties['duration'], temporary_output_path))
         thread.daemon = True
         thread.start()
         return True
@@ -210,7 +224,8 @@ class ConversionManager:
         return process
 
     def monitor_progress(self, request: ConversionRequest, view: ConversionView,
-                         duration: float) -> None:
+                         duration: float,
+                         temporary_output_path: str | None = None) -> None:
         progress_pattern = re.compile(r'time=(\d+:\d+:\d+\.\d+)')
         error_messages: list[str] = []
         gpu_error_detected = False
@@ -219,6 +234,7 @@ class ConversionManager:
         # self.process = None concurrently, so use `proc` throughout instead.
         proc = self.process
         if proc is None or proc.stderr is None:
+            self._discard_temporary_output(temporary_output_path)
             return
         for line in proc.stderr:
             if self.cancelled:
@@ -243,6 +259,7 @@ class ConversionManager:
             proc.wait()
             returncode = proc.returncode
             if returncode != 0 and request.use_gpu and gpu_error_detected and not self.cancelled:
+                self._discard_temporary_output(temporary_output_path)
                 # Real ffmpeg output goes to app.log -- the red GPU status
                 # label's click-to-open-log action in gui.py depends on it.
                 tail = '\n'.join(error_messages[-50:])
@@ -251,7 +268,32 @@ class ConversionManager:
                     f"ffmpeg output:\n{tail}")
                 view.schedule(lambda: self._retry_with_cpu(request, view))  # must run on main thread (Tk)
             else:
-                self.handle_completion(request, view, error_messages, returncode)
+                completion_error = None
+                if (returncode == 0 and not self.cancelled
+                        and temporary_output_path is not None):
+                    try:
+                        os.replace(temporary_output_path, request.output_path)
+                    except OSError as error:
+                        completion_error = (
+                            f"Could not save completed output to "
+                            f"{request.output_path}: {error}")
+                        logging.error(completion_error)
+                        self._discard_temporary_output(temporary_output_path)
+                elif temporary_output_path is not None:
+                    self._discard_temporary_output(temporary_output_path)
+                self.handle_completion(
+                    request, view, error_messages, returncode, completion_error)
+
+    @staticmethod
+    def _discard_temporary_output(path: str | None) -> None:
+        if path is None:
+            return
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            logging.warning(f"Could not remove temporary output {path}: {error}")
 
     def _retry_with_cpu(self, request: ConversionRequest,
                         view: ConversionView) -> None:
@@ -280,7 +322,8 @@ class ConversionManager:
         return hours * 3600 + minutes * 60 + seconds
 
     def handle_completion(self, request: ConversionRequest, view: ConversionView,
-                          error_messages: list[str], returncode: int) -> None:
+                          error_messages: list[str], returncode: int,
+                          completion_error: str | None = None) -> None:
         def _handle() -> None:
             # returncode is monitor_progress's locally-captured value, not
             # re-read from self.process (which cancel_conversion can null out
@@ -289,22 +332,28 @@ class ConversionManager:
             if on_complete is not None:
                 # Batch/queue mode: callback marks status and advances the
                 # queue; final summary + UI re-enable happen when it drains.
-                success = returncode == 0
+                success = (returncode == 0 and not self.cancelled
+                           and completion_error is None)
                 reason = None
                 if not success:
-                    if not self.cancelled:
+                    if self.cancelled:
+                        reason = 'Cancelled by user'
+                    elif completion_error is not None:
+                        reason = completion_error
+                    else:
                         tail = '\n'.join(error_messages[-50:])
                         logging.error(f"Batch item failed with code "
                                       f"{returncode}: {tail}")
-                    # ffmpeg's fatal error is usually near stderr's end; fall
-                    # back to the exit code if nothing was captured.
-                    reason = next(
-                        (line for line in reversed(error_messages) if line),
-                        f"Failed with exit code {returncode}")
+                        # ffmpeg's fatal error is usually near stderr's end;
+                        # fall back to the exit code if nothing was captured.
+                        reason = next(
+                            (line for line in reversed(error_messages) if line),
+                            f"Failed with exit code {returncode}")
                 on_complete(success, reason)
                 return
 
-            if returncode == 0:
+            if (returncode == 0 and not self.cancelled
+                    and completion_error is None):
                 logging.info("Conversion completed successfully.")
                 view.notify(Notice.info(
                     "Success",
@@ -312,11 +361,14 @@ class ConversionManager:
                 if request.open_after_conversion:
                     view.open_output(request.output_path)
             elif not self.cancelled:
-                tail = error_messages[-50:]  # ffmpeg stderr can be thousands of progress lines; show only the tail where real errors appear
-                error_message = '\n'.join(tail)
-                logging.error(f"Conversion failed with code {returncode}: {error_message}")
-                view.notify(Notice.error(
-                    "Error", f"Conversion failed with code {returncode}\n{error_message}"))
+                if completion_error is not None:
+                    view.notify(Notice.error("Error", completion_error))
+                else:
+                    tail = error_messages[-50:]  # ffmpeg stderr can be thousands of progress lines; show only the tail where real errors appear
+                    error_message = '\n'.join(tail)
+                    logging.error(f"Conversion failed with code {returncode}: {error_message}")
+                    view.notify(Notice.error(
+                        "Error", f"Conversion failed with code {returncode}\n{error_message}"))
 
             view.set_inputs_enabled(True)
             view.set_cancel_visible(False)

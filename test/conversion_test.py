@@ -72,6 +72,226 @@ class TestConversionRequest(unittest.TestCase):
                              msg=f'replace() dropped {field}')
 
 
+class TestTransactionalOutput(unittest.TestCase):
+
+    @patch('src.conversion.threading.Thread')
+    @patch('src.conversion.vulkan_libplacebo_available', return_value=False)
+    @patch('src.conversion.get_video_properties')
+    @patch('tempfile.mkstemp')
+    @patch('os.close')
+    def test_start_encodes_to_sibling_temp_with_final_container_suffix(
+            self, mock_close, mock_mkstemp, mock_properties, _mock_vulkan,
+            _mock_thread):
+        """Removing the derived temporary request would send FFmpeg back to
+        the final destination and expose an existing output to truncation."""
+        final_path = os.path.abspath(os.path.join('exports', 'movie.mp4'))
+        temp_path = os.path.join(os.path.dirname(final_path),
+                                 '.hdr-to-sdr-unique.mp4')
+        mock_mkstemp.return_value = (42, temp_path)
+        mock_properties.return_value = dict(_PROPS, duration=120.0,
+                                            codec_name='h264')
+        manager = ConversionManager()
+        manager.start_ffmpeg_process = MagicMock(return_value=MagicMock())
+
+        manager.start(_req(output_path=final_path), _view())
+
+        cmd = manager.start_ffmpeg_process.call_args.args[0]
+        self.assertEqual(cmd[-2], temp_path)
+        self.assertEqual(manager._run.request.output_path, final_path)
+        mock_mkstemp.assert_called_once_with(
+            dir=os.path.dirname(final_path), prefix='.hdr-to-sdr-', suffix='.mp4')
+        mock_close.assert_called_once_with(42)
+        monitor_args = _mock_thread.call_args.kwargs['args']
+        self.assertEqual(monitor_args[0].output_path, final_path)
+        self.assertEqual(len(monitor_args), 4,
+                         msg='the monitor cannot publish or clean up the temp path')
+        self.assertEqual(monitor_args[3], temp_path)
+
+    @patch('src.conversion.os.replace')
+    def test_success_atomically_publishes_before_reporting_or_opening(
+            self, mock_replace):
+        """Removing or moving the replace call would expose a partial final
+        file or report success before the completed output was published."""
+        events = []
+        final_path = os.path.abspath('finished.mkv')
+        temp_path = os.path.abspath('.hdr-to-sdr-unique.mkv')
+        mock_replace.side_effect = (
+            lambda source, destination:
+            events.append(('replace', source, destination)))
+
+        class OrderedView(RecordingConversionView):
+            def notify(self, notice):
+                events.append(('notice', notice.kind))
+                super().notify(notice)
+
+            def open_output(self, path):
+                events.append(('open', path))
+                super().open_output(path)
+
+        manager = ConversionManager()
+        process = MagicMock()
+        process.stderr = iter([])
+        process.returncode = 0
+        manager.process = process
+        view = OrderedView()
+
+        manager.monitor_progress(
+            _req(output_path=final_path, open_after_conversion=True),
+            view, 120.0, temp_path)
+
+        self.assertEqual(events, [
+            ('replace', temp_path, final_path),
+            ('notice', 'info'),
+            ('open', final_path),
+        ])
+
+    @patch('src.conversion.os.replace')
+    @patch('src.conversion.os.remove')
+    def test_unsuccessful_runs_discard_temp_without_publishing(
+            self, mock_remove, mock_replace):
+        """Removing any cleanup branch would leave partial files behind;
+        publishing a cancelled zero-exit run would violate cancellation."""
+        cases = (
+            ('ffmpeg failure', False, False, 1, ['disk full']),
+            ('cancelled zero exit', True, False, 0, []),
+            ('gpu fallback', False, True, 1, ['Cannot load nvcuda.dll']),
+        )
+        for name, cancelled, use_gpu, returncode, stderr in cases:
+            with self.subTest(name=name):
+                manager = ConversionManager()
+                manager.cancelled = cancelled
+                manager._retry_with_cpu = MagicMock()
+                process = MagicMock()
+                process.stderr = iter(stderr)
+                process.returncode = returncode
+                manager.process = process
+                final_path = os.path.abspath(f'{name}.mkv')
+                temp_path = os.path.abspath(f'.{name}.mkv')
+
+                manager.monitor_progress(
+                    _req(output_path=final_path, use_gpu=use_gpu),
+                    _view(), 120.0, temp_path)
+
+                mock_remove.assert_called_once_with(temp_path)
+                mock_replace.assert_not_called()
+                if use_gpu:
+                    manager._retry_with_cpu.assert_called_once()
+                mock_remove.reset_mock()
+                mock_replace.reset_mock()
+
+    @patch('src.conversion.os.remove')
+    def test_cancelled_zero_exit_is_reported_as_failure(self, _mock_remove):
+        """Treating return code zero alone as success would mark a cancelled
+        batch item Done even though its temporary output was discarded."""
+        manager = ConversionManager()
+        manager.cancelled = True
+        process = MagicMock()
+        process.stderr = iter([])
+        process.returncode = 0
+        manager.process = process
+        complete = MagicMock()
+
+        manager.monitor_progress(
+            _req(output_path=os.path.abspath('final.mkv')),
+            _view(on_complete=complete), 120.0,
+            os.path.abspath('.cancelled.mkv'))
+
+        complete.assert_called_once_with(False, 'Cancelled by user')
+
+    @patch('src.conversion.os.remove')
+    @patch('src.conversion.os.replace', side_effect=OSError('destination is locked'))
+    def test_publish_failure_preserves_final_and_reports_failure(
+            self, _mock_replace, mock_remove):
+        """Letting replace errors escape would strand batch state and leave
+        the completed temporary file behind without a user-visible failure."""
+        manager = ConversionManager()
+        process = MagicMock()
+        process.stderr = iter([])
+        process.returncode = 0
+        manager.process = process
+        complete = MagicMock()
+        final_path = os.path.abspath('locked.mkv')
+        temp_path = os.path.abspath('.complete.mkv')
+
+        try:
+            manager.monitor_progress(
+                _req(output_path=final_path), _view(on_complete=complete),
+                120.0, temp_path)
+        except OSError as error:
+            self.fail(f'publish failure escaped the conversion lifecycle: {error}')
+
+        complete.assert_called_once_with(
+            False,
+            f'Could not save completed output to {final_path}: destination is locked')
+        mock_remove.assert_called_once_with(temp_path)
+
+    @patch('src.conversion.threading.Thread')
+    @patch('src.conversion.os.remove')
+    @patch('src.conversion.os.close')
+    @patch('src.conversion.tempfile.mkstemp')
+    @patch('src.conversion.get_video_properties')
+    def test_startup_failures_discard_reserved_temp(
+            self, mock_properties, mock_mkstemp, _mock_close, mock_remove,
+            _mock_thread):
+        """Dropping either exception cleanup would leak an empty or partial
+        temporary file before the monitor thread can assume ownership."""
+        mock_properties.return_value = dict(_PROPS, duration=120.0,
+                                            codec_name='h264')
+        cases = ('command construction', 'process launch')
+        for name in cases:
+            with self.subTest(name=name):
+                temp_path = os.path.abspath(f'.{name}.mkv')
+                mock_mkstemp.return_value = (42, temp_path)
+                manager = ConversionManager()
+                if name == 'command construction':
+                    manager.construct_ffmpeg_command = MagicMock(
+                        side_effect=ValueError('bad command'))
+                else:
+                    manager.construct_ffmpeg_command = MagicMock(
+                        return_value=['ffmpeg'])
+                    manager.start_ffmpeg_process = MagicMock(
+                        side_effect=OSError('launch failed'))
+
+                with self.assertRaises((ValueError, OSError)):
+                    manager.start(_req(), _view())
+
+                mock_remove.assert_called_once_with(temp_path)
+                mock_remove.reset_mock()
+
+    @patch('src.conversion.os.remove')
+    def test_monitor_cancelled_before_start_discards_temp(self, mock_remove):
+        """The early process-none return must not orphan the reserved file
+        when Cancel wins the race before the monitor captures the process."""
+        manager = ConversionManager()
+        manager.cancelled = True
+        manager.process = None
+        temp_path = os.path.abspath('.cancelled-before-monitor.mkv')
+
+        manager.monitor_progress(_req(), _view(), 120.0, temp_path)
+
+        mock_remove.assert_called_once_with(temp_path)
+
+    @patch('src.conversion.os.remove', side_effect=OSError('file is busy'))
+    def test_cleanup_error_does_not_mask_conversion_failure(self, _mock_remove):
+        """Letting cleanup errors escape would suppress the real FFmpeg
+        failure and prevent an unattended batch from advancing."""
+        manager = ConversionManager()
+        process = MagicMock()
+        process.stderr = iter(['disk full'])
+        process.returncode = 1
+        manager.process = process
+        complete = MagicMock()
+
+        try:
+            manager.monitor_progress(
+                _req(), _view(on_complete=complete), 120.0,
+                os.path.abspath('.busy.mkv'))
+        except OSError as error:
+            self.fail(f'temporary cleanup masked conversion failure: {error}')
+
+        complete.assert_called_once_with(False, 'disk full')
+
+
 class TestConstructTakesRequest(unittest.TestCase):
 
     _PROPS = {'width': 1920, 'height': 1080, 'bit_rate': 4000000,

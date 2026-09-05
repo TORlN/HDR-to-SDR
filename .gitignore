@@ -6,6 +6,10 @@ __pycache__/
 *.pyo
 *.pyd
 *.exe
+# Release builds consume these exact binaries. Git LFS keeps their bytes
+# reviewable without placing roughly 150 MB in normal Git history.
+!src/ffmpeg.exe
+!src/ffprobe.exe
 
 # Large media: HDR source captures and test footage, none of which belongs in
 # git. The small committed smoke-test fixtures are un-ignored at the bottom of

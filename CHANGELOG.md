@@ -23,3 +23,5 @@ this header and an empty `Unreleased` section after each new version is pushed.
   and checked again before the completed output is published.
 - Mocked conversion tests no longer leave zero-byte temporary output files in
   the working tree.
+- Release builds now verify the exact Git LFS-tracked FFmpeg and ffprobe inputs
+  against a source-provenance manifest before packaging or signing.

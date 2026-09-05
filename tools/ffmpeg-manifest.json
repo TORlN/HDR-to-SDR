@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "build": {
+    "ffmpeg_source": "https://git.ffmpeg.org/ffmpeg.git",
+    "ffmpeg_revision": "b32f8d1c2377079302d23f82d555d13deda68c57",
+    "mabs_source": "https://github.com/m-ab-s/media-autobuild_suite",
+    "mabs_revision": "source archive snapshot: media-autobuild_suite.bat=74be6a79c4339acae5874a65777eaa392f6f2a078cd101d260c87f43c52f7d2, media-suite_compile.sh=77b8cb307b09fecbc72a716920e365951a6163e6bd6a2c09a0197b29ddd3ed71, media-suite_helper.sh=451bb3c6d8e0c4e8abe037756cd40e94f50512643ab51ff0746fe69b0804489a, media-suite_update.sh=663b6aff9d16c6c18121087f974fff972a30eb64478a3b9e325569cd7d749a48",
+    "configuration": "--pkg-config=pkgconf --cc='ccache gcc' --cxx='ccache g++' --ld='ccache g++' --extra-cxxflags=-fpermissive --extra-cflags=-Wno-int-conversion --disable-autodetect --enable-bzlib --enable-iconv --enable-lzma --enable-zlib --disable-debug --enable-amf --enable-cuda --enable-cuvid --enable-nvenc --enable-nvdec --enable-ffnvcodec --enable-cuda-llvm --enable-d3d12va --enable-d3d11va --enable-dxva2 --enable-libdav1d --enable-libvpl --enable-gpl --enable-libx264 --enable-libx265 --enable-libzimg --enable-vulkan --enable-libplacebo --enable-schannel --extra-libs=-liconv",
+    "patch_revision": "5b3bf1938ce419c3853774c1ff81baa0b1dc8417"
+  },
+  "files": [
+    {
+      "path": "src/ffmpeg.exe",
+      "size": 75120640,
+      "sha256": "51fc9c7b61d87b1eeb333876451b36b2b5fa8276f40cd5e19eec44250a4c5ee5"
+    },
+    {
+      "path": "src/ffprobe.exe",
+      "size": 74908160,
+      "sha256": "50d321b7a055daf5ce77659f29e21386d89f6e44ad366c0e21fe28b7d8f875aa"
+    },
+    {
+      "path": "tools/ffmpeg-patches/ffmpeg_extra.sh",
+      "size": 3166,
+      "sha256": "106dbce2f0e810b2aea9cd8badbf8cecb04b522a21159e36d73b18fcb7bde38b"
+    }
+  ]
+}

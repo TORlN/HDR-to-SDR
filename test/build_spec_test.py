@@ -121,6 +121,15 @@ class TestSpecIsRelocatable(unittest.TestCase):
 
 class TestSpecContent(unittest.TestCase):
 
+    def test_build_verifies_ffmpeg_inputs_before_pyinstaller(self):
+        """A release must reject unapproved binaries before packaging them."""
+        with open(os.path.join(_ROOT, 'build_installer.bat'), encoding='utf-8') as f:
+            bat = f.read().lower()
+        verifier = bat.find('verify_ffmpeg_manifest.py')
+        pyinstaller = bat.find('python -m pyinstaller')
+        self.assertGreaterEqual(verifier, 0, 'build does not verify pinned FFmpeg inputs')
+        self.assertGreater(pyinstaller, verifier, 'FFmpeg verification must precede PyInstaller')
+
     def test_pro_hidden_imports_match_build_script(self):
         """The spec's hiddenimports must match build_installer.bat's flags.
 

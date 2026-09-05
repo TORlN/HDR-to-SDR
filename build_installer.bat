@@ -94,6 +94,16 @@ call "%REPO_ROOT%\.venv\Scripts\activate.bat"
 if errorlevel 1 ( echo [ERROR] Failed to activate .venv & exit /b 1 )
 for /f "tokens=*" %%v in ('python --version 2^>^&1') do echo [OK] venv active: %%v
 
+:: -- Step 1.25: FFmpeg release-input gate --------------------------------------
+echo.
+echo [STEP 1.25] Verifying pinned FFmpeg release inputs
+python "%REPO_ROOT%\tools\verify_ffmpeg_manifest.py" "%REPO_ROOT%"
+if errorlevel 1 (
+    echo [ERROR] FFmpeg release input verification failed -- installer NOT built.
+    echo         Run git lfs pull, or rebuild and review the tracked manifest.
+    exit /b 1
+)
+
 :: -- Step 1.5: Test suite gate ---------------------------------------------------
 echo.
 echo [STEP 1.5] Running test suite

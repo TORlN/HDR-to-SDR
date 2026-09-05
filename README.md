@@ -93,6 +93,11 @@ icon, and generate a fresh installer `AppId`. See `TRADEMARK.md`.
 - FFmpeg (`ffmpeg` and `ffprobe` on your PATH, or bundled alongside the app)
 - GPU acceleration is optional. GPU tonemapping needs an ffmpeg build with libplacebo (Vulkan); GPU encoding is supported on NVIDIA (`h264_nvenc`), AMD (`h264_amf`), and Intel (`h264_qsv`) hardware. The app degrades gracefully to CPU when either is unavailable.
 
+Release builds use the exact Windows FFmpeg binaries tracked through Git LFS.
+Run `git lfs pull` after cloning before building an installer. The installer
+build verifies those binaries against `tools/ffmpeg-manifest.json` and refuses
+to package missing, stale, or modified inputs.
+
 ## Installation
 
 1. Download the latest release from the [releases page](https://github.com/TORlN/HDR-to-SDR/releases).

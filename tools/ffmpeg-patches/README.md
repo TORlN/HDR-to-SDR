@@ -122,3 +122,24 @@ Confirmed via one-shot debug instrumentation added directly around
 `VIDEO_ENCODE_SRC_BIT_KHR` was never even in `supported_usage` for this
 format/config (confirming that patch's irrelevance here) while
 `HOST_TRANSFER_BIT_EXT` (`0x400000`, part of `0x40000f`) was.
+
+## Release input pinning
+
+The exact `src/ffmpeg.exe` and `src/ffprobe.exe` release inputs are tracked
+through Git LFS. `tools/ffmpeg-manifest.json` records their sizes, SHA-256
+digests, upstream revision, configuration, MABS provenance, and the patch
+revision that produced them. `build_installer.bat` verifies the manifest before
+PyInstaller runs, so an unreviewed binary cannot be packaged and signed.
+
+After rebuilding FFmpeg:
+
+1. Confirm `C:\MABS\build\ffmpeg_extra.sh` exactly matches the tracked
+   `ffmpeg_extra.sh` in this directory.
+2. Copy the new `ffmpeg.exe` and `ffprobe.exe` from MABS `bin-video` into
+   `src\`.
+3. Update every affected revision, configuration, size, and SHA-256 value in
+   `tools/ffmpeg-manifest.json`. Record a full MABS commit when available. If
+   MABS came from an archive without Git metadata, record SHA-256 values for
+   the exact suite scripts instead.
+4. Run `.venv\Scripts\python.exe tools\verify_ffmpeg_manifest.py .`.
+5. Review the manifest and Git LFS pointer changes together before release.

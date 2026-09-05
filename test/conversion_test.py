@@ -2177,7 +2177,10 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         with patch.object(manager, 'construct_ffmpeg_command',
                           return_value=['ffmpeg']) as mock_build, \
              patch.object(manager, 'start_ffmpeg_process', return_value=MagicMock()), \
-             patch.object(manager, 'monitor_progress'):
+             patch.object(manager, 'monitor_progress'), \
+             patch('src.conversion.tempfile.mkstemp',
+                   return_value=(42, os.path.abspath('.mock-output.mkv'))), \
+             patch('src.conversion.os.close'):
             manager.start(_req(input_path='in.mkv', licensed=True), _view())
         self.assertIs(mock_build.call_args.args[0].licensed, True)
 
@@ -2188,7 +2191,10 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
              patch.object(manager, 'construct_ffmpeg_command',
                           return_value=['ffmpeg']) as mock_build, \
              patch.object(manager, 'start_ffmpeg_process', return_value=MagicMock()), \
-             patch.object(manager, 'monitor_progress'):
+             patch.object(manager, 'monitor_progress'), \
+             patch('src.conversion.tempfile.mkstemp',
+                   return_value=(42, os.path.abspath('.mock-output.mkv'))), \
+             patch('src.conversion.os.close'):
             manager.start(_req(input_path='in.mkv', quality=30000,
                                quality_mode='bitrate'), _view())
         self.assertEqual(mock_build.call_args.args[0].quality_mode, 'bitrate')
@@ -2276,7 +2282,10 @@ class TestStartBuildsRequest(unittest.TestCase):
                    return_value={'duration': 10.0, 'bit_rate': 4000000}), \
              patch.object(manager, 'construct_ffmpeg_command', return_value=['ffmpeg']), \
              patch.object(manager, 'start_ffmpeg_process', return_value=MagicMock()), \
-             patch.object(manager, 'monitor_progress'):
+             patch.object(manager, 'monitor_progress'), \
+             patch('src.conversion.tempfile.mkstemp',
+                   return_value=(42, os.path.abspath('.mock-output.mkv'))), \
+             patch('src.conversion.os.close'):
             manager.start(_req(input_path='in.mkv', gamma=2.2, use_gpu=True,
                                **kwargs), view if view is not None else _view())
 

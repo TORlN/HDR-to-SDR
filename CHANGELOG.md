@@ -21,3 +21,5 @@ this header and an empty `Unreleased` section after each new version is pushed.
 - Input and output paths that identify the same file through links, junctions,
   mapped drives, or other filesystem aliases are now rejected before conversion
   and checked again before the completed output is published.
+- Mocked conversion tests no longer leave zero-byte temporary output files in
+  the working tree.

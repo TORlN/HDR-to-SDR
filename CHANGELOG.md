@@ -25,3 +25,6 @@ this header and an empty `Unreleased` section after each new version is pushed.
   the working tree.
 - Release builds now verify the exact Git LFS-tracked FFmpeg and ffprobe inputs
   against a source-provenance manifest before packaging or signing.
+- In-app updates now verify GitHub's asset size and SHA-256 digest, restrict
+  download redirects to GitHub hosts, and require a valid installer signature
+  from the expected publisher before launch.

@@ -1513,11 +1513,18 @@ class TestUpdateDialog(unittest.TestCase):
                 pass
 
     _RELEASE_URL = 'https://github.com/TORlN/HDR-to-SDR/releases'
+    _DOWNLOAD_URL = (
+        'https://github.com/TORlN/HDR-to-SDR/releases/download/'
+        'v4.0.0/HDR_to_SDR_Setup.exe'
+    )
+    _SIZE = 123
+    _DIGEST = 'a' * 64
 
     def _make_dialog(self):  # type: ignore[return]
         from src.gui import _UpdateDialog  # type: ignore[attr-defined]
         dlg = _UpdateDialog(_probe_root, '3.0.0', '4.0.0',
-                             'https://example.com/setup.exe', self._RELEASE_URL)
+                             self._DOWNLOAD_URL, self._RELEASE_URL,
+                             self._SIZE, self._DIGEST)
         dlg.withdraw()
         return dlg
 
@@ -1565,6 +1572,19 @@ class TestUpdateDialog(unittest.TestCase):
         dlg.destroy()
         import shutil as _shutil
         _shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def test_download_receives_authenticated_release_metadata(self):
+        dlg = self._make_dialog()
+        with patch('updater.download_installer') as download:
+            self._start_download_sync(dlg)
+        self.assertEqual(download.call_args.args[:4], (
+            self._DOWNLOAD_URL,
+            os.path.join(dlg._tmp_dir, 'HDR_to_SDR_Setup.exe'),
+            self._SIZE,
+            self._DIGEST,
+        ))
+        self.assertTrue(callable(download.call_args.args[4]))
+        dlg.destroy()
 
     def test_later_button_cleans_up_temp_dir_after_failed_download(self):
         """A failed download leaves _tmp_dir pointing at a (possibly partial)

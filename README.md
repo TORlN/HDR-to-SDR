@@ -57,7 +57,7 @@ validation. Both calls are made directly from your machine to the respective API
 
 | Endpoint | Purpose | When | Source |
 |---|---|---|---|
-| `api.github.com` | Checks whether a newer release exists, and downloads the installer if you accept. The actual installer download is a redirect to GitHub's asset CDN (`objects.githubusercontent.com`), not `api.github.com` itself | On startup, and when you click Update | `src/updater.py` |
+| `api.github.com` | Checks whether a newer release exists. If you accept, the installer is downloaded from `github.com` through an allowlisted GitHub asset CDN host | On startup, and when you click Update | `src/updater.py` |
 | `api.lemonsqueezy.com` | Validates a Pro license key; the implementation is in a private module | On Pro activation, and at most once every 30 days afterwards | Private (not in public repo) |
 
 **There is no analytics, no telemetry, no crash reporting, and no usage tracking** of
@@ -97,6 +97,12 @@ Release builds use the exact Windows FFmpeg binaries tracked through Git LFS.
 Run `git lfs pull` after cloning before building an installer. The installer
 build verifies those binaries against `tools/ffmpeg-manifest.json` and refuses
 to package missing, stale, or modified inputs.
+
+The in-app updater accepts only the canonical release asset, requires GitHub's
+published size and SHA-256 digest to match the downloaded bytes, and checks the
+installer's Authenticode status and publisher both after download and again
+immediately before launch. A publisher identity change must be shipped first as
+a transitional release that trusts both the old and new identities.
 
 ## Installation
 

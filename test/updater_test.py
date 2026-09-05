@@ -9,13 +9,14 @@ Covers:
   - GUI integration: _show_update_dialog constructs _UpdateDialog,
     _start_update_check calls the dialog on the main thread when an update exists
 """
-import io
+import hashlib
 import json
 import os
+import subprocess
 import sys
 import threading
 import unittest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, mock_open, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 # gui.py uses bare imports (from dark_theme import ...) resolved from src/.
@@ -31,12 +32,24 @@ from src.updater import (
     check_for_update,
     download_installer,
     launch_installer,
+    _verify_installer_signature,
 )
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _make_response(body: bytes, content_length: int | None = None) -> MagicMock:
+_DOWNLOAD_URL = (
+    'https://github.com/TORlN/HDR-to-SDR/releases/download/'
+    'v99.0.0/HDR_to_SDR_Setup.exe'
+)
+_FINAL_URL = (
+    'https://release-assets.githubusercontent.com/github-production-release-asset/'
+    '123/HDR_to_SDR_Setup.exe'
+)
+
+
+def _make_response(body: bytes, content_length: int | None = None,
+                   final_url: str = _FINAL_URL) -> MagicMock:
     """Fake urllib response context manager."""
     resp = MagicMock()
     resp.read.side_effect = [body, b'']
@@ -44,16 +57,25 @@ def _make_response(body: bytes, content_length: int | None = None) -> MagicMock:
     if content_length is not None:
         headers['Content-Length'] = str(content_length)
     resp.headers = headers
+    resp.geturl.return_value = final_url
     resp.__enter__ = lambda s: s
     resp.__exit__ = MagicMock(return_value=False)
     return resp
 
 
 def _github_payload(tag: str, asset_name: str = 'HDR_to_SDR_Setup.exe',
-                    url: str = 'https://example.com/HDR_to_SDR_Setup.exe') -> bytes:
+                    url: str = _DOWNLOAD_URL, size: int = 123,
+                    digest: str = 'sha256:' + 'a' * 64,
+                    state: str = 'uploaded') -> bytes:
     return json.dumps({
         'tag_name': tag,
-        'assets': [{'name': asset_name, 'browser_download_url': url}],
+        'assets': [{
+            'name': asset_name,
+            'browser_download_url': url,
+            'state': state,
+            'size': size,
+            'digest': digest,
+        }],
     }).encode()
 
 
@@ -85,19 +107,50 @@ class TestCheckForUpdate(unittest.TestCase):
 
     def _patch_urlopen(self, payload: bytes):
         return patch('urllib.request.urlopen',
-                     return_value=_make_response(payload))
+                     return_value=_make_response(
+                         payload, final_url=updater._GITHUB_API))
 
     def test_newer_version_returns_version_and_url(self):
         newer_tag = 'v99.0.0'
-        expected_url = 'https://example.com/HDR_to_SDR_Setup.exe'
+        expected_url = _DOWNLOAD_URL
         with self._patch_urlopen(_github_payload(newer_tag, url=expected_url)):
             result = check_for_update()
         self.assertIsNotNone(result)
         assert result is not None
-        new_ver, url, release_url = result
+        new_ver, url, release_url, size, digest = result
         self.assertEqual(new_ver, '99.0.0')
         self.assertEqual(url, expected_url)
         self.assertEqual(release_url, updater.RELEASES_URL)
+        self.assertEqual(size, 123)
+        self.assertEqual(digest, 'a' * 64)
+
+    def test_untrusted_asset_metadata_is_rejected(self):
+        invalid_payloads = (
+            _github_payload('v99.0.0', state='new'),
+            _github_payload('v99.0.0', size=0),
+            _github_payload('v99.0.0', size=updater._MAX_INSTALLER_BYTES + 1),
+            _github_payload('v99.0.0', digest='sha256:not-a-digest'),
+            _github_payload('v99.0.0', url='http://github.com/unsafe.exe'),
+            _github_payload('v99.0.0', url='https://evil.example/setup.exe'),
+            _github_payload('v99.0.0', url=_DOWNLOAD_URL + '?token=unexpected'),
+        )
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                with self._patch_urlopen(payload):
+                    self.assertIsNone(check_for_update())
+
+    def test_oversized_metadata_response_is_rejected(self):
+        payload = b'{' + b'x' * updater._MAX_METADATA_BYTES
+        with self._patch_urlopen(payload):
+            self.assertIsNone(check_for_update())
+
+    def test_metadata_redirect_to_untrusted_host_is_rejected(self):
+        response = _make_response(
+            _github_payload('v99.0.0'),
+            final_url='https://evil.example/releases/latest',
+        )
+        with patch('urllib.request.urlopen', return_value=response):
+            self.assertIsNone(check_for_update())
 
     def test_same_version_returns_none(self):
         with self._patch_urlopen(_github_payload(f'v{APP_VERSION}')):
@@ -188,56 +241,125 @@ class TestCheckForUpdate(unittest.TestCase):
 
 class TestDownloadInstaller(unittest.TestCase):
 
-    def _fake_urlopen(self, data: bytes):
+    def _fake_urlopen(self, data: bytes, *, content_length: int | None = None,
+                      final_url: str = _FINAL_URL, content_encoding: str | None = None):
         """Produces a urlopen mock that yields *data* in one chunk."""
-        resp = MagicMock()
-        resp.read.side_effect = [data, b'']
-        resp.headers = {'Content-Length': str(len(data))}
-        resp.__enter__ = lambda s: s
-        resp.__exit__ = MagicMock(return_value=False)
+        resp = _make_response(
+            data,
+            len(data) if content_length is None else content_length,
+            final_url,
+        )
+        if content_encoding is not None:
+            resp.headers['Content-Encoding'] = content_encoding
         return patch('urllib.request.urlopen', return_value=resp)
+
+    @staticmethod
+    def _digest(data: bytes) -> str:
+        return hashlib.sha256(data).hexdigest()
 
     def test_writes_content_to_file(self):
         content = b'fake installer binary'
-        import tempfile
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.exe') as tmp:
-            tmp_path = tmp.name
-        try:
+        opened = mock_open()
+        with patch('builtins.open', opened):
             with self._fake_urlopen(content):
-                download_installer('https://example.com/HDR_to_SDR_Setup.exe', tmp_path)
-            with open(tmp_path, 'rb') as f:
-                self.assertEqual(f.read(), content)
-        finally:
-            os.unlink(tmp_path)
+                with patch.object(updater, '_verify_installer_signature') as verify:
+                    download_installer(
+                        _DOWNLOAD_URL, 'setup.exe', len(content), self._digest(content))
+        opened().write.assert_called_once_with(content)
+        verify.assert_called_once_with('setup.exe')
 
     def test_progress_callback_called(self):
         content = b'x' * 200
         calls: list[tuple[int, int]] = []
-        import tempfile
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.exe') as tmp:
-            tmp_path = tmp.name
-        try:
+        with patch('builtins.open', mock_open()):
             with self._fake_urlopen(content):
-                download_installer(
-                    'https://example.com/HDR_to_SDR_Setup.exe',
-                    tmp_path,
-                    progress_cb=lambda d, t: calls.append((d, t)),
-                )
-            self.assertTrue(len(calls) > 0)
-            self.assertEqual(calls[-1][0], len(content))  # final downloaded == total
-        finally:
-            os.unlink(tmp_path)
+                with patch.object(updater, '_verify_installer_signature'):
+                    download_installer(
+                        _DOWNLOAD_URL, 'setup.exe', len(content), self._digest(content),
+                        progress_cb=lambda d, t: calls.append((d, t)),
+                    )
+        self.assertTrue(len(calls) > 0)
+        self.assertEqual(calls[-1], (len(content), len(content)))
 
     def test_no_progress_callback_is_ok(self):
         content = b'data'
-        import tempfile
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.exe') as tmp:
-            tmp_path = tmp.name
-        try:
+        with patch('builtins.open', mock_open()):
             with self._fake_urlopen(content):
-                download_installer('https://example.com/HDR_to_SDR_Setup.exe', tmp_path)
-        finally:
-            os.unlink(tmp_path)
+                with patch.object(updater, '_verify_installer_signature'):
+                    download_installer(
+                        _DOWNLOAD_URL, 'setup.exe', len(content), self._digest(content))
+
+    def test_rejects_untrusted_redirect_destination(self):
+        content = b'data'
+        with self._fake_urlopen(content, final_url='https://evil.example/setup.exe'):
+            with patch('builtins.open', mock_open()) as opened:
+                with self.assertRaisesRegex(ValueError, 'redirect'):
+                    download_installer(
+                        _DOWNLOAD_URL, 'setup.exe', len(content), self._digest(content))
+        opened.assert_not_called()
+
+    def test_rejects_mismatched_content_length(self):
+        content = b'data'
+        with self._fake_urlopen(content, content_length=len(content) + 1):
+            with patch('builtins.open', mock_open()) as opened:
+                with self.assertRaisesRegex(ValueError, 'Content-Length'):
+                    download_installer(
+                        _DOWNLOAD_URL, 'setup.exe', len(content), self._digest(content))
+        opened.assert_not_called()
+
+    def test_rejects_encoded_response(self):
+        content = b'data'
+        with self._fake_urlopen(content, content_encoding='gzip'):
+            with patch('builtins.open', mock_open()) as opened:
+                with self.assertRaisesRegex(ValueError, 'encoding'):
+                    download_installer(
+                        _DOWNLOAD_URL, 'setup.exe', len(content), self._digest(content))
+        opened.assert_not_called()
+
+    def test_rejects_truncated_oversized_and_modified_downloads(self):
+        expected = b'expected installer'
+        cases = (
+            (expected[:-1], self._digest(expected), 'size'),
+            (expected + b'x', self._digest(expected), 'size'),
+            (expected, '0' * 64, 'SHA-256'),
+        )
+        for content, digest, message in cases:
+            with self.subTest(message=message):
+                with self._fake_urlopen(content, content_length=len(expected)):
+                    with patch('builtins.open', mock_open()):
+                        with patch('os.remove') as remove:
+                            with self.assertRaisesRegex(ValueError, message):
+                                download_installer(
+                                    _DOWNLOAD_URL, 'setup.exe', len(expected), digest)
+                remove.assert_called_once_with('setup.exe')
+
+    def test_rejects_invalid_expected_download_contract_before_network(self):
+        cases = (
+            (0, 'a' * 64),
+            (updater._MAX_INSTALLER_BYTES + 1, 'a' * 64),
+            (1, 'not-a-digest'),
+        )
+        for size, digest in cases:
+            with self.subTest(size=size, digest=digest):
+                with patch('urllib.request.urlopen') as urlopen:
+                    with self.assertRaises(ValueError):
+                        download_installer(_DOWNLOAD_URL, 'setup.exe', size, digest)
+                urlopen.assert_not_called()
+
+    def test_signature_rejection_removes_complete_download(self):
+        content = b'complete but untrusted installer'
+        with self._fake_urlopen(content):
+            with patch('builtins.open', mock_open()):
+                with patch.object(
+                        updater, '_verify_installer_signature',
+                        side_effect=ValueError('invalid signature')):
+                    with patch('os.remove') as remove:
+                        with self.assertRaisesRegex(ValueError, 'invalid signature'):
+                            download_installer(
+                                _DOWNLOAD_URL, 'setup.exe', len(content),
+                                self._digest(content),
+                            )
+        remove.assert_called_once_with('setup.exe')
 
 
 # ── launch_installer ───────────────────────────────────────────────────────────
@@ -246,8 +368,10 @@ class TestLaunchInstaller(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == "win32", "Windows-only creationflags")
     def test_calls_popen_with_detached_flags(self):
-        with patch('subprocess.Popen') as mock_popen:
-            launch_installer(r'C:\tmp\HDR_to_SDR_Setup.exe')
+        with patch.object(updater, '_verify_installer_signature') as verify:
+            with patch('subprocess.Popen') as mock_popen:
+                launch_installer(r'C:\tmp\HDR_to_SDR_Setup.exe')
+        verify.assert_called_once_with(r'C:\tmp\HDR_to_SDR_Setup.exe')
         mock_popen.assert_called_once()
         args, kwargs = mock_popen.call_args
         self.assertEqual(args[0], [r'C:\tmp\HDR_to_SDR_Setup.exe'])
@@ -257,10 +381,62 @@ class TestLaunchInstaller(unittest.TestCase):
         self.assertTrue(flags & subprocess.CREATE_NEW_PROCESS_GROUP)
 
     def test_close_fds_true(self):
-        with patch('subprocess.Popen') as mock_popen:
-            launch_installer('setup.exe')
+        with patch.object(updater, '_verify_installer_signature'):
+            with patch('subprocess.Popen') as mock_popen:
+                launch_installer('setup.exe')
         _, kwargs = mock_popen.call_args
         self.assertTrue(kwargs.get('close_fds'))
+
+    def test_signature_failure_prevents_launch(self):
+        with patch.object(
+                updater, '_verify_installer_signature',
+                side_effect=ValueError('invalid signature')):
+            with patch('subprocess.Popen') as mock_popen:
+                with self.assertRaisesRegex(ValueError, 'invalid signature'):
+                    launch_installer('setup.exe')
+        mock_popen.assert_not_called()
+
+
+@unittest.skipUnless(sys.platform == 'win32', 'Authenticode is Windows-only')
+class TestAuthenticodeVerification(unittest.TestCase):
+
+    def _completed(self, status: str = 'Valid',
+                   subject: str = updater._EXPECTED_PUBLISHER) -> MagicMock:
+        return MagicMock(stdout=json.dumps({'Status': status, 'Subject': subject}))
+
+    def test_accepts_valid_expected_publisher(self):
+        with patch('os.path.isfile', return_value=True):
+            with patch('subprocess.run', return_value=self._completed()) as run:
+                _verify_installer_signature('setup.exe')
+        args, kwargs = run.call_args
+        self.assertTrue(os.path.isabs(args[0][0]))
+        self.assertNotIn('setup.exe', args[0])
+        script = args[0][-1]
+        self.assertIn("$ErrorActionPreference='Stop'", script)
+        self.assertIn('Import-Module', script)
+        self.assertIn('Microsoft.PowerShell.Security.psd1', script)
+        self.assertEqual(kwargs['env']['HDRSDR_INSTALLER_PATH'],
+                         os.path.abspath('setup.exe'))
+        self.assertTrue(kwargs['creationflags'] & subprocess.CREATE_NO_WINDOW)
+        self.assertFalse(kwargs.get('shell', False))
+
+    def test_rejects_invalid_status_or_wrong_publisher(self):
+        cases = (
+            self._completed(status='HashMismatch'),
+            self._completed(subject='CN=Unexpected Publisher'),
+        )
+        for completed in cases:
+            with self.subTest(stdout=completed.stdout):
+                with patch('os.path.isfile', return_value=True):
+                    with patch('subprocess.run', return_value=completed):
+                        with self.assertRaisesRegex(ValueError, 'signature'):
+                            _verify_installer_signature('setup.exe')
+
+    def test_subprocess_failure_is_fail_closed(self):
+        with patch('os.path.isfile', return_value=True):
+            with patch('subprocess.run', side_effect=subprocess.TimeoutExpired('pwsh', 30)):
+                with self.assertRaisesRegex(ValueError, 'signature'):
+                    _verify_installer_signature('setup.exe')
 
 
 # ── GUI integration (unit-level, no real Tk needed) ───────────────────────────
@@ -278,10 +454,14 @@ class TestGuiUpdateIntegration(unittest.TestCase):
     def test_show_update_dialog_constructs_dialog(self):
         gui, _UpdateDialog = self._make_gui()
         with patch('src.gui._UpdateDialog') as MockDialog:
-            gui._show_update_dialog('3.0.0', '4.0.0', 'https://example.com/setup.exe',
-                                     updater.RELEASES_URL)
-        MockDialog.assert_called_once_with(gui.root, '3.0.0', '4.0.0', 'https://example.com/setup.exe',
-                                            updater.RELEASES_URL)
+            gui._show_update_dialog(
+                '3.0.0', '4.0.0', _DOWNLOAD_URL, updater.RELEASES_URL,
+                123, 'a' * 64,
+            )
+        MockDialog.assert_called_once_with(
+            gui.root, '3.0.0', '4.0.0', _DOWNLOAD_URL,
+            updater.RELEASES_URL, 123, 'a' * 64,
+        )
 
     def test_start_update_check_schedules_dialog_when_update_available(self):
         gui, _ = self._make_gui()
@@ -295,13 +475,15 @@ class TestGuiUpdateIntegration(unittest.TestCase):
 
         release_url = updater.RELEASES_URL
         with patch('src.updater.check_for_update',
-                   return_value=('4.0.0', 'https://example.com/setup.exe', release_url)):
+                   return_value=('4.0.0', _DOWNLOAD_URL, release_url, 123, 'a' * 64)):
             with patch('src.gui._UpdateDialog') as MockDialog:
                 gui._start_update_check()
                 found_event.wait(timeout=2)
 
-        MockDialog.assert_called_once_with(gui.root, APP_VERSION, '4.0.0',
-                                            'https://example.com/setup.exe', release_url)
+        MockDialog.assert_called_once_with(
+            gui.root, APP_VERSION, '4.0.0', _DOWNLOAD_URL, release_url,
+            123, 'a' * 64,
+        )
 
     def test_start_update_check_no_dialog_when_current(self):
         gui, _ = self._make_gui()

@@ -274,22 +274,25 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         if os.environ.get('HDRSDR_DEV_SHOW_UPDATE_DIALOG') == '1':
             from updater import APP_VERSION, RELEASES_URL
             self._show_update_dialog(
-                APP_VERSION, '99.0.0', 'https://example.com/HDR_to_SDR_Setup.exe',
-                RELEASES_URL)
+                APP_VERSION, '99.0.0',
+                'https://github.com/TORlN/HDR-to-SDR/releases/download/'
+                'v99.0.0/HDR_to_SDR_Setup.exe',
+                RELEASES_URL, 1, '0' * 64)
             return
 
         def _worker() -> None:
             from updater import check_for_update, APP_VERSION
             result = check_for_update()
             if result:
-                new_ver, url, release_url = result
+                new_ver, url, release_url, size, digest = result
                 self.root.after(0, lambda: self._show_update_dialog(
-                    APP_VERSION, new_ver, url, release_url))
+                    APP_VERSION, new_ver, url, release_url, size, digest))
         threading.Thread(target=_worker, daemon=True).start()
 
     def _show_update_dialog(self, current_ver: str, new_ver: str, url: str,
-                             release_url: str) -> None:
-        _UpdateDialog(self.root, current_ver, new_ver, url, release_url)
+                             release_url: str, size: int, digest: str) -> None:
+        _UpdateDialog(
+            self.root, current_ver, new_ver, url, release_url, size, digest)
 
     def _open_issues_page(self) -> None:
         webbrowser.open(self._ISSUES_URL)

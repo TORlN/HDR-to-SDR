@@ -75,7 +75,7 @@ class _UpdateDialog(tk.Toplevel):
     """Dark-themed modal that prompts the user to install an available update."""
 
     def __init__(self, master: tk.Misc, current_ver: str, new_ver: str, download_url: str,
-                 release_url: str) -> None:
+                 release_url: str, expected_size: int, expected_sha256: str) -> None:
         super().__init__(master)
         self.configure(bg=_BG)
         self.title('Update Available')
@@ -85,6 +85,8 @@ class _UpdateDialog(tk.Toplevel):
         self._new_ver = new_ver
         self._url = download_url
         self._release_url = release_url
+        self._expected_size = expected_size
+        self._expected_sha256 = expected_sha256
         self._build_ui()
         _center_over_master(self, master, min_w=430, min_h=200)
 
@@ -158,7 +160,13 @@ class _UpdateDialog(tk.Toplevel):
 
         def _worker() -> None:
             try:
-                download_installer(self._url, dest, _on_progress)
+                download_installer(
+                    self._url,
+                    dest,
+                    self._expected_size,
+                    self._expected_sha256,
+                    _on_progress,
+                )
                 self.after(0, lambda: self._on_download_complete(dest))
             except Exception as exc:
                 self.after(0, lambda e=str(exc): self._on_download_error(e))

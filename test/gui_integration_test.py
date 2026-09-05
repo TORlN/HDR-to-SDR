@@ -1247,6 +1247,17 @@ class TestLicenseTransition(_FreshGuiTestBase):
                          list(HDRConverterGUI._OUTPUT_FORMATS))
         self.assertEqual(gui._pro_banner.grid_info(), {})
 
+    def test_reactivation_preserves_queue_without_auto_resume(self):
+        gui = self._make_gui(licensed=False)
+        queued = {'input': 'a.mkv', 'output': 'a_sdr.mkv', 'status': 'Pending'}
+        gui.batch_items = [queued]
+
+        with patch.object(gui, 'start_batch') as mock_start:
+            gui._apply_license_state(True)
+
+        self.assertEqual(gui.batch_items, [queued])
+        mock_start.assert_not_called()
+
     def test_load_input_forces_mp4_when_unlicensed(self):
         gui = self._make_gui(licensed=False)
         with patch.object(gui, '_update_info_label'), \

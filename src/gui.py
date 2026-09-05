@@ -1371,7 +1371,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
 
     def convert_video(self) -> None:
         """Convert the video from HDR to SDR."""
-        if getattr(self, 'batch_items', None):
+        if self._licensed and getattr(self, 'batch_items', None):
             self.start_batch()
             return
         try:

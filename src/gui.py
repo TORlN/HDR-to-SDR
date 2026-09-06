@@ -213,6 +213,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._preview_cache_original: dict = {}
         self._preview_cache_converted: dict = {}
         self._cache_lock = threading.Lock()
+        self._conversion_controls_disabled = False
+        self._conversion_state_policy_ready = True
 
         self.create_widgets()
         self.configure_grid()
@@ -351,6 +353,11 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._refresh_info_label_text()
 
         self._rebuild_interactable_elements()
+        self._apply_lut_export_availability()
+
+        if self._conversion_controls_disabled:
+            for element in self.interactable_elements:
+                element.config(state='disabled')
 
         if licensed:
             self._pro_banner.grid_remove()
@@ -363,7 +370,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.browse_button, self.convert_button, self.gamma_slider,
             self.open_after_conversion_checkbutton, self.display_image_checkbutton,
             self.input_entry, self.output_entry, self.gamma_entry,
-            self.bit_depth_10_radio, self.batch_listbox,
+            self.tonemap_combobox, self.lut_export_checkbutton,
+            *self.frame_buttons, self.bit_depth_10_radio, self.batch_listbox,
         ]
         premium = [
             self.quality_slider, self.quality_entry, self.quality_mode_combobox, self.format_combobox,
@@ -371,7 +379,17 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.add_files_button, self.clear_batch_button, self.remove_batch_button,
             self.bit_depth_12_radio, self.apply_settings_button,
         ]
-        self.interactable_elements = free + premium if self._licensed else free
+        elements = free + premium if self._licensed else free
+        self.interactable_elements[:] = elements
+
+    def _restore_conversion_input_states(self) -> None:
+        """Restore controls according to the current license and GPU policy."""
+        self._conversion_controls_disabled = False
+        self._apply_license_state(self._licensed)
+        for element in self.interactable_elements:
+            state = 'readonly' if isinstance(element, ttk.Combobox) else 'normal'
+            element.config(state=state)
+        self._apply_lut_export_availability()
 
     # ── Window / session ────────────────────────────────────────────────────────
 
@@ -723,6 +741,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.browse_button, self.convert_button, self.gamma_slider,
             self.open_after_conversion_checkbutton, self.display_image_checkbutton,
             self.input_entry, self.output_entry, self.gamma_entry,
+            self.tonemap_combobox, self.lut_export_checkbutton,
+            *self.frame_buttons,
             self.batch_listbox,
             self.quality_slider, self.quality_entry, self.quality_mode_combobox,
             self.format_combobox,

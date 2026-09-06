@@ -47,6 +47,13 @@ class TkConversionView:
         self._gui.root.after(0, self._gui.root.update_idletasks)
 
     def set_inputs_enabled(self, enabled: bool) -> None:
+        self._gui._conversion_controls_disabled = not enabled
+        if enabled:
+            restore = getattr(self._gui, '_restore_conversion_input_states', None)
+            if (getattr(self._gui, '_conversion_state_policy_ready', False)
+                    and callable(restore)):
+                restore()
+                return
         for element in self._elements:
             if not enabled:
                 element.config(state='disabled')

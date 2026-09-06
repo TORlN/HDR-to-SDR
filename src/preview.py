@@ -347,7 +347,6 @@ class _HDRPreviewMixin:
             self.button_frame.grid(row=5, column=0, columnspan=3, pady=(5, 0), sticky=tk.N)
         self.open_after_conversion_checkbutton.grid(row=1, column=0, padx=(5, 5), sticky=tk.N)
         self.convert_button.grid(row=1, column=1, padx=(5, 5), pady=(0, 10), sticky=tk.N)
-        self.cancel_button.grid_remove()
 
     def handle_preview_error(self, error: Exception) -> None:
         """Handle errors that occur during frame preview update."""

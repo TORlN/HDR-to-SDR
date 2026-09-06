@@ -23,6 +23,8 @@ from src.tk_conversion_view import BatchConversionView, TkConversionView  # noqa
 def _view(cls=TkConversionView, elements=None, **kwargs):
     """A view wired to mocks; override only what the test asserts on."""
     gui = MagicMock()
+    gui._conversion_state_policy_ready = False
+    gui._restore_conversion_input_states = None
     return cls(gui, MagicMock(), elements if elements is not None else [],
                MagicMock(), **kwargs)
 

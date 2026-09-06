@@ -38,3 +38,5 @@ this header and an empty `Unreleased` section after each new version is pushed.
   test runs cannot leave `.hdr-to-sdr-*` artifacts in the repository.
 - Failed FFmpeg or monitor startup now restores conversion controls and cleans
   up any partially started process and temporary output.
+- Cancel remains available throughout an active conversion, even when preview
+  layout refreshes, and preview-mutating controls are disabled meanwhile.

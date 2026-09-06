@@ -2805,6 +2805,8 @@ class TestApplyLicenseStateUnlicensed(unittest.TestCase):
         gui.clear_batch_button = MagicMock()
         gui.apply_settings_button = MagicMock()
         gui._rebuild_interactable_elements = MagicMock()
+        gui._conversion_controls_disabled = False
+        gui._apply_lut_export_availability = MagicMock()
         gui._pro_banner = MagicMock()
         return gui
 
@@ -2863,7 +2865,7 @@ class TestArrangeWidgets(unittest.TestCase):
         gui = self._gui()
         gui.arrange_widgets(image_frame=True)
         self.assertEqual(gui.button_frame.grid.call_args.kwargs['row'], 2)
-        gui.cancel_button.grid_remove.assert_called_once()
+        gui.cancel_button.grid_remove.assert_not_called()
 
     def test_image_frame_false_uses_row_5(self):
         gui = self._gui()

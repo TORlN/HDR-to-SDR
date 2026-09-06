@@ -341,6 +341,8 @@ class TestConstruction(_GuiTestBase):
             self.gui.open_after_conversion_checkbutton,
             self.gui.display_image_checkbutton, self.gui.input_entry,
             self.gui.output_entry, self.gui.gamma_entry,
+            self.gui.tonemap_combobox, self.gui.lut_export_checkbutton,
+            *self.gui.frame_buttons,
             self.gui.batch_listbox,
             self.gui.quality_slider, self.gui.quality_entry,
             self.gui.quality_mode_combobox, self.gui.format_combobox,
@@ -636,6 +638,72 @@ class TestStateAndLayout(_GuiTestBase):
                          self.gui.cancel_button).set_inputs_enabled(False)
         for widget in self.gui.interactable_elements:
             self.assertIn('disabled', str(widget.cget('state')))
+
+    def test_preview_controls_disable_during_conversion(self):
+        """Preview changes must not compete with an active conversion."""
+        TkConversionView(self.gui, self.gui.progress_var,
+                         self.gui.interactable_elements,
+                         self.gui.cancel_button).set_inputs_enabled(False)
+        preview_controls = [
+            self.gui.tonemap_combobox, self.gui.lut_export_checkbutton,
+            *self.gui.frame_buttons,
+        ]
+        for widget in preview_controls:
+            self.assertIn('disabled', str(widget.cget('state')))
+        TkConversionView(self.gui, self.gui.progress_var,
+                         self.gui.interactable_elements,
+                         self.gui.cancel_button).set_inputs_enabled(True)
+        self.assertEqual(str(self.gui.tonemap_combobox.cget('state')), 'readonly')
+        for widget in [self.gui.lut_export_checkbutton, *self.gui.frame_buttons]:
+            self.assertNotIn('disabled', str(widget.cget('state')))
+
+    def test_preview_layout_does_not_hide_active_cancel(self):
+        """Preview layout must not take ownership of conversion Cancel state."""
+        view = TkConversionView(self.gui, self.gui.progress_var,
+                                self.gui.interactable_elements,
+                                self.gui.cancel_button)
+        view.set_cancel_visible(True, lambda: None)
+
+        self.gui.arrange_widgets(image_frame=True)
+
+        self.assertNotEqual(self.gui.cancel_button.grid_info(), {})
+
+    def test_license_activation_keeps_controls_disabled_during_conversion(self):
+        """A background activation must not unlock a running conversion."""
+        self.gui._apply_license_state(False)
+        view = TkConversionView(self.gui, self.gui.progress_var,
+                                self.gui.interactable_elements,
+                                self.gui.cancel_button)
+        view.set_inputs_enabled(False)
+
+        self.gui._apply_license_state(True)
+
+        self.assertIn('disabled', str(self.gui.quality_slider.cget('state')))
+
+    def test_completion_restores_current_license_policy(self):
+        """An expired license must not be re-enabled by an older view."""
+        view = TkConversionView(self.gui, self.gui.progress_var,
+                                self.gui.interactable_elements,
+                                self.gui.cancel_button)
+        view.set_inputs_enabled(False)
+        self.gui._apply_license_state(False)
+
+        view.set_inputs_enabled(True)
+
+        self.assertIn('disabled', str(self.gui.quality_slider.cget('state')))
+
+    def test_completion_preserves_unavailable_gpu_color_control(self):
+        """Generic conversion cleanup must not override GPU availability."""
+        self.gui.gpu_accel_var.set(False)
+        self.gui._apply_lut_export_availability()
+        view = TkConversionView(self.gui, self.gui.progress_var,
+                                self.gui.interactable_elements,
+                                self.gui.cancel_button)
+        view.set_inputs_enabled(False)
+
+        view.set_inputs_enabled(True)
+
+        self.assertIn('disabled', str(self.gui.lut_export_checkbutton.cget('state')))
 
     def test_arrange_widgets_image_frame_true_rows(self):
         # progress_bar is no longer repositioned here -- see

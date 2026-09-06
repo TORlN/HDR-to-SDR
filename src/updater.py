@@ -6,8 +6,11 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -18,6 +21,7 @@ _GITHUB_API = "https://api.github.com/repos/TORlN/HDR-to-SDR/releases/latest"
 _ASSET_NAME = "HDR_to_SDR_Setup.exe"
 _MAX_METADATA_BYTES = 1_048_576
 _MAX_INSTALLER_BYTES = 512 * 1_048_576
+_STALE_UPDATE_DIRECTORY_SECONDS = 24 * 60 * 60
 _EXPECTED_PUBLISHER = "CN=Torin Nelson, O=Torin Nelson, L=Irvine, S=ca, C=US"
 _DOWNLOAD_HOSTS = {
     "github.com",
@@ -32,6 +36,22 @@ _HEADERS = {
     "Accept-Encoding": "identity",
     "X-GitHub-Api-Version": "2022-11-28",
 }
+
+
+def cleanup_stale_update_directories() -> None:
+    """Remove leftover installers from completed or abandoned updates."""
+    try:
+        with os.scandir(tempfile.gettempdir()) as entries:
+            for entry in entries:
+                if (
+                    entry.name.startswith("hdr_to_sdr_update_")
+                    and entry.is_dir(follow_symlinks=False)
+                    and time.time() - entry.stat(follow_symlinks=False).st_mtime
+                    >= _STALE_UPDATE_DIRECTORY_SECONDS
+                ):
+                    shutil.rmtree(entry.path, ignore_errors=True)
+    except OSError:
+        pass
 
 logger = logging.getLogger(__name__)
 

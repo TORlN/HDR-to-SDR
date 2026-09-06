@@ -30,3 +30,5 @@ this header and an empty `Unreleased` section after each new version is pushed.
   from the expected publisher before launch.
 - Packaged builds now fail safely when a bundled FFmpeg executable is missing
   instead of using an unrelated executable found on `PATH`.
+- Update downloads now recover cleanly if the installer cannot launch, and
+  stale updater-only temporary directories are removed safely after 24 hours.

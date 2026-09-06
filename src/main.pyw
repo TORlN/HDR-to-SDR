@@ -3,8 +3,10 @@ from tkinterdnd2 import TkinterDnD
 from gui import HDRConverterGUI
 from licensing import check_license_nonblocking
 from platform_utils import setup_dpi_awareness
+from updater import cleanup_stale_update_directories
 
 if __name__ == "__main__":
+    cleanup_stale_update_directories()
     setup_dpi_awareness()
     root = TkinterDnD.Tk()
     root.withdraw()

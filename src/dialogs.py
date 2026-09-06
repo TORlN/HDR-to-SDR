@@ -184,7 +184,14 @@ class _UpdateDialog(tk.Toplevel):
 
     def _launch_and_close(self, path: str) -> None:
         from updater import launch_installer
-        launch_installer(path)
+        try:
+            launch_installer(path)
+        except Exception:
+            if self._tmp_dir is not None:
+                shutil.rmtree(self._tmp_dir, ignore_errors=True)
+                self._tmp_dir = None
+            self._on_download_error('')
+            return
         self.master.destroy()
 
     def _on_download_error(self, msg: str) -> None:

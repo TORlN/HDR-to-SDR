@@ -397,6 +397,42 @@ class TestLaunchInstaller(unittest.TestCase):
         mock_popen.assert_not_called()
 
 
+class TestStaleUpdateCleanup(unittest.TestCase):
+
+    def test_removes_only_app_owned_temp_directories(self):
+        stale_dir = MagicMock()
+        stale_dir.name = 'hdr_to_sdr_update_stale'
+        stale_dir.path = r'C:\Temp\hdr_to_sdr_update_stale'
+        stale_dir.is_dir.return_value = True
+        stale_dir.stat.return_value.st_mtime = 0
+        active_dir = MagicMock()
+        active_dir.name = 'hdr_to_sdr_update_active'
+        active_dir.path = r'C:\Temp\hdr_to_sdr_update_active'
+        active_dir.is_dir.return_value = True
+        active_dir.stat.return_value.st_mtime = 200_000
+        link = MagicMock()
+        link.name = 'hdr_to_sdr_update_link'
+        link.path = r'C:\Temp\hdr_to_sdr_update_link'
+        link.is_dir.return_value = False
+        unrelated_dir = MagicMock()
+        unrelated_dir.name = 'other_app_update_123'
+        unrelated_dir.path = r'C:\Temp\other_app_update_123'
+
+        with patch('tempfile.gettempdir', return_value=r'C:\Temp'):
+            with patch('os.scandir') as scandir:
+                scandir.return_value.__enter__.return_value = [
+                    stale_dir, active_dir, link, unrelated_dir,
+                ]
+                with patch('time.time', return_value=200_000):
+                    with patch('shutil.rmtree') as rmtree:
+                        updater.cleanup_stale_update_directories()
+
+        stale_dir.is_dir.assert_called_once_with(follow_symlinks=False)
+        active_dir.is_dir.assert_called_once_with(follow_symlinks=False)
+        link.is_dir.assert_called_once_with(follow_symlinks=False)
+        rmtree.assert_called_once_with(stale_dir.path, ignore_errors=True)
+
+
 @unittest.skipUnless(sys.platform == 'win32', 'Authenticode is Windows-only')
 class TestAuthenticodeVerification(unittest.TestCase):
 

@@ -1612,6 +1612,21 @@ class TestUpdateDialog(unittest.TestCase):
         self.assertFalse(os.path.isdir(tmp_dir),
                          "failed download's temp dir must be cleaned up when the window is closed")
 
+    def test_launch_failure_restores_retryable_dialog(self):
+        dlg = self._make_dialog()
+        dlg._update_btn.config(state='disabled', text='Downloading…')
+        dlg._later_btn.config(state='disabled')
+        dlg._tmp_dir = r'C:\Temp\hdr_to_sdr_update_123'
+        with patch('updater.launch_installer', side_effect=OSError('access denied')):
+            with patch('src.dialogs.shutil.rmtree') as rmtree:
+                dlg._launch_and_close(r'C:\Temp\HDR_to_SDR_Setup.exe')
+        self.assertEqual(str(dlg._update_btn['state']), 'normal')
+        self.assertEqual(str(dlg._later_btn['state']), 'normal')
+        self.assertIn('failed', dlg._status_var.get().lower())
+        self.assertIsNone(dlg._tmp_dir)
+        rmtree.assert_called_once_with(r'C:\Temp\hdr_to_sdr_update_123', ignore_errors=True)
+        dlg.destroy()
+
     def test_changelog_link_widget_exists(self):
         dlg = self._make_dialog()
         texts = [w.cget('text') for w in dlg.winfo_children()

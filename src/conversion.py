@@ -73,6 +73,12 @@ class ConversionManager:
         constructing the view. The GPU->CPU retry re-enters here with a
         request derived via replace().
         """
+        if self.process is not None:
+            view.notify(Notice.info(
+                "Stopping conversion",
+                "The previous conversion is still stopping. Please try again momentarily."))
+            return False
+
         # Guarded, not a bare abspath(): '' must stay falsy for verify_paths'
         # "both paths given" check -- abspath('') resolves to the truthy cwd.
         request = replace(
@@ -251,6 +257,7 @@ class ConversionManager:
         progress_pattern = re.compile(r'time=(\d+:\d+:\d+\.\d+)')
         error_messages: list[str] = []
         gpu_error_detected = False
+        run = self._run
 
         # Stable local reference: cancel_conversion (main thread) can set
         # self.process = None concurrently, so use `proc` throughout instead.
@@ -280,7 +287,10 @@ class ConversionManager:
         if proc is not None:
             proc.wait()
             returncode = proc.returncode
-            if returncode != 0 and request.use_gpu and gpu_error_detected and not self.cancelled:
+            cancelled = self.cancelled
+            if self.process is proc:
+                self.process = None
+            if returncode != 0 and request.use_gpu and gpu_error_detected and not cancelled:
                 self._discard_temporary_output(temporary_output_path)
                 # Real ffmpeg output goes to app.log -- the red GPU status
                 # label's click-to-open-log action in gui.py depends on it.
@@ -288,7 +298,7 @@ class ConversionManager:
                 logging.warning(
                     f"GPU acceleration failed. Retrying with CPU encoding. "
                     f"ffmpeg output:\n{tail}")
-                view.schedule(lambda: self._retry_with_cpu(request, view))  # must run on main thread (Tk)
+                view.schedule(lambda: self._retry_with_cpu(request, view, run))  # must run on main thread (Tk)
             else:
                 completion_error = None
                 if (returncode == 0 and not self.cancelled
@@ -325,7 +335,7 @@ class ConversionManager:
                 elif temporary_output_path is not None:
                     self._discard_temporary_output(temporary_output_path)
                 self.handle_completion(
-                    request, view, error_messages, returncode, completion_error)
+                    request, view, error_messages, returncode, completion_error, run)
 
     @staticmethod
     def _discard_temporary_output(path: str | None) -> None:
@@ -339,13 +349,16 @@ class ConversionManager:
             logging.warning(f"Could not remove temporary output {path}: {error}")
 
     def _retry_with_cpu(self, request: ConversionRequest,
-                        view: ConversionView) -> None:
+                        view: ConversionView,
+                        run: ConversionRun | None = None) -> None:
         """Restart the conversion on the CPU after a GPU failure. Main thread.
 
         Derives the retry request via replace() from *request* (the snapshot
         monitor_progress was handed), not self._run.request or the GUI --
         both can already point at a different, later-started conversion by
         the time this after(0) callback fires."""
+        if run is not None and (self._run is not run or self.cancelled):
+            return
         view.notify(Notice.warning(
             "GPU Acceleration Failed",
             "GPU acceleration failed. Switching to CPU encoding. "
@@ -366,8 +379,13 @@ class ConversionManager:
 
     def handle_completion(self, request: ConversionRequest, view: ConversionView,
                           error_messages: list[str], returncode: int,
-                          completion_error: str | None = None) -> None:
+                          completion_error: str | None = None,
+                          run: ConversionRun | None = None) -> None:
+        active_run = run if run is not None else self._run
+
         def _handle() -> None:
+            if active_run is not None and self._run is not active_run:
+                return
             # returncode is monitor_progress's locally-captured value, not
             # re-read from self.process (which cancel_conversion can null out
             # concurrently, misreporting an already-finished conversion).
@@ -422,12 +440,16 @@ class ConversionManager:
 
     def cancel_conversion(self) -> None:
         self.cancelled = True
-        view = self._run.view if self._run else None
+        run = self._run
+        view = run.view if run else None
         if self.process and view is not None:
             self.process.terminate()
-            self.process = None
-            view.schedule(lambda: view.notify(Notice.info(
-                "Cancelled", "Video conversion has been cancelled.")))
+            def _notify_cancelled() -> None:
+                if self._run is run:
+                    view.notify(Notice.info(
+                        "Cancelled", "Video conversion has been cancelled."))
+
+            view.schedule(_notify_cancelled)
             view.set_inputs_enabled(True)
             view.set_cancel_visible(False)
             view.restore_drop_target()

@@ -32,3 +32,5 @@ this header and an empty `Unreleased` section after each new version is pushed.
   instead of using an unrelated executable found on `PATH`.
 - Update downloads now recover cleanly if the installer cannot launch, and
   stale updater-only temporary directories are removed safely after 24 hours.
+- A cancelled or completed conversion can no longer let stale monitor, retry,
+  or completion callbacks affect a later conversion.

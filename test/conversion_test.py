@@ -434,7 +434,6 @@ class TestConversionManager(unittest.TestCase):
         manager.start(_req(input_path='input.mp4', output_path='output.mkv',
                            gamma=2.2), view)
 
-        self.assertIsNotNone(manager.process)
         mock_popen.assert_called_once()
         mock_get_props.assert_called_once_with(os.path.abspath('input.mp4'))
         # No assertion on view.cancel_visible here: start() spawns the monitor
@@ -914,6 +913,23 @@ class TestCancelUsesStoredView(unittest.TestCase):
         m = ConversionManager()
         m.cancel_conversion()  # must not raise
         self.assertIs(m.cancelled, True)
+
+    def test_cancel_keeps_process_until_monitor_reaps_it(self):
+        """Clearing process in cancel would let a new run overwrite A early."""
+        m = ConversionManager()
+        proc = MagicMock()
+        proc.stderr = iter([])
+        proc.returncode = 1
+        view = _view()
+        m.process = proc
+        m._run = ConversionRun(request=_req(), view=view)
+
+        m.cancel_conversion()
+
+        self.assertIs(m.process, proc)
+        m.monitor_progress(_req(), view, 10.0)
+        proc.wait.assert_called_once()
+        self.assertIsNone(m.process)
 
 
 class TestBatchCompletionHook(unittest.TestCase):
@@ -1865,6 +1881,108 @@ class TestMonitorProgressCancellationRace(unittest.TestCase):
                 f"cleared mid-iteration: {exc}"
             )
 
+    def test_stale_completion_callback_does_not_complete_later_run(self) -> None:
+        """A delayed completion from A must not advance B's batch callback.
+
+        Removing the run-identity guard would let this callback mark B done
+        even though the callback belongs to A.
+        """
+        manager = ConversionManager()
+        completed = MagicMock()
+
+        class DeferredView(RecordingConversionView):
+            def __init__(self) -> None:
+                super().__init__(on_complete=completed)
+                self.pending: list[object] = []
+
+            def schedule(self, fn) -> None:
+                self.pending.append(fn)
+
+        view = DeferredView()
+        first_request = _req(input_path='first.mkv', output_path='first-out.mkv')
+        manager._run = ConversionRun(request=first_request, view=view)
+        manager.handle_completion(first_request, view, [], 0)
+
+        manager._run = ConversionRun(
+            request=_req(input_path='second.mkv', output_path='second-out.mkv'),
+            view=_view())
+        view.pending.pop()()
+
+        completed.assert_not_called()
+
+    @patch('src.conversion.get_video_properties')
+    def test_start_waits_for_previous_process_to_be_reaped(self, mock_properties) -> None:
+        """Starting B while A is stopping must leave A as the active run.
+
+        Removing the busy-run guard would let B replace the process and run
+        snapshot before A's monitor has reaped it.
+        """
+        manager = ConversionManager()
+        first_view = _view()
+        first_run = ConversionRun(request=_req(), view=first_view)
+        manager._run = first_run
+        manager.process = MagicMock()
+
+        self.assertFalse(manager.start(
+            _req(input_path='second.mkv', output_path='second-out.mkv'), _view()))
+
+        self.assertIs(manager._run, first_run)
+        mock_properties.assert_not_called()
+
+    def test_cancelled_gpu_fallback_does_not_restart_conversion(self) -> None:
+        """A queued CPU retry must respect a cancellation after process exit."""
+        manager = ConversionManager()
+
+        class DeferredView(RecordingConversionView):
+            def __init__(self) -> None:
+                super().__init__()
+                self.pending: list[object] = []
+
+            def schedule(self, fn) -> None:
+                self.pending.append(fn)
+
+        view = DeferredView()
+        request = _req(use_gpu=True)
+        manager._run = ConversionRun(request=request, view=view)
+        process = MagicMock()
+        process.stderr = iter(['cuda initialization failed\n'])
+        process.returncode = 1
+        manager.process = process
+        manager.start = MagicMock()
+
+        manager.monitor_progress(request, view, 10.0)
+        manager.cancel_conversion()
+        view.pending.pop()()
+
+        manager.start.assert_not_called()
+
+    def test_stale_cancel_notice_does_not_appear_over_later_run(self) -> None:
+        """A deferred Cancel notice from A must not interrupt B's UI."""
+        manager = ConversionManager()
+
+        class DeferredView(RecordingConversionView):
+            def __init__(self) -> None:
+                super().__init__()
+                self.pending: list[object] = []
+
+            def schedule(self, fn) -> None:
+                self.pending.append(fn)
+
+        view = DeferredView()
+        request = _req()
+        manager._run = ConversionRun(request=request, view=view)
+        process = MagicMock()
+        process.stderr = iter([])
+        process.returncode = 1
+        manager.process = process
+
+        manager.cancel_conversion()
+        manager.monitor_progress(request, view, 10.0)
+        manager._run = ConversionRun(request=_req(), view=_view())
+        view.pending.pop(0)()
+
+        self.assertEqual(view.notices, [])
+
     def test_success_survives_process_nulled_before_handle_runs(self) -> None:
         """A third race, deeper than (a)/(b) above: monitor_progress captures
         `proc` locally and no longer crashes, but handle_completion's
@@ -2408,6 +2526,21 @@ class TestRetryUsesTheRequest(unittest.TestCase):
         self.assertEqual(sent.input_path, 'handed_in.mkv')
         self.assertEqual(sent.output_path, 'handed_out.mp4')
         self.assertEqual(sent.tonemapper, 'hable')
+
+    def test_stale_cpu_retry_does_not_start_another_conversion(self):
+        """A retry from A must not start after B has replaced A's run."""
+        m = ConversionManager()
+        first_request = _req(input_path='first.mkv', output_path='first-out.mkv',
+                             use_gpu=True)
+        first_run = ConversionRun(request=first_request, view=_view())
+        m._run = ConversionRun(
+            request=_req(input_path='second.mkv', output_path='second-out.mkv'),
+            view=_view())
+        m.start = MagicMock()
+
+        m._retry_with_cpu(first_request, first_run.view, first_run)
+
+        m.start.assert_not_called()
 
 
 class TestNoLooseStateRemains(unittest.TestCase):

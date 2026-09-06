@@ -34,3 +34,5 @@ this header and an empty `Unreleased` section after each new version is pushed.
   stale updater-only temporary directories are removed safely after 24 hours.
 - A cancelled or completed conversion can no longer let stale monitor, retry,
   or completion callbacks affect a later conversion.
+- Conversion-launch tests now reject unmocked temporary-file allocation, so
+  test runs cannot leave `.hdr-to-sdr-*` artifacts in the repository.

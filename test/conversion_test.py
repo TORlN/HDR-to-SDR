@@ -42,6 +42,24 @@ def _view(**overrides) -> RecordingConversionView:
     return RecordingConversionView(**overrides)
 
 
+_tempfile_patcher = None
+
+
+def setUpModule() -> None:
+    """Block conversion tests from allocating real output files."""
+    global _tempfile_patcher
+    _tempfile_patcher = patch(
+        'src.conversion.tempfile.mkstemp',
+        side_effect=AssertionError(
+            'Conversion tests must mock tempfile.mkstemp before calling start().'))
+    _tempfile_patcher.start()
+
+
+def tearDownModule() -> None:
+    if _tempfile_patcher is not None:
+        _tempfile_patcher.stop()
+
+
 class TestConversionRequest(unittest.TestCase):
     """The request is an immutable snapshot of what to encode.
 
@@ -406,9 +424,13 @@ class TestConversionManager(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
+    @patch('src.conversion.threading.Thread')
+    @patch('src.conversion.os.close')
+    @patch('src.conversion.tempfile.mkstemp', return_value=(42, '.mock-output.mkv'))
     @patch('src.conversion.get_video_properties')
     @patch('src.conversion.subprocess.Popen')
-    def test_start_success(self, mock_popen, mock_get_props):
+    def test_start_success(self, mock_popen, mock_get_props, _mock_mkstemp,
+                           _mock_close, _mock_thread):
         mock_get_props.return_value = {
             "width": 1920,
             "height": 1080,
@@ -1045,9 +1067,14 @@ class TestStartSignalsFailureOnEarlyReturn(unittest.TestCase):
         self.assertFalse(result)
         self.assertEqual(len(view.notices), 1)
 
+    @patch('src.conversion.threading.Thread')
+    @patch('src.conversion.os.close')
+    @patch('src.conversion.tempfile.mkstemp', return_value=(42, '.mock-output.mkv'))
     @patch('src.conversion.subprocess.Popen')
     @patch('src.conversion.get_video_properties')
-    def test_successful_launch_returns_true(self, mock_props, mock_popen):
+    def test_successful_launch_returns_true(self, mock_props, mock_popen,
+                                            _mock_mkstemp, _mock_close,
+                                            _mock_thread):
         mock_props.return_value = dict(self._PROPS)
         proc = MagicMock()
         proc.stderr = iter([])
@@ -1558,8 +1585,11 @@ class TestBitDepthContainerGuardrail(unittest.TestCase):
         mock_get_props.assert_not_called()  # bail out before even probing the file
         self.assertIsNone(manager.process)
 
+    @patch('src.conversion.os.close')
+    @patch('src.conversion.tempfile.mkstemp', return_value=(42, '.mock-output.mp4'))
     @patch('src.conversion.get_video_properties', return_value={'duration': 10.0})
-    def test_construct_ffmpeg_command_failure_reenables_ui(self, mock_get_props):
+    def test_construct_ffmpeg_command_failure_reenables_ui(
+            self, mock_get_props, _mock_mkstemp, _mock_close):
         """If construct_ffmpeg_command raises after the UI has already been
         disabled and the cancel button gridded (e.g. the GPU-only-tonemapper
         safety net firing), the single-file path must re-enable the UI and
@@ -2560,9 +2590,14 @@ class TestStartTakesARequestAndAView(unittest.TestCase):
     """The 16-parameter start_conversion is gone; start(request, view) is the
     only way in, and the retry re-enters through it."""
 
+    @patch('src.conversion.threading.Thread')
+    @patch('src.conversion.os.close')
+    @patch('src.conversion.tempfile.mkstemp', return_value=(42, '.mock-output.mkv'))
     @patch('src.conversion.get_video_properties')
     @patch('src.conversion.subprocess.Popen')
-    def test_start_normalizes_paths_and_launches(self, mock_popen, mock_props):
+    def test_start_normalizes_paths_and_launches(self, mock_popen, mock_props,
+                                                 _mock_mkstemp, _mock_close,
+                                                 _mock_thread):
         mock_props.return_value = dict(_PROPS, duration=120.0)
         mock_popen.return_value = MagicMock(stderr=iter([]))
         manager = ConversionManager()

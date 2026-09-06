@@ -140,13 +140,32 @@ class ConversionManager:
             self.process = self.start_ffmpeg_process(cmd)
         except Exception:
             self._discard_temporary_output(temporary_output_path)
+            view.set_inputs_enabled(True)
+            view.set_cancel_visible(False)
             raise
 
         thread = threading.Thread(
             target=self.monitor_progress,
             args=(request, view, properties['duration'], temporary_output_path))
         thread.daemon = True
-        thread.start()
+        try:
+            thread.start()
+        except Exception:
+            process = self.process
+            if process is not None:
+                try:
+                    process.terminate()
+                except Exception as error:
+                    logging.warning(f"Could not terminate failed conversion startup: {error}")
+                try:
+                    process.wait()
+                except Exception as error:
+                    logging.warning(f"Could not reap failed conversion startup: {error}")
+            self.process = None
+            self._discard_temporary_output(temporary_output_path)
+            view.set_inputs_enabled(True)
+            view.set_cancel_visible(False)
+            raise
         return True
 
     @staticmethod

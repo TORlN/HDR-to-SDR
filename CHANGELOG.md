@@ -36,3 +36,5 @@ this header and an empty `Unreleased` section after each new version is pushed.
   or completion callbacks affect a later conversion.
 - Conversion-launch tests now reject unmocked temporary-file allocation, so
   test runs cannot leave `.hdr-to-sdr-*` artifacts in the repository.
+- Failed FFmpeg or monitor startup now restores conversion controls and cleans
+  up any partially started process and temporary output.

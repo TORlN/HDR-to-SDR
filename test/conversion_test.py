@@ -312,25 +312,48 @@ class TestTransactionalOutput(unittest.TestCase):
         temporary file before the monitor thread can assume ownership."""
         mock_properties.return_value = dict(_PROPS, duration=120.0,
                                             codec_name='h264')
-        cases = ('command construction', 'process launch')
+        cases = ('command construction', 'process launch', 'monitor startup',
+                 'monitor cleanup failure')
         for name in cases:
             with self.subTest(name=name):
                 temp_path = os.path.abspath(f'.{name}.mkv')
                 mock_mkstemp.return_value = (42, temp_path)
                 manager = ConversionManager()
+                process = None
+                _mock_thread.return_value.start.reset_mock()
+                _mock_thread.return_value.start.side_effect = None
                 if name == 'command construction':
                     manager.construct_ffmpeg_command = MagicMock(
                         side_effect=ValueError('bad command'))
-                else:
+                elif name == 'process launch':
                     manager.construct_ffmpeg_command = MagicMock(
                         return_value=['ffmpeg'])
                     manager.start_ffmpeg_process = MagicMock(
                         side_effect=OSError('launch failed'))
+                else:
+                    process = MagicMock()
+                    manager.construct_ffmpeg_command = MagicMock(
+                        return_value=['ffmpeg'])
+                    manager.start_ffmpeg_process = MagicMock(return_value=process)
+                    _mock_thread.return_value.start.side_effect = RuntimeError(
+                        'monitor failed')
+                    if name == 'monitor cleanup failure':
+                        process.terminate.side_effect = OSError('terminate failed')
 
-                with self.assertRaises((ValueError, OSError)):
-                    manager.start(_req(), _view())
+                view = _view()
+                with self.assertRaises((ValueError, OSError, RuntimeError)) as error:
+                    manager.start(_req(), view)
 
                 mock_remove.assert_called_once_with(temp_path)
+                self.assertEqual(view.inputs_enabled, [False, True])
+                self.assertEqual(view.cancel_visible, [True, False])
+                if name in ('monitor startup', 'monitor cleanup failure'):
+                    self.assertIsNotNone(process)
+                    process.terminate.assert_called_once()
+                    process.wait.assert_called_once()
+                    self.assertIsNone(manager.process)
+                if name == 'monitor cleanup failure':
+                    self.assertEqual(str(error.exception), 'monitor failed')
                 mock_remove.reset_mock()
 
     @patch('src.conversion.os.remove')

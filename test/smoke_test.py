@@ -693,7 +693,8 @@ class TestRealDolbyVisionTierConversion(unittest.TestCase):
         manager = ConversionManager()
         cmd = manager.construct_ffmpeg_command(
             _req(DOVI_VIDEO, out_path, tonemapper='reinhard', licensed=licensed), props, RecordingConversionView())
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        result = subprocess.run(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
         self.assertEqual(
             result.returncode, 0,
             msg=f"DoVi conversion (licensed={licensed}) failed:\n"
@@ -717,6 +718,24 @@ class TestRealDolbyVisionTierConversion(unittest.TestCase):
         self.assertNotEqual(transfer, 'smpte2084')
         self.assertEqual(pix_fmt, 'yuv420p')
 
+    @staticmethod
+    def _side_data_types(path):
+        output = subprocess.check_output(
+            [FFPROBE_EXECUTABLE, '-v', 'error',
+             '-show_entries',
+             'stream_side_data=side_data_type:frame_side_data=side_data_type',
+             '-read_intervals', '%+#1', '-of', 'json', path],
+            stderr=subprocess.DEVNULL, timeout=30,
+        )
+        probe = json.loads(output)
+        return {
+            side_data['side_data_type']
+            for section in ('streams', 'frames')
+            for item in probe.get(section, [])
+            for side_data in item.get('side_data_list', [])
+            if 'side_data_type' in side_data
+        }
+
     def test_pro_conversion_preserves_full_multichannel_audio(self):
         out_path = self._convert(licensed=True)
         audio = self._audio_stream(out_path)
@@ -730,6 +749,20 @@ class TestRealDolbyVisionTierConversion(unittest.TestCase):
         self.assertEqual(audio['codec_name'], 'aac')
         self.assertEqual(audio['channels'], 2)
         self._assert_tonemapped_to_sdr(out_path)
+
+    def test_sdr_output_has_no_hdr_or_dolby_vision_side_data(self):
+        """A BT.709 stream that still advertises HDR or DoVi data can be
+        misclassified by players despite its SDR pixels."""
+        out_path = self._convert(licensed=True)
+        forbidden = {
+            'Mastering display metadata',
+            'Content light level metadata',
+            'HDR10+ Dynamic Metadata',
+            'Dolby Vision RPU Data',
+            'Dolby Vision Metadata',
+            'DOVI configuration record',
+        }
+        self.assertFalse(forbidden & self._side_data_types(out_path))
 
 
 @unittest.skipUnless(_SDR_1_1_OK, "sample 'smoke_test_videos/sdr_1_1.mp4' / ffmpeg not available")

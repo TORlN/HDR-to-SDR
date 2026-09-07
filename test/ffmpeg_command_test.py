@@ -499,6 +499,44 @@ class TestBuild(unittest.TestCase):
         cmd = ffmpeg_command.build(_Req(), self._PROPS, self._probes(), view)
         self.assertNotIn('-hwaccel', cmd, msg=cmd)
 
+    def test_hdr_h264_output_strips_sei_metadata(self):
+        """Without this filter, static HDR and HDR10+ SEI can be emitted
+        after the SDR filter chain and make players treat the result as HDR."""
+        view = _RecordingView()
+        props = dict(self._PROPS, color_transfer='smpte2084')
+        cmd = ffmpeg_command.build(_Req(), props, self._probes(), view)
+        index = cmd.index('-bsf:v')
+        self.assertEqual(cmd[index + 1], 'filter_units=remove_types=6', msg=cmd)
+
+    def test_hdr_hevc_output_strips_sei_and_dolby_vision_rpu(self):
+        """HEVC carries HDR SEI separately from Dolby Vision RPU NAL data,
+        so both must be stripped from a tone-mapped SDR output."""
+        view = _RecordingView()
+        props = dict(self._PROPS, codec_name='hevc', color_transfer='smpte2084')
+        cmd = ffmpeg_command.build(_Req(), props, self._probes(), view)
+        index = cmd.index('-bsf:v')
+        self.assertEqual(
+            cmd[index + 1],
+            'dovi_rpu=strip=1,filter_units=remove_types=39|40',
+            msg=cmd,
+        )
+
+    def test_hdr_filter_chain_removes_frame_side_data_before_encoding(self):
+        """Packet filters run after encoding, so frame-side HDR data must
+        also be removed before the encoder can recreate static HDR SEI."""
+        view = _RecordingView()
+        props = dict(self._PROPS, color_transfer='smpte2084')
+        cmd = ffmpeg_command.build(_Req(), props, self._probes(), view)
+        filter_chain = cmd[cmd.index('-filter_complex') + 1]
+        for side_data_type in (
+                'MASTERING_DISPLAY_METADATA', 'CONTENT_LIGHT_LEVEL',
+                'DYNAMIC_HDR_PLUS', 'DOVI_RPU_BUFFER', 'DOVI_METADATA'):
+            self.assertIn(
+                f'sidedata=mode=delete:type={side_data_type}',
+                filter_chain,
+                msg=filter_chain,
+            )
+
     def test_av1_source_does_not_double_up_hwaccel_on_a_device_path(self):
         """The nvenc path already prepends `-hwaccel cuda`; an AV1 source
         must not also get a second, conflicting `-hwaccel auto`."""

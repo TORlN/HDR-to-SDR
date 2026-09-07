@@ -231,6 +231,27 @@ def _filter_args(request: RequestLike, plan: TonemapPlan, gpu: GpuPlan) -> str:
         gamma=request.gamma, tonemapper=tonemapper, lut_path=get_lut_filter_path())
 
 
+_HDR_TRANSFER_CHARACTERISTICS = {'smpte2084', 'arib-std-b67'}
+_HDR_FRAME_SIDE_DATA_TYPES = (
+    'MASTERING_DISPLAY_METADATA',
+    'CONTENT_LIGHT_LEVEL',
+    'DYNAMIC_HDR_PLUS',
+    'DOVI_RPU_BUFFER',
+    'DOVI_METADATA',
+)
+
+
+def _strip_hdr_frame_side_data(filter_str: str,
+                               properties: 'dict[str, Any]') -> str:
+    """Keep the encoder from recreating HDR metadata in SDR output."""
+    if (properties.get('color_transfer') or '').lower() not in _HDR_TRANSFER_CHARACTERISTICS:
+        return filter_str
+    return filter_str + ''.join(
+        f',sidedata=mode=delete:type={side_data_type}'
+        for side_data_type in _HDR_FRAME_SIDE_DATA_TYPES
+    )
+
+
 _FREE_DOVI_AUDIO_ARGS = ['-c:a', 'aac', '-ac', '2', '-b:a', '192k']
 
 # Audio/subtitle codecs the MP4-family containers (.mp4/.m4v/.mov) accept
@@ -410,6 +431,24 @@ def _encoder_rate_args(request: RequestLike, properties: 'dict[str, Any]',
         bitrate_args + bitrate_rc_args if request.quality_mode == 'bitrate' else cq_args)
 
 
+def _sdr_bitstream_filter_args(codec: str,
+                               properties: 'dict[str, Any]') -> 'list[str]':
+    """Remove HDR-only output side data after tonemapping to SDR.
+
+    Encoders can carry input frame side data into the newly encoded stream.
+    H.264 stores it in SEI type 6; HEVC uses prefix/suffix SEI types 39/40
+    and can also retain Dolby Vision RPU data. Ordinary container metadata is
+    intentionally left to the existing ``-map_metadata 0`` policy.
+    """
+    if (properties.get('color_transfer') or '').lower() not in _HDR_TRANSFER_CHARACTERISTICS:
+        return []
+    if codec == 'libx264' or codec.startswith('h264_'):
+        return ['-bsf:v', 'filter_units=remove_types=6']
+    if codec == 'libx265' or codec.startswith('hevc_'):
+        return ['-bsf:v', 'dovi_rpu=strip=1,filter_units=remove_types=39|40']
+    return []
+
+
 @dataclass(frozen=True)
 class Probes:
     """The three lazy capability checks build() needs, bundled so its own
@@ -455,6 +494,7 @@ def build(request: RequestLike, properties: 'dict[str, Any]',
         view.notify(notice)
 
     filter_str = _filter_args(request, tone, gpu)  # may raise ValueError
+    filter_str = _strip_hdr_frame_side_data(filter_str, properties)
 
     cmd = [FFMPEG_EXECUTABLE, '-loglevel', 'info']
     cmd += gpu.pre_input_args
@@ -476,6 +516,7 @@ def build(request: RequestLike, properties: 'dict[str, Any]',
 
     codec_plan = _codec_and_pix_fmt(request, properties, gpu.active_encoder)
     cmd += _encoder_rate_args(request, properties, codec_plan.codec)
+    cmd += _sdr_bitstream_filter_args(codec_plan.codec, properties)
 
     # HEVC in MP4/MOV must be tagged 'hvc1': ffmpeg's default sample entry
     # is 'hev1', which QuickTime/Apple devices (and some Windows players)

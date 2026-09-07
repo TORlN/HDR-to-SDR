@@ -44,3 +44,5 @@ this header and an empty `Unreleased` section after each new version is pushed.
   an active conversion monitor to reap its process before the app exits.
 - Pro batch queues now yield between items, preventing long synchronous
   rejection runs from exhausting the call stack.
+- Tone-mapped HDR video now removes HDR10, HDR10+, and Dolby Vision side data
+  from SDR output so players do not misclassify it as HDR.

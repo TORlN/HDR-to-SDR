@@ -530,12 +530,14 @@ class TestBuild(unittest.TestCase):
         filter_chain = cmd[cmd.index('-filter_complex') + 1]
         for side_data_type in (
                 'MASTERING_DISPLAY_METADATA', 'CONTENT_LIGHT_LEVEL',
-                'DYNAMIC_HDR_PLUS', 'DOVI_RPU_BUFFER', 'DOVI_METADATA'):
+                'DYNAMIC_HDR_PLUS'):
             self.assertIn(
                 f'sidedata=mode=delete:type={side_data_type}',
                 filter_chain,
                 msg=filter_chain,
             )
+        self.assertNotIn('DOVI_RPU_BUFFER', filter_chain, msg=filter_chain)
+        self.assertNotIn('DOVI_METADATA', filter_chain, msg=filter_chain)
 
     def test_av1_source_does_not_double_up_hwaccel_on_a_device_path(self):
         """The nvenc path already prepends `-hwaccel cuda`; an AV1 source

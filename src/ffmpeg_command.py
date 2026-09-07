@@ -435,7 +435,7 @@ def _sdr_bitstream_filter_args(codec: str,
 
     Encoders can carry input frame side data into the newly encoded stream.
     H.264 stores it in SEI type 6; HEVC uses prefix/suffix SEI types 39/40
-    and can also retain Dolby Vision RPU data. Ordinary container metadata is
+    and Dolby Vision RPU NAL type 62. Ordinary container metadata is
     intentionally left to the existing ``-map_metadata 0`` policy.
     """
     if (properties.get('color_transfer') or '').lower() not in _HDR_TRANSFER_CHARACTERISTICS:
@@ -443,7 +443,7 @@ def _sdr_bitstream_filter_args(codec: str,
     if codec == 'libx264' or codec.startswith('h264_'):
         return ['-bsf:v', 'filter_units=remove_types=6']
     if codec == 'libx265' or codec.startswith('hevc_'):
-        return ['-bsf:v', 'dovi_rpu=strip=1,filter_units=remove_types=39|40']
+        return ['-bsf:v', 'filter_units=remove_types=39|40|62']
     return []
 
 

@@ -517,7 +517,7 @@ class TestBuild(unittest.TestCase):
         index = cmd.index('-bsf:v')
         self.assertEqual(
             cmd[index + 1],
-            'dovi_rpu=strip=1,filter_units=remove_types=39|40',
+            'filter_units=remove_types=39|40|62',
             msg=cmd,
         )
 

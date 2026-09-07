@@ -8,6 +8,7 @@ import tempfile
 import threading
 import tkinter as tk
 import webbrowser
+from typing import Callable
 from tkinter import ttk
 
 from dialog_theme import (
@@ -75,7 +76,8 @@ class _UpdateDialog(tk.Toplevel):
     """Dark-themed modal that prompts the user to install an available update."""
 
     def __init__(self, master: tk.Misc, current_ver: str, new_ver: str, download_url: str,
-                 release_url: str, expected_size: int, expected_sha256: str) -> None:
+                 release_url: str, expected_size: int, expected_sha256: str,
+                 shutdown_callback: Callable[[], None] | None = None) -> None:
         super().__init__(master)
         self.configure(bg=_BG)
         self.title('Update Available')
@@ -87,6 +89,7 @@ class _UpdateDialog(tk.Toplevel):
         self._release_url = release_url
         self._expected_size = expected_size
         self._expected_sha256 = expected_sha256
+        self._shutdown_callback = shutdown_callback
         self._build_ui()
         _center_over_master(self, master, min_w=430, min_h=200)
 
@@ -192,7 +195,10 @@ class _UpdateDialog(tk.Toplevel):
                 self._tmp_dir = None
             self._on_download_error('')
             return
-        self.master.destroy()
+        if self._shutdown_callback is not None:
+            self._shutdown_callback()
+        else:
+            self.master.destroy()
 
     def _on_download_error(self, msg: str) -> None:
         self._progress.pack_forget()

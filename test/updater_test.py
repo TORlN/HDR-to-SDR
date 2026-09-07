@@ -489,6 +489,7 @@ class TestGuiUpdateIntegration(unittest.TestCase):
 
     def test_show_update_dialog_constructs_dialog(self):
         gui, _UpdateDialog = self._make_gui()
+        gui._shutdown_for_update = MagicMock()
         with patch('src.gui._UpdateDialog') as MockDialog:
             gui._show_update_dialog(
                 '3.0.0', '4.0.0', _DOWNLOAD_URL, updater.RELEASES_URL,
@@ -496,8 +497,102 @@ class TestGuiUpdateIntegration(unittest.TestCase):
             )
         MockDialog.assert_called_once_with(
             gui.root, '3.0.0', '4.0.0', _DOWNLOAD_URL,
-            updater.RELEASES_URL, 123, 'a' * 64,
+            updater.RELEASES_URL, 123, 'a' * 64, gui._shutdown_for_update,
         )
+
+    def test_successful_installer_launch_uses_shutdown_callback(self):
+        from src.dialogs import _UpdateDialog
+        dialog = object.__new__(_UpdateDialog)
+        dialog._tmp_dir = None
+        dialog._on_download_error = MagicMock()
+        dialog.master = MagicMock()
+        dialog._shutdown_callback = MagicMock()
+
+        with patch('src.updater.launch_installer'):
+            dialog._launch_and_close('setup.exe')
+
+        dialog._shutdown_callback.assert_called_once_with()
+        dialog.master.destroy.assert_not_called()
+
+    def test_failed_installer_launch_does_not_shutdown(self):
+        from src.dialogs import _UpdateDialog
+        dialog = object.__new__(_UpdateDialog)
+        dialog._tmp_dir = None
+        dialog._on_download_error = MagicMock()
+        dialog.master = MagicMock()
+        dialog._shutdown_callback = MagicMock()
+
+        with patch('src.updater.launch_installer', side_effect=OSError('blocked')):
+            dialog._launch_and_close('setup.exe')
+
+        dialog._shutdown_callback.assert_not_called()
+        dialog.master.destroy.assert_not_called()
+
+    @patch('src.gui.conversion_manager')
+    def test_idle_update_shutdown_saves_and_closes_immediately(self, manager):
+        gui, _ = self._make_gui()
+        gui._save_current_settings = MagicMock()
+        gui._preview_pool = MagicMock()
+        manager.process = None
+
+        gui._shutdown_for_update()
+
+        manager.cancel_conversion.assert_not_called()
+        gui._save_current_settings.assert_called_once_with()
+        gui._preview_pool.shutdown.assert_called_once_with(
+            wait=False, cancel_futures=True)
+        gui.root.destroy.assert_called_once_with()
+
+    @patch('src.gui.conversion_manager')
+    def test_update_shutdown_waits_for_active_conversion_to_reap(self, manager):
+        gui, _ = self._make_gui()
+        gui._save_current_settings = MagicMock()
+        gui._preview_pool = MagicMock()
+        manager.process = MagicMock()
+        manager.ready_for_shutdown.side_effect = [False, True]
+
+        gui._shutdown_for_update()
+
+        manager.cancel_conversion.assert_called_once_with()
+        gui._save_current_settings.assert_not_called()
+        gui.root.destroy.assert_not_called()
+        check_reaped = gui.root.after.call_args.args[1]
+        manager.process = None
+        check_reaped()
+        gui._save_current_settings.assert_called_once_with()
+        gui._preview_pool.shutdown.assert_called_once_with(
+            wait=False, cancel_futures=True)
+        gui.root.destroy.assert_called_once_with()
+
+    @patch('src.gui.conversion_manager')
+    def test_update_shutdown_is_idempotent(self, manager):
+        gui, _ = self._make_gui()
+        gui._save_current_settings = MagicMock()
+        gui._preview_pool = MagicMock()
+        manager.process = MagicMock()
+        manager.ready_for_shutdown.return_value = False
+
+        gui._shutdown_for_update()
+        gui._shutdown_for_update()
+
+        manager.cancel_conversion.assert_called_once_with()
+        self.assertEqual(gui.root.after.call_count, 1)
+
+    @patch('src.gui.conversion_manager')
+    def test_update_shutdown_waits_for_monitor_acknowledgement(self, manager):
+        gui, _ = self._make_gui()
+        gui._save_current_settings = MagicMock()
+        gui._preview_pool = MagicMock()
+        manager.process = None
+        manager.ready_for_shutdown.side_effect = [False, True]
+
+        gui._shutdown_for_update()
+
+        gui._save_current_settings.assert_not_called()
+        gui.root.destroy.assert_not_called()
+        gui.root.after.call_args.args[1]()
+        gui._save_current_settings.assert_called_once_with()
+        gui.root.destroy.assert_called_once_with()
 
     def test_start_update_check_schedules_dialog_when_update_available(self):
         gui, _ = self._make_gui()
@@ -518,7 +613,7 @@ class TestGuiUpdateIntegration(unittest.TestCase):
 
         MockDialog.assert_called_once_with(
             gui.root, APP_VERSION, '4.0.0', _DOWNLOAD_URL, release_url,
-            123, 'a' * 64,
+            123, 'a' * 64, gui._shutdown_for_update,
         )
 
     def test_start_update_check_no_dialog_when_current(self):

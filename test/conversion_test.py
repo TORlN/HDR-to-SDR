@@ -121,7 +121,7 @@ class TestTransactionalOutput(unittest.TestCase):
         mock_close.assert_called_once_with(42)
         monitor_args = _mock_thread.call_args.kwargs['args']
         self.assertEqual(monitor_args[0].output_path, final_path)
-        self.assertEqual(len(monitor_args), 4,
+        self.assertEqual(len(monitor_args), 5,
                          msg='the monitor cannot publish or clean up the temp path')
         self.assertEqual(monitor_args[3], temp_path)
 
@@ -446,6 +446,84 @@ class TestConversionManager(unittest.TestCase):
         patcher = patch('src.conversion.vulkan_libplacebo_available', return_value=False)
         patcher.start()
         self.addCleanup(patcher.stop)
+
+    @patch('src.conversion.get_video_properties')
+    def test_shutdown_rejects_new_conversion_before_probing(self, mock_properties):
+        """App shutdown must fence both single-file and batch starts."""
+        manager = ConversionManager()
+        manager.begin_shutdown()
+
+        self.assertFalse(manager.start(_req(), _view()))
+
+        mock_properties.assert_not_called()
+
+    def test_shutdown_readiness_waits_for_monitor_acknowledgement(self):
+        """Clearing process alone is not safe until monitor UI work is queued."""
+        manager = ConversionManager()
+        manager.process = None
+        manager._monitor_done.clear()
+
+        self.assertFalse(manager.ready_for_shutdown())
+
+        manager._monitor_done.set()
+        self.assertTrue(manager.ready_for_shutdown())
+
+    def test_stale_monitor_cannot_acknowledge_a_later_conversion(self):
+        """An old monitor must not mark a new run safe for update shutdown."""
+        manager = ConversionManager()
+        request = _req(use_gpu=True)
+        view = _view()
+        first_run = ConversionRun(request, view)
+        later_run = ConversionRun(_req(input_path='later.mkv'), view)
+        first_process = MagicMock()
+        first_process.stderr = iter(['cuda initialization failed\n'])
+        first_process.returncode = 1
+        manager.process = first_process
+        manager._run = first_run
+        manager._monitor_done.clear()
+
+        def start_later_run() -> None:
+            manager._run = later_run
+            manager.process = MagicMock()
+            manager._monitor_done.clear()
+
+        view.schedule = lambda callback: (start_later_run(), callback())
+        manager._retry_with_cpu = MagicMock()
+
+        manager.monitor_progress(request, view, 10.0, run=first_run)
+        manager.process = None
+
+        self.assertFalse(manager.ready_for_shutdown())
+
+    @patch('src.conversion.get_video_properties', return_value=None)
+    def test_rejected_start_keeps_prior_monitor_eligible_to_acknowledge(
+            self, _mock_properties):
+        """A rejected later start must not strand an earlier monitor."""
+        manager = ConversionManager()
+        first_run = ConversionRun(_req(), _view())
+        manager._run = first_run
+        manager._monitor_done.clear()
+
+        self.assertFalse(manager.start(_req(input_path='unreadable.mkv'), _view()))
+        manager.monitor_progress(first_run.request, first_run.view, 10.0, run=first_run)
+
+        self.assertTrue(manager.ready_for_shutdown())
+
+    @patch('src.conversion.get_video_properties', return_value=None)
+    def test_rejected_start_preserves_prior_cancellation(self, _mock_properties):
+        """A rejected next start must not rewrite the prior run's result."""
+        manager = ConversionManager()
+        completed = MagicMock()
+        view = _view(on_complete=completed)
+        first_run = ConversionRun(_req(), view)
+        manager._run = first_run
+        manager.cancelled = True
+
+        self.assertFalse(manager.start(_req(input_path='unreadable.mkv'), _view()))
+        manager.handle_completion(first_run.request, view, ['ffmpeg failed'], 1,
+                                  run=first_run)
+
+        completed.assert_called_once_with(False, 'Cancelled by user')
 
     @patch('src.conversion.threading.Thread')
     @patch('src.conversion.os.close')

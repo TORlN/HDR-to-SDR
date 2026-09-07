@@ -65,6 +65,17 @@ class ConversionManager:
         self._gpu_encoder: str | None = None
         self._gpu_name_cache: str | None = None
         self._run: ConversionRun | None = None
+        self._shutdown_requested = False
+        self._monitor_done = threading.Event()
+        self._monitor_done.set()
+
+    def begin_shutdown(self) -> None:
+        """Prevent another conversion from starting while the app exits."""
+        self._shutdown_requested = True
+
+    def ready_for_shutdown(self) -> bool:
+        """Whether no process or monitor callback can still reach the UI."""
+        return self.process is None and self._monitor_done.is_set()
 
     def start(self, request: ConversionRequest, view: ConversionView) -> bool:
         """Public entry point. The only way to begin a conversion.
@@ -73,6 +84,8 @@ class ConversionManager:
         constructing the view. The GPU->CPU retry re-enters here with a
         request derived via replace().
         """
+        if self._shutdown_requested:
+            return False
         if self.process is not None:
             view.notify(Notice.info(
                 "Stopping conversion",
@@ -99,9 +112,6 @@ class ConversionManager:
         if incompatibility:
             self._reject(incompatibility, view)
             return False
-
-        self._run = ConversionRun(request=request, view=view)
-        self.cancelled = False
 
         properties = get_video_properties(request.input_path)
         if properties is None:
@@ -144,9 +154,13 @@ class ConversionManager:
             view.set_cancel_visible(False)
             raise
 
+        self._run = ConversionRun(request=request, view=view)
+        run = self._run
+        self.cancelled = False
+        self._monitor_done.clear()
         thread = threading.Thread(
             target=self.monitor_progress,
-            args=(request, view, properties['duration'], temporary_output_path))
+            args=(request, view, properties['duration'], temporary_output_path, run))
         thread.daemon = True
         try:
             thread.start()
@@ -162,6 +176,7 @@ class ConversionManager:
                 except Exception as error:
                     logging.warning(f"Could not reap failed conversion startup: {error}")
             self.process = None
+            self._mark_monitor_done(run)
             self._discard_temporary_output(temporary_output_path)
             view.set_inputs_enabled(True)
             view.set_cancel_visible(False)
@@ -272,17 +287,19 @@ class ConversionManager:
 
     def monitor_progress(self, request: ConversionRequest, view: ConversionView,
                          duration: float,
-                         temporary_output_path: str | None = None) -> None:
+                         temporary_output_path: str | None = None,
+                         run: ConversionRun | None = None) -> None:
         progress_pattern = re.compile(r'time=(\d+:\d+:\d+\.\d+)')
         error_messages: list[str] = []
         gpu_error_detected = False
-        run = self._run
+        run = self._run if run is None else run
 
         # Stable local reference: cancel_conversion (main thread) can set
         # self.process = None concurrently, so use `proc` throughout instead.
         proc = self.process
         if proc is None or proc.stderr is None:
             self._discard_temporary_output(temporary_output_path)
+            self._mark_monitor_done(run)
             return
         for line in proc.stderr:
             if self.cancelled:
@@ -318,6 +335,7 @@ class ConversionManager:
                     f"GPU acceleration failed. Retrying with CPU encoding. "
                     f"ffmpeg output:\n{tail}")
                 view.schedule(lambda: self._retry_with_cpu(request, view, run))  # must run on main thread (Tk)
+                self._mark_monitor_done(run)
             else:
                 completion_error = None
                 if (returncode == 0 and not self.cancelled
@@ -355,6 +373,12 @@ class ConversionManager:
                     self._discard_temporary_output(temporary_output_path)
                 self.handle_completion(
                     request, view, error_messages, returncode, completion_error, run)
+                self._mark_monitor_done(run)
+
+    def _mark_monitor_done(self, run: ConversionRun | None) -> None:
+        """Acknowledge only the conversion that still owns the manager."""
+        if run is None or self._run is run:
+            self._monitor_done.set()
 
     @staticmethod
     def _discard_temporary_output(path: str | None) -> None:

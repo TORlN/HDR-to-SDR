@@ -302,8 +302,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
 
     def _show_update_dialog(self, current_ver: str, new_ver: str, url: str,
                              release_url: str, size: int, digest: str) -> None:
-        _UpdateDialog(
-            self.root, current_ver, new_ver, url, release_url, size, digest)
+        _UpdateDialog(self.root, current_ver, new_ver, url, release_url, size,
+                      digest, self._shutdown_for_update)
 
     def _open_issues_page(self) -> None:
         webbrowser.open(self._ISSUES_URL)
@@ -392,6 +392,25 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._apply_lut_export_availability()
 
     # ── Window / session ────────────────────────────────────────────────────────
+
+    def _shutdown_for_update(self) -> None:
+        """Close only after an active conversion monitor has reaped its process."""
+        if getattr(self, '_update_shutdown_pending', False):
+            return
+        self._update_shutdown_pending = True
+        conversion_manager.begin_shutdown()
+        if conversion_manager.process is not None:
+            conversion_manager.cancel_conversion()
+        self._finish_update_shutdown()
+
+    def _finish_update_shutdown(self) -> None:
+        if not conversion_manager.ready_for_shutdown():
+            self.root.after(50, self._finish_update_shutdown)
+            return
+        self._save_current_settings()
+        if hasattr(self, '_preview_pool'):
+            self._preview_pool.shutdown(wait=False, cancel_futures=True)
+        self.root.destroy()
 
     def on_close(self) -> None:
         """Handle the window close event."""
@@ -1403,6 +1422,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
 
     def convert_video(self) -> None:
         """Convert the video from HDR to SDR."""
+        if getattr(self, '_update_shutdown_pending', False):
+            return
         if self._licensed and getattr(self, 'batch_items', None):
             self.start_batch()
             return

@@ -40,3 +40,5 @@ this header and an empty `Unreleased` section after each new version is pushed.
   up any partially started process and temporary output.
 - Cancel remains available throughout an active conversion, even when preview
   layout refreshes, and preview-mutating controls are disabled meanwhile.
+- Updates now save settings and stop preview work before closing, and wait for
+  an active conversion monitor to reap its process before the app exits.

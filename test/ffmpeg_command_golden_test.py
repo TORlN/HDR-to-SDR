@@ -78,8 +78,6 @@ _HDR_SDR_FILTER_SUFFIX = (
     ',sidedata=mode=delete:type=MASTERING_DISPLAY_METADATA'
     ',sidedata=mode=delete:type=CONTENT_LIGHT_LEVEL'
     ',sidedata=mode=delete:type=DYNAMIC_HDR_PLUS'
-    ',sidedata=mode=delete:type=DOVI_RPU_BUFFER'
-    ',sidedata=mode=delete:type=DOVI_METADATA'
 )
 
 

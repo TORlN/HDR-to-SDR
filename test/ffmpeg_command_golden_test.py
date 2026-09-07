@@ -74,6 +74,15 @@ def _FC(inner: str) -> str:
     return f'[0:v:0]{inner}[vout]'
 
 
+_HDR_SDR_FILTER_SUFFIX = (
+    ',sidedata=mode=delete:type=MASTERING_DISPLAY_METADATA'
+    ',sidedata=mode=delete:type=CONTENT_LIGHT_LEVEL'
+    ',sidedata=mode=delete:type=DYNAMIC_HDR_PLUS'
+    ',sidedata=mode=delete:type=DOVI_RPU_BUFFER'
+    ',sidedata=mode=delete:type=DOVI_METADATA'
+)
+
+
 @dataclass(frozen=True)
 class Case:
     name: str
@@ -178,6 +187,54 @@ CASES = [
             '4000000',
             '-bufsize',
             '8000000',
+            '-r',
+            '30.0',
+            '-pix_fmt',
+            'yuv420p',
+            '-strict',
+            '-2',
+            '-c:a',
+            'copy',
+            '-c:s',
+            'copy',
+            '-map_metadata',
+            '0',
+            '-movflags',
+            '+faststart',
+            'out.mkv',
+            '-y',
+        ],
+    ),
+    Case(
+        name='hdr_h264_sdr_metadata_is_stripped',
+        request_kwargs={},
+        props_kwargs={'color_transfer': 'smpte2084'},
+        expect_notices=0,
+        expect_raises=None,
+        expect=[
+            FFMPEG_EXECUTABLE,
+            '-loglevel',
+            'info',
+            '-i',
+            'in.mp4',
+            '-filter_complex',
+            _FC(zscale_filter(1.0, 'reinhard') + _HDR_SDR_FILTER_SUFFIX),
+            '-map',
+            '[vout]',
+            '-map',
+            '0:a?',
+            '-map',
+            '0:s?',
+            '-c:v',
+            'libx264',
+            '-preset',
+            'veryfast',
+            '-tune',
+            'film',
+            '-crf',
+            '23',
+            '-bsf:v',
+            'filter_units=remove_types=6',
             '-r',
             '30.0',
             '-pix_fmt',

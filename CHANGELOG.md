@@ -42,3 +42,5 @@ this header and an empty `Unreleased` section after each new version is pushed.
   layout refreshes, and preview-mutating controls are disabled meanwhile.
 - Updates now save settings and stop preview work before closing, and wait for
   an active conversion monitor to reap its process before the app exits.
+- Pro batch queues now yield between items, preventing long synchronous
+  rejection runs from exhausting the call stack.

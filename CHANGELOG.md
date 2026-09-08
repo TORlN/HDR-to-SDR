@@ -52,3 +52,5 @@ this header and an empty `Unreleased` section after each new version is pushed.
   and the color LUT instead of reducing frames to 8-bit before encoding.
 - Variable-frame-rate video now preserves its original frame timestamps
   instead of being forced to a single average frame rate during conversion.
+- Dolby Vision profile 5 conversion now fails safely when RPU-aware GPU
+  tonemapping is unavailable, preventing output with incorrect colors.

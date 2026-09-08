@@ -42,6 +42,13 @@ from utils import (VULKAN_DEVICE_ARGS, VULKAN_CUDA_DEVICE_ARGS,
                    FFMPEG_EXECUTABLE)
 
 
+_DOVI_PROFILE5_RPU_REQUIRED = (
+    "This Dolby Vision (profile 5) source has no HDR10-compatible base layer "
+    "and requires GPU tonemapping to render correctly, which isn't available "
+    "on this system. Conversion was not started to avoid incorrect colors."
+)
+
+
 class RequestLike(Protocol):
     """The subset of ConversionRequest this module needs, described
     structurally so this module never imports conversion.py (which imports
@@ -108,12 +115,7 @@ def _tonemap_plan(request: RequestLike, properties: 'dict[str, Any]',
 
     notices: 'list[Notice]' = []
     if dovi_needs_rpu and not use_libplacebo:
-        notices.append(Notice.warning(
-            "Warning",
-            "This Dolby Vision (profile 5) source has no HDR10-compatible "
-            "base layer and requires GPU tonemapping to render correctly, "
-            "which isn't available on this system. The output colors may "
-            "look wrong (green/purple cast)."))
+        notices.append(Notice.error("Dolby Vision Profile 5", _DOVI_PROFILE5_RPU_REQUIRED))
     elif dovi_needs_rpu and not use_gpu:
         # GPU tonemapping still ran for this source despite use_gpu=False
         # (encoding stays on CPU); tell the user or the override is silent.
@@ -485,6 +487,8 @@ def build(request: RequestLike, properties: 'dict[str, Any]',
     tone = _tonemap_plan(request, properties, probes.resolve_libplacebo_available)
     for notice in tone.notices:
         view.notify(notice)
+    if tone.dovi_needs_rpu and not tone.use_libplacebo:
+        raise ValueError(_DOVI_PROFILE5_RPU_REQUIRED)
 
     gpu = _gpu_device_args(tone, probes.resolve_gpu_encoder,
                            probes.resolve_cuda_interop_available)

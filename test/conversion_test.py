@@ -2342,25 +2342,17 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
         self.assertIn('-init_hw_device', cmd)   # Vulkan device for the filter
         self.assertIn('libx265', cmd)           # encode itself stays on CPU
 
-    def test_dovi_profile5_without_libplacebo_falls_back_to_cpu_chain(self):
-        manager = ConversionManager()
-        cmd = manager.construct_ffmpeg_command(
-            _req(input_path='in.mkv', licensed=True), self._dovi_props(profile=5), _view())
-        fc = cmd[cmd.index('-filter_complex') + 1]
-        self.assertIn('zscale', fc)
-        self.assertNotIn('libplacebo', fc)
-
-    def test_dovi_profile5_without_libplacebo_warns_about_wrong_colors(self):
-        """The zscale fallback for profile 5 has no RPU applied and renders
-        wrong colors (green/purple cast per the code's own comment) -- the
-        conversion must not exit silently with no indication anything is off."""
+    def test_dovi_profile5_without_libplacebo_rejects_before_ffmpeg_starts(self):
+        """A profile 5 source cannot safely use the CPU fallback because its
+        RPU is required to render correct colors."""
         manager = ConversionManager()
         view = _view()
-        manager.construct_ffmpeg_command(
-            _req(input_path='in.mkv', licensed=True), self._dovi_props(profile=5), view)
+        with self.assertRaisesRegex(ValueError, 'HDR10-compatible base layer'):
+            manager.construct_ffmpeg_command(
+                _req(input_path='in.mkv', licensed=True),
+                self._dovi_props(profile=5), view)
         self.assertEqual(len(view.notices), 1)
-        self.assertEqual(view.notices[0].kind, 'warning')
-        self.assertIn('dolby vision', view.notices[0].body.lower())
+        self.assertEqual(view.notices[0].kind, 'error')
 
     def test_dovi_profile5_with_libplacebo_does_not_warn(self):
         """When libplacebo IS available, the RPU is correctly applied --

@@ -69,13 +69,13 @@ class TestTonemapPlan(unittest.TestCase):
             raise AssertionError('resolve_libplacebo_available must not be called')
         ffmpeg_command._tonemap_plan(_Req(use_gpu=False), _PROPS, _forbidden)
 
-    def test_dolby_vision_profile_5_without_libplacebo_warns(self):
+    def test_dolby_vision_profile_5_without_libplacebo_reports_an_error(self):
         props = {'codec_name': 'hevc', 'is_dolby_vision': True, 'dovi_profile': 5}
         plan = ffmpeg_command._tonemap_plan(_Req(), props, lambda: False)
         self.assertTrue(plan.dovi_needs_rpu, msg=plan)
         self.assertFalse(plan.use_libplacebo, msg=plan)
         self.assertEqual(len(plan.notices), 1, msg=plan)
-        self.assertEqual(plan.notices[0].kind, 'warning', msg=plan)
+        self.assertEqual(plan.notices[0].kind, 'error', msg=plan)
 
     def test_dolby_vision_profile_5_forces_libplacebo_even_with_gpu_unchecked(self):
         """dovi_needs_rpu alone can flip use_libplacebo True even when

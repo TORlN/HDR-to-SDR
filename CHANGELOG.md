@@ -50,3 +50,5 @@ this header and an empty `Unreleased` section after each new version is pushed.
   in both packaged builds and CI.
 - GPU 10-bit conversion now preserves 10-bit precision through tonemapping
   and the color LUT instead of reducing frames to 8-bit before encoding.
+- Variable-frame-rate video now preserves its original frame timestamps
+  instead of being forced to a single average frame rate during conversion.

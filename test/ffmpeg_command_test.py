@@ -466,6 +466,16 @@ class TestBuild(unittest.TestCase):
         self.assertIn('libx264', cmd, msg=cmd)
         self.assertEqual(view.notices, [], msg=view.notices)
 
+    def test_output_uses_passthrough_timing_without_forcing_a_frame_rate(self):
+        """A variable-frame-rate input must retain its timestamps instead of
+        being duplicated or dropped to fit the probe's average frame rate."""
+        view = _RecordingView()
+        cmd = ffmpeg_command.build(_Req(), self._PROPS, self._probes(), view)
+        self.assertIn('-fps_mode', cmd, msg=cmd)
+        index = cmd.index('-fps_mode')
+        self.assertEqual(cmd[index:index + 2], ['-fps_mode', 'passthrough'], msg=cmd)
+        self.assertNotIn('-r', cmd, msg=cmd)
+
     def test_notices_are_delivered_even_when_filter_args_raises(self):
         """The core of the notice-before-raise guarantee: a Dolby Vision
         profile-5 warning from _tonemap_plan must reach the view even

@@ -525,7 +525,7 @@ def build(request: RequestLike, properties: 'dict[str, Any]',
         cmd += ['-tag:v', 'hvc1']
 
     cmd += [
-        '-r', str(properties['frame_rate']),
+        '-fps_mode', 'passthrough',
         '-pix_fmt', codec_plan.pix_fmt,
         '-strict', '-2',
     ]

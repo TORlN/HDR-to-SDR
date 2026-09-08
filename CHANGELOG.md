@@ -57,3 +57,5 @@ this header and an empty `Unreleased` section after each new version is pushed.
 - Pro MP4 and MOV conversion now handles each audio track individually,
   preserving compatible tracks while transcoding only incompatible ones.
 - MKV conversions now preserve embedded attachments, including subtitle fonts.
+- PyArmor release builds now package the selected obfuscated entry point
+  instead of silently analyzing the unobfuscated source tree.

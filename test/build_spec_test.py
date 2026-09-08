@@ -15,6 +15,7 @@ absolute path and a mis-joined relative one, and stays hermetic.
 import os
 import re
 import unittest
+from unittest.mock import patch
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 _SPEC_PATH = os.path.join(_ROOT, 'HDR_to_SDR_Converter.spec')
@@ -41,7 +42,7 @@ class _StubBuildStep:
         self.kwargs = kwargs
 
 
-def _exec_spec(specpath):
+def _exec_spec(specpath, source_root=None):
     """Run the spec with stubbed PyInstaller globals; return the captured objects."""
     captured = {}
 
@@ -62,7 +63,9 @@ def _exec_spec(specpath):
     }
     with open(_SPEC_PATH, encoding='utf-8') as f:
         source = f.read()
-    exec(compile(source, _SPEC_PATH, 'exec'), namespace)
+    environment = {} if source_root is None else {'HDRSDR_BUILD_SOURCE_ROOT': source_root}
+    with patch.dict(os.environ, environment, clear=False):
+        exec(compile(source, _SPEC_PATH, 'exec'), namespace)
     return captured
 
 
@@ -120,6 +123,18 @@ class TestSpecIsRelocatable(unittest.TestCase):
 
 
 class TestSpecContent(unittest.TestCase):
+
+    def test_obfuscated_build_analyzes_obfuscated_entry_point(self):
+        """Selecting PyArmor output must make Analysis use _obf/main.pyw.
+
+        Removing the build-source selection from the spec would make this
+        fail by analyzing src/main.pyw while the build script claims it is
+        packaging obfuscated sources.
+        """
+        captured = _exec_spec(_SENTINEL, source_root='_obf')
+        self.assertEqual(
+            captured['analysis'].scripts,
+            [os.path.join(_SENTINEL, '_obf', 'main.pyw')])
 
     def test_build_verifies_ffmpeg_inputs_before_pyinstaller(self):
         """A release must reject unapproved binaries before packaging them."""

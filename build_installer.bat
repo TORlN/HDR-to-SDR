@@ -178,6 +178,7 @@ echo.
 echo [STEP 3] Running PyInstaller (--onedir)
 if exist "%REPO_ROOT%\_obf\main.pyw" (
     echo [INFO] PyArmor obfuscated source detected -- using spec file
+    set "HDRSDR_BUILD_SOURCE_ROOT=_obf"
     python -m PyInstaller ^
         --distpath "%REPO_ROOT%\dist" ^
         --workpath "%REPO_ROOT%\build" ^

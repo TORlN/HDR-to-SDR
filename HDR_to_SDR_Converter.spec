@@ -17,8 +17,11 @@ def _site_packages(*parts):
     return _p('.venv', 'Lib', 'site-packages', *parts)
 
 
+_source_root = os.environ.get('HDRSDR_BUILD_SOURCE_ROOT', 'src')
+
+
 a = Analysis(
-    [_p('src', 'main.pyw')],
+    [_p(_source_root, 'main.pyw')],
     pathex=[],
     binaries=[
         (_p('src', 'ffmpeg.exe'), '.'),

@@ -64,6 +64,7 @@ class TestGetVideoProperties(unittest.TestCase):
                     "bit_rate": "128000"
                 }
             ],
+            "attachment_streams": [],
             "duration": 600.0,
             "subtitle_streams": [],
             "color_primaries": "",
@@ -132,6 +133,7 @@ class TestGetVideoProperties(unittest.TestCase):
                     "bit_rate": "128000"
                 }
             ],
+            "attachment_streams": [],
             "subtitle_streams": [
                 {
                     "codec_type": "subtitle",

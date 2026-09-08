@@ -220,7 +220,7 @@ def _filter_args(request: RequestLike, plan: TonemapPlan, gpu: GpuPlan) -> str:
     if plan.use_libplacebo:
         return build_libplacebo_filter(
             request.gamma, tonemapper, cuda_input=gpu.use_cuda_interop,
-            lut_enabled=request.lut_enabled)
+            lut_enabled=request.lut_enabled, bit_depth=request.bit_depth)
     if is_gpu_only_tonemapper(tonemapper):
         raise ValueError(
             f"{tonemapper} requires GPU tonemapping; this item's "

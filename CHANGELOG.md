@@ -48,3 +48,5 @@ this header and an empty `Unreleased` section after each new version is pushed.
   from SDR output so players do not misclassify it as HDR.
 - HDR metadata cleanup now uses filters supported by the FFmpeg versions used
   in both packaged builds and CI.
+- GPU 10-bit conversion now preserves 10-bit precision through tonemapping
+  and the color LUT instead of reducing frames to 8-bit before encoding.

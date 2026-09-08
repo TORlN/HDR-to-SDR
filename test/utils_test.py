@@ -626,12 +626,27 @@ class TestBuildLibplaceboFilter(unittest.TestCase):
         self.assertIn('hwdownload,format=rgba,lut3d=', f)
         self.assertNotIn('format=nv12', f)
 
+    def test_ten_bit_lut_path_keeps_precision_through_the_cpu_lut(self):
+        """The GPU 10-bit path must not reduce a frame to 8-bit RGBA before
+        the CPU-only LUT stage, then misleadingly ask the encoder for 10-bit."""
+        f = build_libplacebo_filter(1.0, 'reinhard', bit_depth=10)
+        self.assertIn('format=rgba64le', f)
+        self.assertIn('hwdownload,format=rgba64le,lut3d=', f)
+        self.assertIn('setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709,format=p010le', f)
+        self.assertNotIn('format=rgba,', f)
+
     def test_lut_disabled_still_downloads_as_nv12(self):
         """No LUT stage means no RGB-family intermediate is needed -- nv12
         feeds the encoder directly, same as before the LUT feature existed."""
         f = build_libplacebo_filter(1.0, 'reinhard', lut_enabled=False)
         self.assertIn('hwdownload,format=nv12', f)
         self.assertNotIn('rgba', f)
+
+    def test_ten_bit_lut_disabled_path_downloads_as_p010le(self):
+        f = build_libplacebo_filter(1.0, 'reinhard', bit_depth=10,
+                                    lut_enabled=False)
+        self.assertIn('hwdownload,format=p010le', f)
+        self.assertNotIn('format=nv12', f)
 
 
 class TestVulkanCudaInteropProbe(unittest.TestCase):

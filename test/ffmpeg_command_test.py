@@ -223,6 +223,13 @@ class TestFilterArgs(unittest.TestCase):
             self._gpu(use_cuda_interop=True))
         self.assertIn('hwmap=derive_device=vulkan', filt, msg=filt)
 
+    def test_ten_bit_libplacebo_path_keeps_a_ten_bit_filter_output(self):
+        filt = ffmpeg_command._filter_args(
+            _Req(use_gpu=True, bit_depth=10), self._plan(use_libplacebo=True),
+            self._gpu())
+        self.assertIn('format=p010le', filt, msg=filt)
+        self.assertNotIn('hwdownload,format=rgba,lut3d=', filt, msg=filt)
+
     def test_gpu_only_tonemapper_on_cpu_path_raises(self):
         with self.assertRaises(ValueError) as ctx:
             ffmpeg_command._filter_args(

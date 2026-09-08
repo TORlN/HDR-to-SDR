@@ -338,7 +338,8 @@ def get_maxcll(video_path):
 def build_libplacebo_filter(gamma, tonemapper, width: 'int | str' = 'iw',
                             height: 'int | str' = 'ih',
                             cuda_input: bool = False,
-                            lut_enabled: bool = True) -> str:
+                            lut_enabled: bool = True,
+                            bit_depth: int = 8) -> str:
     """Build the GPU tonemapping filter chain (HDR->SDR) using libplacebo.
 
     Always peak_detect=1. cuda_input=False uploads from system RAM
@@ -358,6 +359,8 @@ def build_libplacebo_filter(gamma, tonemapper, width: 'int | str' = 'iw',
         (verified pixel-identical). Real cost: ~2.1-2.4x slower GPU exports
         at 4K, since it disables the CUDA zero-copy fast path.
         lut_enabled=False restores that fast path.
+    bit_depth: requested encoder depth. The 10-bit GPU path retains precision
+        through a 16-bit RGB LUT intermediate before returning to p010le.
     """
     tm = tonemapper.lower()
     prefix = ('hwmap=derive_device=vulkan,'
@@ -367,9 +370,12 @@ def build_libplacebo_filter(gamma, tonemapper, width: 'int | str' = 'iw',
     # lut3d only accepts RGB formats; nv12 triggers a hidden auto_scale to
     # rgb24 (confirmed via -loglevel verbose). Downloading as rgba when the LUT
     # runs skips that hidden conversion -- measured ~5% faster over 300
-    # synthetic 4K frames. Without the LUT, nv12 is still right: it feeds the
-    # encoder directly with no RGB-family stage in between.
-    download_fmt = 'rgba' if lut_enabled else 'nv12'
+    # synthetic 4K frames. Ten-bit output needs rgba64le for that stage, then
+    # converts explicitly to p010le after all CPU color work. Without the LUT,
+    # the encoder receives the frame directly in its matching YUV format.
+    ten_bit_output = bit_depth == 10
+    download_fmt = ('rgba64le' if ten_bit_output else 'rgba') if lut_enabled else (
+        'p010le' if ten_bit_output else 'nv12')
     libplacebo = (
         f'libplacebo=w={width}:h={height}:tonemapping={tm}:'
         f'colorspace=bt709:color_primaries={primaries}:color_trc=bt709:range=tv:'
@@ -384,13 +390,15 @@ def build_libplacebo_filter(gamma, tonemapper, width: 'int | str' = 'iw',
             suffix = f',hwdownload,format={download_fmt},{lut_stage}'
         else:
             suffix = f',hwdownload,format={download_fmt},{lut_stage},eq=gamma={gamma}'
+        if ten_bit_output:
+            suffix += ',format=p010le'
     elif cuda_input and gamma_is_identity:
         # Fully-GPU: remap Vulkan->CUDA after libplacebo, NVENC encodes directly.
         suffix = ',hwmap=reverse=1:derive_device=cuda'
     elif gamma_is_identity:
-        suffix = ',hwdownload,format=nv12'  # skip the no-op eq=gamma=1
+        suffix = f',hwdownload,format={download_fmt}'  # skip the no-op eq=gamma=1
     else:
-        suffix = f',hwdownload,format=nv12,eq=gamma={gamma}'
+        suffix = f',hwdownload,format={download_fmt},eq=gamma={gamma}'
     return f'{prefix}{libplacebo}{suffix}'
 
 # None = not yet probed.

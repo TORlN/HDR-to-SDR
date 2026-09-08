@@ -279,13 +279,29 @@ def _container_stream_args(
     if ext not in _MP4_FAMILY:
         return (['-map', '0:s?'], ['-c:a', 'copy'], ['-c:s', 'copy'])
 
-    audio_codec = (properties.get('audio_codec') or '').lower()
-    if audio_codec and audio_codec not in _MP4_AUDIO_OK:
-        bit_rate = properties.get('audio_bit_rate') or 0
-        target_rate = str(min(int(bit_rate), 384000)) if bit_rate else '192k'
-        audio_codec_args = ['-c:a', 'aac', '-b:a', target_rate]
+    audio_streams = properties.get('audio_streams') or []
+    if len(audio_streams) > 1:
+        audio_codec_args = []
+        for output_index, stream in enumerate(audio_streams):
+            codec = (stream.get('codec_name') or '').lower()
+            if codec and codec not in _MP4_AUDIO_OK:
+                try:
+                    bit_rate = int(stream.get('bit_rate') or 0)
+                except (TypeError, ValueError):
+                    bit_rate = 0
+                target_rate = str(min(bit_rate, 384000)) if bit_rate else '192k'
+                audio_codec_args += [f'-c:a:{output_index}', 'aac',
+                                     f'-b:a:{output_index}', target_rate]
+            else:
+                audio_codec_args += [f'-c:a:{output_index}', 'copy']
     else:
-        audio_codec_args = ['-c:a', 'copy']
+        audio_codec = (properties.get('audio_codec') or '').lower()
+        if audio_codec and audio_codec not in _MP4_AUDIO_OK:
+            bit_rate = properties.get('audio_bit_rate') or 0
+            target_rate = str(min(int(bit_rate), 384000)) if bit_rate else '192k'
+            audio_codec_args = ['-c:a', 'aac', '-b:a', target_rate]
+        else:
+            audio_codec_args = ['-c:a', 'copy']
 
     subtitle_map_args = []
     for stream in properties.get('subtitle_streams', []):

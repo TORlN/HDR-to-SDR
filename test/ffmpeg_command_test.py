@@ -280,6 +280,20 @@ class TestContainerStreamArgs(unittest.TestCase):
         self.assertEqual(audio, ['-c:a', 'copy'])  # eac3 is mp4-legal
         self.assertEqual(sub_codec, [])
 
+    def test_mp4_handles_each_mixed_audio_stream_individually(self):
+        props = {
+            'audio_codec': 'aac', 'audio_bit_rate': 128000,
+            'audio_streams': [
+                {'codec_name': 'aac', 'bit_rate': '128000'},
+                {'codec_name': 'truehd', 'bit_rate': '2000000'},
+            ],
+            'subtitle_streams': [],
+        }
+        _, audio, _ = ffmpeg_command._container_stream_args('out.mp4', props)
+        self.assertEqual(
+            audio,
+            ['-c:a:0', 'copy', '-c:a:1', 'aac', '-b:a:1', '384000'])
+
     def test_m4v_and_mov_behave_like_mp4(self):
         props = {'audio_codec': 'truehd', 'audio_bit_rate': 0, 'subtitle_streams': []}
         for path in ('out.m4v', 'out.MOV'):

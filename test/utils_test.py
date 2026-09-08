@@ -57,6 +57,13 @@ class TestGetVideoProperties(unittest.TestCase):
             "frame_rate": 30.0,
             "audio_codec": "aac",
             "audio_bit_rate": 128000,
+            "audio_streams": [
+                {
+                    "codec_type": "audio",
+                    "codec_name": "aac",
+                    "bit_rate": "128000"
+                }
+            ],
             "duration": 600.0,
             "subtitle_streams": [],
             "color_primaries": "",
@@ -118,6 +125,13 @@ class TestGetVideoProperties(unittest.TestCase):
             "duration": 120.0,
             "audio_codec": "aac",
             "audio_bit_rate": 128000,
+            "audio_streams": [
+                {
+                    "codec_type": "audio",
+                    "codec_name": "aac",
+                    "bit_rate": "128000"
+                }
+            ],
             "subtitle_streams": [
                 {
                     "codec_type": "subtitle",
@@ -134,6 +148,29 @@ class TestGetVideoProperties(unittest.TestCase):
             "total_bit_rate": 4128000,
         }
         self.assertEqual(properties, expected_properties)
+
+    @patch('src.utils.subprocess.Popen')
+    def test_get_video_properties_keeps_every_audio_stream(self, mock_popen):
+        mock_process = mock_popen.return_value
+        audio_streams = [
+            {'codec_type': 'audio', 'codec_name': 'aac', 'bit_rate': '128000'},
+            {'codec_type': 'audio', 'codec_name': 'truehd', 'bit_rate': '2000000'},
+        ]
+        mock_process.communicate.return_value = (json.dumps({
+            'streams': [
+                {'codec_type': 'video', 'width': 1920, 'height': 1080,
+                 'codec_name': 'h264', 'avg_frame_rate': '30/1',
+                 'bit_rate': '4000000'},
+                *audio_streams,
+            ],
+            'format': {'duration': '120.0'},
+        }).encode('utf-8'), b'')
+        mock_process.returncode = 0
+
+        properties = get_video_properties('mixed-audio.mkv')
+
+        self.assertIn('audio_streams', properties)
+        self.assertEqual(properties['audio_streams'], audio_streams)
 
 class TestRunFfmpegCommand(unittest.TestCase):
 

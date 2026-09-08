@@ -54,3 +54,5 @@ this header and an empty `Unreleased` section after each new version is pushed.
   instead of being forced to a single average frame rate during conversion.
 - Dolby Vision profile 5 conversion now fails safely when RPU-aware GPU
   tonemapping is unavailable, preventing output with incorrect colors.
+- Pro MP4 and MOV conversion now handles each audio track individually,
+  preserving compatible tracks while transcoding only incompatible ones.

@@ -870,6 +870,7 @@ def _probe_video_properties(input_file):
         audio_stream = None
         audio_streams = []
         subtitle_streams = []
+        attachment_streams = []
         
         for stream in data.get('streams', []):
             if (stream['codec_type'] == 'video' and not video_stream):
@@ -880,6 +881,8 @@ def _probe_video_properties(input_file):
                 audio_streams.append(stream)
             elif (stream['codec_type'] == 'subtitle'):
                 subtitle_streams.append(stream)
+            elif stream['codec_type'] == 'attachment':
+                attachment_streams.append(stream)
         
         if not video_stream:
             return None
@@ -937,6 +940,7 @@ def _probe_video_properties(input_file):
             "audio_bit_rate": audio_bit_rate,
             "audio_streams": audio_streams,
             "subtitle_streams": subtitle_streams,
+            "attachment_streams": attachment_streams,
             "color_primaries": video_stream.get('color_primaries', ''),
             "color_transfer": video_stream.get('color_transfer', ''),
             "bit_depth": _parse_bit_depth(video_stream),

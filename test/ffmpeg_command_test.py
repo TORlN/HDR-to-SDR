@@ -309,6 +309,21 @@ class TestStreamMapArgs(unittest.TestCase):
         streams = ffmpeg_command._stream_map_args(_Req(output_path='out.mkv'), props)
         self.assertEqual(streams.map_args, ['-map', '0:a?', '-map', '0:s?'], msg=streams)
 
+    def test_mkv_maps_and_copies_attachment_streams(self):
+        props = {
+            'audio_codec': 'aac', 'subtitle_streams': [],
+            'attachment_streams': [
+                {'codec_name': 'ttf', 'index': 3,
+                 'filename': 'SubtitleFont.ttf',
+                 'mimetype': 'application/x-truetype-font'},
+            ],
+        }
+        streams = ffmpeg_command._stream_map_args(_Req(output_path='out.mkv'), props)
+        self.assertEqual(
+            streams.map_args,
+            ['-map', '0:a?', '-map', '0:s?', '-map', '0:t?'], msg=streams)
+        self.assertEqual(streams.attachment_codec_args, ['-c:t', 'copy'], msg=streams)
+
     def test_dolby_vision_unlicensed_downmixes_to_free_tier(self):
         props = {'is_dolby_vision': True, 'audio_codec': 'truehd',
                  'subtitle_streams': []}
@@ -479,6 +494,21 @@ class TestBuild(unittest.TestCase):
         self.assertIn('-i', cmd, msg=cmd)
         self.assertIn('libx264', cmd, msg=cmd)
         self.assertEqual(view.notices, [], msg=view.notices)
+
+    def test_mkv_output_copies_embedded_attachments(self):
+        request = _Req(output_path='out.mkv')
+        properties = dict(self._PROPS, attachment_streams=[
+            {'codec_name': 'ttf', 'index': 3,
+             'filename': 'SubtitleFont.ttf',
+             'mimetype': 'application/x-truetype-font'},
+        ])
+
+        cmd = ffmpeg_command.build(request, properties, self._probes(), _RecordingView())
+
+        self.assertIn('-map', cmd, msg=cmd)
+        self.assertIn('0:t?', cmd, msg=cmd)
+        self.assertIn('-c:t', cmd, msg=cmd)
+        self.assertEqual(cmd[cmd.index('-c:t') + 1], 'copy', msg=cmd)
 
     def test_output_uses_passthrough_timing_without_forcing_a_frame_rate(self):
         """A variable-frame-rate input must retain its timestamps instead of

@@ -317,6 +317,7 @@ class StreamArgs:
     map_args: 'list[str]'
     audio_codec_args: 'list[str]'
     subtitle_codec_args: 'list[str]'
+    attachment_codec_args: 'list[str]'
 
 
 def _stream_map_args(request: RequestLike, properties: 'dict[str, Any]') -> StreamArgs:
@@ -335,9 +336,17 @@ def _stream_map_args(request: RequestLike, properties: 'dict[str, Any]') -> Stre
     else:
         audio_map_args = ['-map', '0:a?']
 
-    return StreamArgs(map_args=audio_map_args + subtitle_map_args,
+    attachment_map_args = []
+    attachment_codec_args = []
+    if (os.path.splitext(request.output_path)[1].lower() == '.mkv'
+            and properties.get('attachment_streams')):
+        attachment_map_args = ['-map', '0:t?']
+        attachment_codec_args = ['-c:t', 'copy']
+
+    return StreamArgs(map_args=audio_map_args + subtitle_map_args + attachment_map_args,
                       audio_codec_args=audio_codec_args,
-                      subtitle_codec_args=subtitle_codec_args)
+                      subtitle_codec_args=subtitle_codec_args,
+                      attachment_codec_args=attachment_codec_args)
 
 
 # Hardware H.264 encoders can't do 10-bit at all; their HEVC counterparts
@@ -535,6 +544,7 @@ def build(request: RequestLike, properties: 'dict[str, Any]',
     codec_plan = _codec_and_pix_fmt(request, properties, gpu.active_encoder)
     cmd += _encoder_rate_args(request, properties, codec_plan.codec)
     cmd += _sdr_bitstream_filter_args(codec_plan.codec, properties)
+    cmd += streams.attachment_codec_args
 
     # HEVC in MP4/MOV must be tagged 'hvc1': ffmpeg's default sample entry
     # is 'hev1', which QuickTime/Apple devices (and some Windows players)

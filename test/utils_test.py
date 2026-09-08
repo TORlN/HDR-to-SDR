@@ -172,6 +172,28 @@ class TestGetVideoProperties(unittest.TestCase):
         self.assertIn('audio_streams', properties)
         self.assertEqual(properties['audio_streams'], audio_streams)
 
+    @patch('src.utils.subprocess.Popen')
+    def test_get_video_properties_keeps_attachment_streams(self, mock_popen):
+        mock_process = mock_popen.return_value
+        attachment_streams = [
+            {'codec_type': 'attachment', 'codec_name': 'ttf', 'index': 3,
+             'filename': 'SubtitleFont.ttf', 'mimetype': 'application/x-truetype-font'},
+        ]
+        mock_process.communicate.return_value = (json.dumps({
+            'streams': [
+                {'codec_type': 'video', 'width': 1920, 'height': 1080,
+                 'codec_name': 'h264', 'avg_frame_rate': '30/1',
+                 'bit_rate': '4000000'},
+                *attachment_streams,
+            ],
+            'format': {'duration': '120.0'},
+        }).encode('utf-8'), b'')
+        mock_process.returncode = 0
+
+        properties = get_video_properties('embedded-font.mkv')
+
+        self.assertEqual(properties['attachment_streams'], attachment_streams)
+
 class TestRunFfmpegCommand(unittest.TestCase):
 
     @patch('subprocess.Popen')

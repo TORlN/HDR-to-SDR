@@ -59,3 +59,5 @@ this header and an empty `Unreleased` section after each new version is pushed.
 - MKV conversions now preserve embedded attachments, including subtitle fonts.
 - PyArmor release builds now package the selected obfuscated entry point
   instead of silently analyzing the unobfuscated source tree.
+- Documentation now clarifies that normal releases use one freemium installer
+  and that the FREE-ONLY build is an emergency fallback, not a release.

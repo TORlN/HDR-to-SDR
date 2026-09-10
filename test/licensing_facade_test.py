@@ -1,8 +1,9 @@
 """The public licensing façade must degrade to free-edition behavior.
 
-These tests simulate a Community Edition build -- a checkout or installer with
-no src/pro/ package -- by making `pro.licensing` unimportable, then reloading
-the façade.
+These tests simulate the explicit FREE-ONLY fallback build, where no
+src/pro/ package is present, by making `pro.licensing` unimportable, then
+reloading the façade. Normal releases are freemium installers that include
+the private package and use licensing to gate Pro features.
 """
 import importlib
 import os

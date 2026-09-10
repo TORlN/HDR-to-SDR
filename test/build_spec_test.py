@@ -145,6 +145,47 @@ class TestSpecContent(unittest.TestCase):
         self.assertGreaterEqual(verifier, 0, 'build does not verify pinned FFmpeg inputs')
         self.assertGreater(pyinstaller, verifier, 'FFmpeg verification must precede PyInstaller')
 
+    def test_release_build_runs_ci_equivalent_gates_and_frozen_smoke_test(self):
+        """A normal release must validate code and its frozen distribution.
+
+        Removing coverage, type checking, or the noninteractive frozen-app
+        smoke test would let a build report success without CI-equivalent
+        validation or proof that the bundled entry point starts.
+        """
+        with open(os.path.join(_ROOT, 'build_installer.bat'), encoding='utf-8') as f:
+            bat = f.read()
+        coverage = bat.find('python -m coverage run -m unittest discover')
+        coverage_report = bat.find('python -m coverage report')
+        pyright = bat.find('python -m pyright')
+        smoke_test = bat.find('HDR_to_SDR_Converter.exe" --smoke-test')
+        pyinstaller = bat.find('python -m PyInstaller')
+        installer = bat.find('Compiling Inno Setup installer')
+        self.assertGreaterEqual(coverage, 0, 'release build must run coverage-gated tests')
+        self.assertGreater(coverage_report, coverage, 'coverage report must follow the test run')
+        self.assertGreater(pyright, coverage_report, 'type checking must follow coverage')
+        self.assertGreater(pyinstaller, pyright, 'packaging must follow CI-equivalent gates')
+        self.assertGreater(smoke_test, pyinstaller, 'frozen executable must be smoke-tested')
+        self.assertGreater(installer, smoke_test, 'installer must follow frozen-app validation')
+        self.assertIn('--dev-skip-tests', bat)
+        self.assertNotIn('if /I "%~1"=="--skip-tests"', bat)
+
+    def test_signed_release_verifies_both_authenticode_signatures(self):
+        """A signing-tool success exit must not substitute for verification.
+
+        Removing either verification would allow an incorrectly signed release
+        to reach the final success message.
+        """
+        with open(os.path.join(_ROOT, 'build_installer.bat'), encoding='utf-8') as f:
+            bat = f.read()
+        sign_exe = bat.find('!SIGNTOOL!" sign', bat.find('Step 3.5'))
+        verify_exe = bat.find('!SIGNTOOL!" verify /pa /v "%DIST_DIR%\\HDR_to_SDR_Converter.exe"')
+        sign_installer = bat.find('!SIGNTOOL!" sign', bat.find('Step 4.5'))
+        verify_installer = bat.find('!SIGNTOOL!" verify /pa /v "%SETUP_EXE%"')
+        done = bat.find(':: -- Step 5:')
+        self.assertGreater(verify_exe, sign_exe, 'signed application must be verified')
+        self.assertGreater(verify_installer, sign_installer, 'signed installer must be verified')
+        self.assertGreater(done, verify_installer, 'provenance must follow signature verification')
+
     def test_ffmpeg_patch_hook_rejects_unknown_source_text(self):
         """An upstream FFmpeg refactor must stop, not skip, each local patch.
 

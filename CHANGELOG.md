@@ -65,3 +65,5 @@ this header and an empty `Unreleased` section after each new version is pushed.
   with paired commit IDs, build inputs, tool versions, and installer hashes.
 - FFmpeg rebuilds now stop when their local source patches no longer match the
   checked source, preventing a silently incomplete patched binary.
+- Release builds now run coverage and type checks, smoke-test the frozen
+  application without opening its UI, and verify Authenticode signatures.

@@ -6,6 +6,8 @@ from platform_utils import setup_dpi_awareness
 from updater import cleanup_stale_update_directories
 
 if __name__ == "__main__":
+    if "--smoke-test" in sys.argv:
+        raise SystemExit(0)
     cleanup_stale_update_directories()
     setup_dpi_awareness()
     root = TkinterDnD.Tk()

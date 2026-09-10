@@ -107,16 +107,25 @@ if errorlevel 1 (
 :: -- Step 1.5: Test suite gate ---------------------------------------------------
 echo.
 echo [STEP 1.5] Running test suite
-if /I "%~1"=="--skip-tests" (
+if /I "%~1"=="--dev-skip-tests" (
     set "TESTS_SKIPPED=1"
-    echo [WARN] --skip-tests passed -- SKIPPING the test suite.
+    echo [WARN] --dev-skip-tests passed -- SKIPPING release validation.
     goto :tests_done
 )
 set "TEST_LOG=%REPO_ROOT%\build_test_run.log"
 if exist "%TEST_LOG%" del /q "%TEST_LOG%"
 
-python -m unittest discover -s test -p "*_test.py" -t . > "%TEST_LOG%" 2>&1
+python -m coverage run -m unittest discover -s test -p "*_test.py" -t . > "%TEST_LOG%" 2>&1
 set "PUBLIC_RC=!errorlevel!"
+if !PUBLIC_RC! neq 0 goto :tests_failed
+
+python -m coverage report >> "%TEST_LOG%" 2>&1
+set "COVERAGE_RC=!errorlevel!"
+if !COVERAGE_RC! neq 0 goto :tests_failed
+
+python -m pyright >> "%TEST_LOG%" 2>&1
+set "PYRIGHT_RC=!errorlevel!"
+if !PYRIGHT_RC! neq 0 goto :tests_failed
 
 set "PRIVATE_RC=0"
 if exist "%REPO_ROOT%\src\pro\test" (
@@ -124,7 +133,6 @@ if exist "%REPO_ROOT%\src\pro\test" (
     set "PRIVATE_RC=!errorlevel!"
 )
 
-if !PUBLIC_RC! neq 0 goto :tests_failed
 if !PRIVATE_RC! neq 0 goto :tests_failed
 
 for /f "tokens=*" %%s in ('findstr /r /c:"^Ran [0-9]* test" "%TEST_LOG%"') do echo [OK] %%s
@@ -142,7 +150,7 @@ findstr /r /c:"^Ran [0-9]* test" /c:"^FAILED" "%TEST_LOG%"
 echo.
 echo   Full log: %TEST_LOG%
 echo.
-echo   Fix the failures, or re-run with --skip-tests to bypass (NOT for releases).
+echo   Fix the failures, or use --dev-skip-tests for local development only.
 exit /b 1
 
 :tests_done
@@ -216,6 +224,19 @@ if not exist "%DIST_DIR%\HDR_to_SDR_Converter.exe" (
 )
 echo [OK] PyInstaller build complete: %DIST_DIR%
 
+:: -- Step 3.25: Frozen-artifact gate -------------------------------------------
+echo.
+echo [STEP 3.25] Validating frozen application
+for %%F in ("HDR_to_SDR_Converter.exe" "ffmpeg.exe" "ffprobe.exe" "luts\rec2020_to_rec709.cube") do (
+    if not exist "%DIST_DIR%\%%~F" (
+        echo [ERROR] Frozen application is missing %%~F
+        exit /b 1
+    )
+)
+start "" /wait /b "%DIST_DIR%\HDR_to_SDR_Converter.exe" --smoke-test
+if errorlevel 1 ( echo [ERROR] Frozen application smoke test failed & exit /b 1 )
+echo [OK] Frozen application files and smoke test verified
+
 :: -- Bundle verification: confirm Pro modules actually reached the bundle -------
 :: A missing --hidden-import (either branch above) makes PyInstaller succeed and
 :: produce a completely normal-looking build with Pro code silently absent. The
@@ -265,6 +286,8 @@ IF /I "!SIGN_BUILD!"=="Y" (
     echo [STEP 3.5] Code-signing HDR_to_SDR_Converter.exe
     "!SIGNTOOL!" sign /fd SHA256 /tr http://timestamp.acs.microsoft.com /td SHA256 /dlib "%DLIB%" /dmdf "%METADATA%" /v /debug "%DIST_DIR%\HDR_to_SDR_Converter.exe"
     if errorlevel 1 ( echo [ERROR] Signing HDR_to_SDR_Converter.exe failed & exit /b 1 )
+    "!SIGNTOOL!" verify /pa /v "%DIST_DIR%\HDR_to_SDR_Converter.exe"
+    if errorlevel 1 ( echo [ERROR] HDR_to_SDR_Converter.exe signature verification failed & exit /b 1 )
     echo [OK] HDR_to_SDR_Converter.exe signed
 )
 
@@ -290,6 +313,8 @@ IF /I "!SIGN_BUILD!"=="Y" (
     echo [STEP 4.5] Code-signing HDR_to_SDR_Setup.exe
     "!SIGNTOOL!" sign /fd SHA256 /tr http://timestamp.acs.microsoft.com /td SHA256 /dlib "%DLIB%" /dmdf "%METADATA%" /v /debug "%SETUP_EXE%"
     if errorlevel 1 ( echo [ERROR] Signing HDR_to_SDR_Setup.exe failed & exit /b 1 )
+    "!SIGNTOOL!" verify /pa /v "%SETUP_EXE%"
+    if errorlevel 1 ( echo [ERROR] Installer signature verification failed & exit /b 1 )
     echo [OK] HDR_to_SDR_Setup.exe signed
 )
 

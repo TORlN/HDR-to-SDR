@@ -145,6 +145,24 @@ class TestSpecContent(unittest.TestCase):
         self.assertGreaterEqual(verifier, 0, 'build does not verify pinned FFmpeg inputs')
         self.assertGreater(pyinstaller, verifier, 'FFmpeg verification must precede PyInstaller')
 
+    def test_build_writes_provenance_after_the_final_installer_exists(self):
+        """Release provenance must cover the completed installer, not an input.
+
+        Moving this call before Inno Setup or omitting the FREE-ONLY marker
+        would create a record that cannot identify the delivered artifact.
+        """
+        with open(os.path.join(_ROOT, 'build_installer.bat'), encoding='utf-8') as f:
+            bat = f.read()
+        installer = bat.find('Compiling Inno Setup installer')
+        provenance = bat.find('release_provenance.py')
+        done = bat.find(':: -- Done')
+        self.assertGreater(provenance, installer,
+                           'release provenance must run after Inno Setup')
+        self.assertGreater(done, provenance,
+                           'release provenance must finish before reporting success')
+        self.assertIn('--free-only', bat[provenance:done],
+                      'FREE-ONLY provenance must be marked as such')
+
     def test_pro_hidden_imports_match_build_script(self):
         """The spec's hiddenimports must match build_installer.bat's flags.
 

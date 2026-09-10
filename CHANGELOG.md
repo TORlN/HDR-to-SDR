@@ -61,3 +61,5 @@ this header and an empty `Unreleased` section after each new version is pushed.
   instead of silently analyzing the unobfuscated source tree.
 - Documentation now clarifies that normal releases use one freemium installer
   and that the FREE-ONLY build is an emergency fallback, not a release.
+- Release builds now require clean source repositories and record a manifest
+  with paired commit IDs, build inputs, tool versions, and installer hashes.

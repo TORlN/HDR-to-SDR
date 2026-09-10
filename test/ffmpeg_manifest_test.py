@@ -6,6 +6,7 @@ import os
 import unittest
 
 from tools.verify_ffmpeg_manifest import main, verify_manifest
+from tools.release_provenance import collect_manifest
 
 
 _CONTENTS = {
@@ -159,6 +160,101 @@ class TestReleaseBinaryTracking(unittest.TestCase):
                 general_rule,
                 f'{path} remains hidden by the general executable ignore rule',
             )
+
+
+class TestReleaseProvenance(unittest.TestCase):
+
+    def test_normal_release_records_paired_commits_and_artifact_hashes(self):
+        """A normal installer must retain its exact paired source identities.
+
+        Removing either commit capture, changing the installer hash, or
+        omitting pinned build inputs must make this release record incomplete.
+        """
+        contents = {
+            'requirements.txt': b'Pillow==11.0.0\n',
+            'requirements-dev.txt': b'pyinstaller==6.21.0\n',
+            'src/ffmpeg.exe': b'ffmpeg',
+            'src/ffprobe.exe': b'ffprobe',
+            'installer_output/HDR_to_SDR_Setup.exe': b'installer',
+        }
+
+        def open_file(path, mode='rb'):
+            relative = os.path.relpath(os.fspath(path), 'C:/repo').replace('\\', '/')
+            if mode != 'rb' or relative not in contents:
+                raise FileNotFoundError(relative)
+            return io.BytesIO(contents[relative])
+
+        def run(command, **_kwargs):
+            root = command[2]
+            if command[3:] == ['status', '--porcelain']:
+                return type('Result', (), {'returncode': 0, 'stdout': ''})()
+            if command[3:] == ['rev-parse', 'HEAD']:
+                commit = 'public-commit' if root == 'C:/repo' else 'private-commit'
+                return type('Result', (), {'returncode': 0, 'stdout': commit + '\n'})()
+            self.fail('unexpected git command: %r' % (command,))
+
+        manifest = collect_manifest(
+            'C:/repo',
+            'C:/repo/installer_output/HDR_to_SDR_Setup.exe',
+            run=run,
+            open_file=open_file,
+            python_version='3.13.14',
+            tool_versions={'pyinstaller': '6.21.0', 'pyarmor': None},
+        )
+
+        self.assertEqual(manifest['repositories'], {
+            'public': 'public-commit', 'pro': 'private-commit',
+        })
+        self.assertFalse(manifest['free_only'])
+        self.assertEqual(manifest['python_version'], '3.13.14')
+        self.assertEqual(manifest['tool_versions']['pyinstaller'], '6.21.0')
+        self.assertEqual(
+            manifest['artifacts']['installer']['sha256'],
+            '9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c',
+        )
+
+    def test_dirty_public_source_blocks_provenance(self):
+        """A release record must reject source changes not tied to a commit."""
+        def run(command, **_kwargs):
+            self.assertEqual(command[3:], ['status', '--porcelain'])
+            return type('Result', (), {'returncode': 0, 'stdout': ' M src/gui.py\n'})()
+
+        with self.assertRaisesRegex(ValueError, 'public repository is dirty'):
+            collect_manifest('C:/repo', 'C:/repo/installer.exe', run=run)
+
+    def test_free_only_fallback_records_no_private_commit(self):
+        """The emergency fallback must be visibly distinct from a normal release."""
+        contents = {
+            'requirements.txt': b'',
+            'requirements-dev.txt': b'',
+            'src/ffmpeg.exe': b'',
+            'src/ffprobe.exe': b'',
+            'installer_output/HDR_to_SDR_Setup_FREE.exe': b'',
+        }
+
+        def open_file(path, mode='rb'):
+            relative = os.path.relpath(os.fspath(path), 'C:/repo').replace('\\', '/')
+            return io.BytesIO(contents[relative])
+
+        def run(command, **_kwargs):
+            if command[3:] == ['status', '--porcelain']:
+                return type('Result', (), {'returncode': 0, 'stdout': ''})()
+            if command[3:] == ['rev-parse', 'HEAD']:
+                return type('Result', (), {'returncode': 0, 'stdout': 'public-commit\n'})()
+            self.fail('unexpected git command: %r' % (command,))
+
+        manifest = collect_manifest(
+            'C:/repo',
+            'C:/repo/installer_output/HDR_to_SDR_Setup_FREE.exe',
+            free_only=True,
+            run=run,
+            open_file=open_file,
+            python_version='3.13.14',
+            tool_versions={},
+        )
+
+        self.assertTrue(manifest['free_only'])
+        self.assertEqual(manifest['repositories'], {'public': 'public-commit'})
 
 
 if __name__ == '__main__':

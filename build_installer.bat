@@ -293,6 +293,18 @@ IF /I "!SIGN_BUILD!"=="Y" (
     echo [OK] HDR_to_SDR_Setup.exe signed
 )
 
+:: -- Step 5: Record release provenance -----------------------------------------
+echo.
+echo [STEP 5] Recording release provenance
+set "PROVENANCE=%INSTALLER_OUT%\release-provenance.json"
+if defined FREE_BUILD (
+    python "%REPO_ROOT%\tools\release_provenance.py" "%REPO_ROOT%" "%SETUP_EXE%" "%PROVENANCE%" --free-only
+) else (
+    python "%REPO_ROOT%\tools\release_provenance.py" "%REPO_ROOT%" "%SETUP_EXE%" "%PROVENANCE%"
+)
+if errorlevel 1 ( echo [ERROR] Release provenance failed & exit /b 1 )
+echo [OK] Release provenance: %PROVENANCE%
+
 :: -- Done -----------------------------------------------------------------------
 echo.
 if defined FREE_BUILD (

@@ -34,9 +34,11 @@ We use `sed` against a distinctive line's exact content, not a positional
 unified diff (`git diff` / `patch -p1`) -- a diff broke within days here
 because ffmpeg-git master keeps reformatting the *conditions* that guard
 these usage-flag assignments, even though the assignment lines themselves
-stay put. `grep`-check before editing and `sed -i` make each patch
-idempotent (a no-op if already applied), so re-running `_pre_configure`
-across rebuilds is always safe.
+stay put. Each patch recognizes either its exact original assignment or its
+own marker after a prior successful edit. Re-running `_pre_configure` is safe
+only for those known states. A missing file or unrecognized source stops MABS
+with an error so the patch can be reviewed deliberately. Keep
+`ffmpeg_extra.sh` in LF format because MABS runs it as a Bash script.
 
 ## vulkan-video-encode-src
 

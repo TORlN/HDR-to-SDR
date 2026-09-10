@@ -1,3 +1,4 @@
 *.cube text eol=lf
+tools/ffmpeg-patches/ffmpeg_extra.sh text eol=lf
 src/ffmpeg.exe filter=lfs diff=lfs merge=lfs -text
 src/ffprobe.exe filter=lfs diff=lfs merge=lfs -text

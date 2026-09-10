@@ -68,6 +68,24 @@ class TestFfmpegManifest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'SHA-256 mismatch.*src/ffmpeg.exe'):
             verify_manifest('C:/repo', manifest, open_file=_open_fixture)
 
+    def test_rejects_crlf_in_the_shell_patch_before_accepting_its_manifest_entry(self):
+        """A Windows line-ending conversion must stop the MABS patch hook.
+
+        Removing the line-ending validation would let a CRLF shell script
+        reach the Linux-like MABS environment, where it can fail unclearly.
+        """
+        manifest = copy.deepcopy(_VALID_MANIFEST)
+        manifest['files'][2]['size'] = 12
+
+        def crlf_patch(path, mode='rb'):
+            normalized = os.path.relpath(os.fspath(path), 'C:/repo').replace('\\', '/')
+            if normalized == 'tools/ffmpeg-patches/ffmpeg_extra.sh':
+                return io.BytesIO(b'patch hook\r\n')
+            return _open_fixture(path, mode)
+
+        with self.assertRaisesRegex(ValueError, 'LF line endings'):
+            verify_manifest('C:/repo', manifest, open_file=crlf_patch)
+
     def test_rejects_a_size_mismatch(self):
         manifest = copy.deepcopy(_VALID_MANIFEST)
         manifest['files'][1]['size'] = 999

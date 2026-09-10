@@ -58,9 +58,16 @@ def verify_manifest(repo_root, manifest, *, open_file=open):
         measured_size = 0
         try:
             with open_file(path, 'rb') as handle:
-                while chunk := handle.read(1024 * 1024):
-                    measured_size += len(chunk)
-                    digest.update(chunk)
+                if relative_path == 'tools/ffmpeg-patches/ffmpeg_extra.sh':
+                    patch_script = handle.read()
+                    if b'\r\n' in patch_script:
+                        raise ValueError('FFmpeg shell patch script must use LF line endings')
+                    measured_size = len(patch_script)
+                    digest.update(patch_script)
+                else:
+                    while chunk := handle.read(1024 * 1024):
+                        measured_size += len(chunk)
+                        digest.update(chunk)
         except OSError as exc:
             raise ValueError(f'missing pinned file: {relative_path}') from exc
 

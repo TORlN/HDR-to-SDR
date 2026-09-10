@@ -145,6 +145,32 @@ class TestSpecContent(unittest.TestCase):
         self.assertGreaterEqual(verifier, 0, 'build does not verify pinned FFmpeg inputs')
         self.assertGreater(pyinstaller, verifier, 'FFmpeg verification must precede PyInstaller')
 
+    def test_ffmpeg_patch_hook_rejects_unknown_source_text(self):
+        """An upstream FFmpeg refactor must stop, not skip, each local patch.
+
+        MABS is an external manual build environment and is deliberately not
+        launched by the unattended suite. This contract check protects the
+        hook's two fail-closed branches instead.
+        """
+        patch_path = os.path.join(_ROOT, 'tools', 'ffmpeg-patches', 'ffmpeg_extra.sh')
+        with open(patch_path, encoding='utf-8', newline='') as f:
+            hook = f.read()
+        self.assertNotIn('\r\n', hook, 'the MABS shell hook must use LF line endings')
+        with open(os.path.join(_ROOT, '.gitattributes'), encoding='utf-8') as f:
+            attributes = f.read()
+        self.assertIn(
+            'tools/ffmpeg-patches/ffmpeg_extra.sh text eol=lf', attributes,
+            'Git must preserve the MABS shell hook\'s LF line endings',
+        )
+        self.assertIn('HDR-to-SDR: disabled encode-src', hook)
+        self.assertIn('HDR-to-SDR: disabled host-transfer', hook)
+        unknown_source_exits = re.findall(
+            r'ERROR: vulkan-[^\n]+: unrecognized source[^\n]*\n\s*exit 1', hook)
+        self.assertEqual(
+            len(unknown_source_exits), 2,
+            'each FFmpeg patch must fail when its target is neither original nor patched',
+        )
+
     def test_build_writes_provenance_after_the_final_installer_exists(self):
         """Release provenance must cover the completed installer, not an input.
 

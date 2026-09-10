@@ -21,8 +21,8 @@
     },
     {
       "path": "tools/ffmpeg-patches/ffmpeg_extra.sh",
-      "size": 3166,
-      "sha256": "106dbce2f0e810b2aea9cd8badbf8cecb04b522a21159e36d73b18fcb7bde38b"
+      "size": 3670,
+      "sha256": "05347aa4d535d7de50aa4540b7563881b194a5b89d4f7d5a956d075c70e2b320"
     }
   ]
 }

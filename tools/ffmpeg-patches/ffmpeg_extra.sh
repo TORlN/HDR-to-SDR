@@ -16,14 +16,20 @@ _pre_configure(){
     # downside here. (Turned out NOT to be the cause of the "No memory type
     # found for flags 0x1" crash below -- supported_usage never even had
     # this bit set on the format/config that crashes -- but it's still
-    # correct to disable, so kept.) sed is idempotent (no-op if already
-    # commented out), so re-running this is always safe.
-    if [[ -f $f ]] && grep -q '^\s*hwctx->usage |= VK_IMAGE_USAGE_VIDEO_ENCODE_SRC_BIT_KHR;\s*$' "$f"; then
-        sed -i.bak 's/^\(\s*\)hwctx->usage |= VK_IMAGE_USAGE_VIDEO_ENCODE_SRC_BIT_KHR;\s*$/\1;  \/* HDR-to-SDR: disabled, see tools\/ffmpeg-patches\/README.md *\//' "$f"
+    # correct to disable, so kept.) A known marker makes re-running safe;
+    # an unknown source shape stops the build for deliberate review.
+    if [[ ! -f $f ]]; then
+        echo "ERROR: vulkan-video-encode-src: missing $f"
+        exit 1
+    elif grep -Eq '^[[:space:]]*hwctx->usage \|= VK_IMAGE_USAGE_VIDEO_ENCODE_SRC_BIT_KHR;[[:space:]]*$' "$f"; then
+        sed -i.bak 's/^\([[:space:]]*\)hwctx->usage |= VK_IMAGE_USAGE_VIDEO_ENCODE_SRC_BIT_KHR;[[:space:]]*$/\1;  \/* HDR-to-SDR: disabled encode-src, see tools\/ffmpeg-patches\/README.md *\//' "$f" || exit 1
         rm -f "$f.bak"
         echo "vulkan-video-encode-src: neutralized VIDEO_ENCODE_SRC_BIT_KHR usage-add"
+    elif grep -Fq 'HDR-to-SDR: disabled encode-src' "$f"; then
+        echo "vulkan-video-encode-src: already neutralized"
     else
-        echo "vulkan-video-encode-src: target line not found (already patched, or ffmpeg refactored it -- check tools/ffmpeg-patches/README.md)"
+        echo "ERROR: vulkan-video-encode-src: unrecognized source, review tools/ffmpeg-patches/README.md"
+        exit 1
     fi
 
     # vulkan-host-transfer: neutralize the VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT
@@ -40,11 +46,17 @@ _pre_configure(){
     # that probe, not something we can fix from here. This app never issues
     # host-side image copies (no --enable use of FF_VK_EXT_HOST_IMAGE_COPY),
     # so the capability is pure downside, same reasoning as encode-src above.
-    if [[ -f $f ]] && grep -q '^\s*hwctx->usage |= supported_usage & VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT;\s*$' "$f"; then
-        sed -i.bak 's/^\(\s*\)hwctx->usage |= supported_usage & VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT;\s*$/\1;  \/* HDR-to-SDR: disabled, see tools\/ffmpeg-patches\/README.md *\//' "$f"
+    if [[ ! -f $f ]]; then
+        echo "ERROR: vulkan-host-transfer: missing $f"
+        exit 1
+    elif grep -Eq '^[[:space:]]*hwctx->usage \|= supported_usage & VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT;[[:space:]]*$' "$f"; then
+        sed -i.bak 's/^\([[:space:]]*\)hwctx->usage |= supported_usage & VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT;[[:space:]]*$/\1;  \/* HDR-to-SDR: disabled host-transfer, see tools\/ffmpeg-patches\/README.md *\//' "$f" || exit 1
         rm -f "$f.bak"
         echo "vulkan-host-transfer: neutralized HOST_TRANSFER_BIT_EXT usage-add"
+    elif grep -Fq 'HDR-to-SDR: disabled host-transfer' "$f"; then
+        echo "vulkan-host-transfer: already neutralized"
     else
-        echo "vulkan-host-transfer: target line not found (already patched, or ffmpeg refactored it -- check tools/ffmpeg-patches/README.md)"
+        echo "ERROR: vulkan-host-transfer: unrecognized source, review tools/ffmpeg-patches/README.md"
+        exit 1
     fi
 }

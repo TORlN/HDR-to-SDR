@@ -1442,6 +1442,8 @@ class TestPreviewPerformance(unittest.TestCase):
 
     def test_gamma_change_reuses_cached_base_without_reextracting(self):
         gui = _bare_gui()
+        gui.gamma_var = MagicMock()
+        gui.gamma_var.get.return_value = 1.0
         gui.display_image_var = MagicMock()
         gui.display_image_var.get.return_value = True
         gui._converted_preview_base = MagicMock(spec=Image.Image)
@@ -1455,6 +1457,8 @@ class TestPreviewPerformance(unittest.TestCase):
 
     def test_gamma_change_falls_back_to_full_update_without_cached_base(self):
         gui = _bare_gui()
+        gui.gamma_var = MagicMock()
+        gui.gamma_var.get.return_value = 1.0
         gui.display_image_var = MagicMock()
         gui.display_image_var.get.return_value = True
         gui._converted_preview_base = None

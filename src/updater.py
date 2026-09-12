@@ -57,7 +57,10 @@ logger = logging.getLogger(__name__)
 
 
 def _version_tuple(v: str) -> tuple[int, ...]:
-    return tuple(int(x) for x in re.findall(r"\d+", v))
+    if not isinstance(v, str) or re.fullmatch(r"v?\d+\.\d+\.\d+", v) is None:
+        raise ValueError(f"Invalid release version: {v!r}")
+    normalized = v[1:] if v.startswith('v') else v
+    return tuple(int(x) for x in normalized.split('.'))
 
 
 def _validate_initial_download_url(url: str, tag: str) -> None:

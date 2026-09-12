@@ -100,6 +100,13 @@ class TestVersionTuple(unittest.TestCase):
     def test_major_bump(self):
         self.assertGreater(_version_tuple('4.0.0'), _version_tuple('3.99.99'))
 
+    def test_rejects_malformed_versions(self):
+        for value in ('', '3', '3.2', '3.2.3.4', 'release-3.2.3',
+                      'v3.x.3', '3.2.-1'):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    _version_tuple(value)
+
 
 # ── check_for_update ───────────────────────────────────────────────────────────
 
@@ -189,6 +196,12 @@ class TestCheckForUpdate(unittest.TestCase):
         with self._patch_urlopen(payload):
             result = check_for_update()
         self.assertIsNone(result)
+
+    def test_malformed_release_tag_returns_none(self):
+        for tag in ('release-99.0.0', 'v99.0', 'v99.0.0.1', 'v99.x.0'):
+            with self.subTest(tag=tag):
+                with self._patch_urlopen(_github_payload(tag)):
+                    self.assertIsNone(check_for_update())
 
     def test_malformed_json_returns_none_and_logs_warning(self):
         resp = MagicMock()

@@ -7,6 +7,8 @@ this header and an empty `Unreleased` section after each new version is pushed.
 
 ### Fixed
 
+- Update checks now accept only strict `X.Y.Z` release tags, ignoring
+  malformed version metadata safely.
 - LUT paths now escape FFmpeg filtergraph-special characters, including
   punctuation in installation directories.
 - Pro import failures are no longer silently treated as Community-only mode;

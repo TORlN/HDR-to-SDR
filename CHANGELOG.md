@@ -7,6 +7,8 @@ this header and an empty `Unreleased` section after each new version is pushed.
 
 ### Fixed
 
+- LUT paths now escape FFmpeg filtergraph-special characters, including
+  punctuation in installation directories.
 - Pro import failures are no longer silently treated as Community-only mode;
   genuine absence still supports fork and development builds.
 - Invalid typed gamma values now safely restore the last valid value, while

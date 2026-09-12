@@ -1714,6 +1714,21 @@ class TestLutPathResolution(unittest.TestCase):
         escaped = _escape_path_for_filter(r'C:\Users\Bob\lut.cube')
         self.assertEqual(escaped, 'C\\\\:/Users/Bob/lut.cube')
 
+    def test_escape_path_for_filter_escapes_filtergraph_special_characters(self):
+        from src.utils import _escape_path_for_filter
+        escaped = _escape_path_for_filter(
+            r"C:\Program Files\O'Brien, [test];lut.cube")
+        self.assertEqual(
+            escaped,
+            "C\\\\:/Program Files/O\\'Brien\\, \\[test\\]\\;lut.cube")
+
+    @patch('src.utils.get_lut_filter_path',
+           return_value="C\\\\:/Program Files/O\\'Brien\\, \\[test\\]\\;lut.cube")
+    def test_escaped_lut_path_reaches_libplacebo_filter(self, _mock_path):
+        filter_str = build_libplacebo_filter(1.0, 'reinhard')
+        self.assertIn("lut3d=file=C\\\\:/Program Files/O\\'Brien\\, \\[test\\]\\;lut.cube",
+                      filter_str)
+
     def test_get_lut_filter_path_is_cached(self):
         from src.utils import get_lut_filter_path
         first = get_lut_filter_path()

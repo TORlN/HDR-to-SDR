@@ -510,6 +510,16 @@ class TestBuild(unittest.TestCase):
         self.assertIn('-c:t', cmd, msg=cmd)
         self.assertEqual(cmd[cmd.index('-c:t') + 1], 'copy', msg=cmd)
 
+    @patch('ffmpeg_command.get_lut_filter_path',
+           return_value="C\\\\:/Program Files/O\\'Brien\\, \\[test\\]\\;lut.cube")
+    def test_cpu_filter_uses_escaped_lut_path(self, _mock_path):
+        cmd = ffmpeg_command.build(_Req(), self._PROPS, self._probes(),
+                                   _RecordingView())
+        filtergraph = cmd[cmd.index('-filter_complex') + 1]
+        self.assertIn(
+            "lut3d=file=C\\\\:/Program Files/O\\'Brien\\, \\[test\\]\\;lut.cube",
+            filtergraph)
+
     def test_output_uses_passthrough_timing_without_forcing_a_frame_rate(self):
         """A variable-frame-rate input must retain its timestamps instead of
         being duplicated or dropped to fit the probe's average frame rate."""

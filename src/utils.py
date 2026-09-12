@@ -168,11 +168,20 @@ def _escape_path_for_filter(path: str) -> str:
     """Escape an absolute Windows path for embedding in an ffmpeg -vf
     filtergraph value (lut3d=file=..., libplacebo's lut=...).
 
-    ffmpeg's parser needs the drive-letter colon escaped as '\\\\:', with
-    all other '\\' converted to '/' (confirmed against the bundled build).
-    Targets literal '\\', not os.sep, since CI also runs this on Linux."""
+    ffmpeg's parser needs filtergraph-special characters escaped with a
+    backslash. Convert Windows separators first, then escape colons,
+    apostrophes, commas, semicolons, and brackets. Targets literal '\\', not
+    os.sep, since CI also runs this on Linux."""
     forward = path.replace('\\', '/')
-    return forward.replace(':', '\\\\:', 1)
+    escaped = []
+    for char in forward:
+        if char == ':':
+            escaped.append('\\\\:')
+        elif char in "'[,;]":
+            escaped.append('\\' + char)
+        else:
+            escaped.append(char)
+    return ''.join(escaped)
 
 
 _LUT_FILTER_PATH = None

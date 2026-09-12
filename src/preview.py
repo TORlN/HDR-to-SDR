@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -37,6 +38,8 @@ _PREVIEW_WIDTH_RESERVE = 160
 _PREVIEW_HEIGHT_RESERVE = 130
 _MIN_SIZE_MARGIN = (16, 16)
 _INITIAL_WIDTH_STRETCH = 400
+_GAMMA_MIN = 0.1
+_GAMMA_MAX = 3.0
 
 
 # ── _HDRPreviewMixin ───────────────────────────────────────────────────────────
@@ -115,6 +118,23 @@ class _HDRPreviewMixin:
         lut = lut * len(image.getbands())
         lut = [int(round(v)) for v in lut]
         return image.point(lut)
+
+    def _normalized_gamma(self) -> float | None:
+        """Return a finite, slider-range gamma or restore the last valid value."""
+        fallback = getattr(self, '_last_valid_gamma', 1.0)
+        try:
+            gamma = float(self.gamma_var.get())
+        except (TypeError, ValueError, tk.TclError):
+            self.gamma_var.set(fallback)
+            return None
+        if not math.isfinite(gamma):
+            self.gamma_var.set(fallback)
+            return None
+        gamma = min(max(gamma, _GAMMA_MIN), _GAMMA_MAX)
+        if gamma != self.gamma_var.get():
+            self.gamma_var.set(gamma)
+        self._last_valid_gamma = gamma
+        return gamma
 
     def _apply_gamma_to_preview(self) -> None:
         """Apply the current gamma to the cached display-sized SDR frame.
@@ -391,6 +411,8 @@ class _HDRPreviewMixin:
 
     def on_gamma_change(self, event: object = None) -> None:
         """Handle gamma slider/entry changes."""
+        if self._normalized_gamma() is None:
+            return
         self._write_back_current_settings(debounce_listbox=True)  # type: ignore[attr-defined]
         if self.display_image_var.get() and self._converted_preview_base is not None:
             self._apply_gamma_to_preview()

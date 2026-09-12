@@ -163,6 +163,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.input_path_var = tk.StringVar()
         self.output_path_var = tk.StringVar()
         self.gamma_var = tk.DoubleVar(value=_s['gamma'])
+        self._last_valid_gamma = _s['gamma']
         self.progress_var = tk.DoubleVar(value=0)
         self.open_after_conversion_var = tk.BooleanVar(value=_s['open_after_conversion'])
         self.display_image_var = tk.BooleanVar(value=_s['display_preview'])
@@ -431,8 +432,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
     def _save_current_settings(self) -> None:
         """Persist current UI settings to disk."""
         try:
+            gamma = self._normalized_gamma()
             save_settings({
-                'gamma': self.gamma_var.get(),
+                'gamma': gamma if gamma is not None else self._last_valid_gamma,
                 'tonemapper': self.tonemap_var.get(),
                 'open_after_conversion': self.open_after_conversion_var.get(),
                 'display_preview': self.display_image_var.get(),
@@ -1436,7 +1438,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
 
             input_path = os.path.normpath(self.input_path_var.get())
             output_path = os.path.normpath(self.output_path_var.get())
-            gamma = self.gamma_var.get()
+            gamma = self._normalized_gamma()
+            if gamma is None:
+                return
             use_gpu = self.gpu_accel_var.get()
             tonemapper = self.tonemap_var.get().lower()
             quality_mode = self._QUALITY_MODE_TO_INTERNAL.get(self.quality_mode_var.get(), 'cq')

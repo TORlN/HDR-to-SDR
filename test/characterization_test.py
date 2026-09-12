@@ -11,6 +11,7 @@ import sys
 import os
 import json
 import threading
+import tkinter as tk
 import unittest
 from unittest.mock import patch, MagicMock, ANY, call
 
@@ -1465,6 +1466,41 @@ class TestPreviewPerformance(unittest.TestCase):
         gui.update_frame_preview.assert_called_once()
         gui._apply_gamma_to_preview.assert_not_called()
 
+    def test_invalid_gamma_reverts_without_persisting_or_previewing(self):
+        gui = _bare_gui()
+        gui.gamma_var = MagicMock()
+        gui.gamma_var.get.side_effect = tk.TclError('expected floating-point number')
+        gui._last_valid_gamma = 1.5
+        gui._write_back_current_settings = MagicMock()
+        gui.display_image_var = MagicMock()
+        gui._converted_preview_base = MagicMock(spec=Image.Image)
+        gui._apply_gamma_to_preview = MagicMock()
+        gui.update_frame_preview = MagicMock()
+
+        gui.on_gamma_change()
+
+        gui.gamma_var.set.assert_called_once_with(1.5)
+        gui._write_back_current_settings.assert_not_called()
+        gui._apply_gamma_to_preview.assert_not_called()
+        gui.update_frame_preview.assert_not_called()
+
+    def test_out_of_range_gamma_is_clamped_before_persisting(self):
+        gui = _bare_gui()
+        gui.gamma_var = MagicMock()
+        gui.gamma_var.get.return_value = 4.0
+        gui._write_back_current_settings = MagicMock()
+        gui.display_image_var = MagicMock()
+        gui.display_image_var.get.return_value = False
+        gui._converted_preview_base = None
+        gui._apply_gamma_to_preview = MagicMock()
+        gui.update_frame_preview = MagicMock()
+
+        gui.on_gamma_change()
+
+        gui.gamma_var.set.assert_called_once_with(3.0)
+        gui._write_back_current_settings.assert_called_once_with(debounce_listbox=True)
+        gui.update_frame_preview.assert_called_once()
+
     def test_apply_gamma_adjusts_the_small_cached_base(self):
         gui = _bare_gui()
         base = MagicMock(spec=Image.Image)
@@ -1628,6 +1664,25 @@ class TestConvertVideoBranches(unittest.TestCase):
         request = mock_cm.start.call_args.args[0]
         self.assertEqual(request.quality, 19)
         gui.output_path_var.set.assert_called_with('out.mp4')  # MP4 container forced
+
+    @patch('src.gui.conversion_manager')
+    @patch('src.gui.messagebox')
+    @patch('src.gui.os.path.exists', return_value=False)
+    @patch('src.gui.os.path.isfile', return_value=True)
+    def test_convert_clamps_gamma_before_building_request(self, _isfile, _exists, _mock_mb, mock_cm):
+        gui = self._gui()
+        gui.gamma_var.get.return_value = 0.0
+        gui.drop_target_registered = False
+        gui.cancel_button = MagicMock()
+        gui.progress_var = MagicMock()
+        gui.interactable_elements = []
+        gui.open_after_conversion_var = MagicMock()
+        gui.open_after_conversion_var.get.return_value = False
+
+        gui.convert_video()
+
+        request = mock_cm.start.call_args.args[0]
+        self.assertEqual(request.gamma, 0.1)
 
     @patch('src.gui.conversion_manager')
     @patch('src.gui.messagebox')
@@ -2325,6 +2380,24 @@ class TestGuiLifecycle(unittest.TestCase):
         self.assertEqual(mock_save.call_args[0][0]['filetype'], 'MKV')
         self.assertEqual(mock_save.call_args[0][0]['quality_mode'], 'cq')
         self.assertEqual(mock_save.call_args[0][0]['quality_bitrate_kbps'], 15000)
+
+    @patch('src.gui.save_settings')
+    def test_save_current_settings_recovers_invalid_gamma(self, mock_save):
+        gui = _bare_gui()
+        gui.gamma_var = MagicMock()
+        gui.gamma_var.get.side_effect = tk.TclError('expected floating-point number')
+        gui._last_valid_gamma = 1.5
+        for name, val in [('tonemap_var', 'Mobius'), ('lut_export_var', True),
+                          ('open_after_conversion_var', False), ('display_image_var', True),
+                          ('quality_var', 21), ('format_var', 'MKV'),
+                          ('quality_mode_var', 'Constant Quality'), ('bitrate_var', 15000)]:
+            variable = MagicMock()
+            variable.get.return_value = val
+            setattr(gui, name, variable)
+
+        gui._save_current_settings()
+
+        self.assertEqual(mock_save.call_args.args[0]['gamma'], 1.5)
 
     @patch('src.gui.save_settings')
     def test_save_current_settings_persists_bitrate_mode_choice(self, mock_save):

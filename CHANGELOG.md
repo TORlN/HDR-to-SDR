@@ -7,6 +7,8 @@ this header and an empty `Unreleased` section after each new version is pushed.
 
 ### Fixed
 
+- Invalid typed gamma values now safely restore the last valid value, while
+  finite values outside the supported range are clamped before preview or conversion.
 - Malformed saved preferences now fall back safely per setting, preserving
   other valid preferences instead of letting bad persisted values reach the UI.
 - Website assets with stable filenames now revalidate hourly instead of being

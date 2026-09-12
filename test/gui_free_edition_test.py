@@ -8,7 +8,7 @@ import importlib.util
 import os
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 _SRC = os.path.join(_ROOT, 'src')
@@ -17,6 +17,7 @@ sys.path.insert(0, _SRC)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from _tk_probe import available  # noqa: E402
+from _no_external import drain_after_timers  # noqa: E402
 
 
 def _probe_tk() -> None:
@@ -37,6 +38,11 @@ def _probe_tk() -> None:
 # instead of discarding the exception, and turns the skip into a hard error
 # under HDR_REQUIRE_TK so CI cannot go green with these tests unrun.
 _TK_OK, _SKIP = available(_probe_tk)
+
+
+def _destroy_gui_root(root) -> None:
+    drain_after_timers(root)
+    root.destroy()
 
 
 def _load_gui_without_pro():
@@ -102,6 +108,15 @@ def _load_gui_without_pro():
 
 
 class TestFreeEditionGui(unittest.TestCase):
+    def test_gui_root_cleanup_drains_callbacks_before_destroy(self):
+        root = MagicMock()
+        calls = []
+        root.destroy.side_effect = lambda: calls.append('destroy')
+        with patch(f'{__name__}.drain_after_timers',
+                   side_effect=lambda _root: calls.append('drain')):
+            _destroy_gui_root(root)
+        self.assertEqual(calls, ['drain', 'destroy'])
+
     def test_gui_module_imports_without_pro(self):
         gui = _load_gui_without_pro()
         self.assertTrue(hasattr(gui, 'HDRConverterGUI'))
@@ -162,7 +177,7 @@ class TestFreeEditionGui(unittest.TestCase):
         from tkinterdnd2 import TkinterDnD
         root = TkinterDnD.Tk()
         root.withdraw()
-        self.addCleanup(root.destroy)
+        self.addCleanup(_destroy_gui_root, root)
         with patch.object(gui.conversion_manager, 'is_gpu_acceleration_available',
                            return_value=True):
             app = gui.HDRConverterGUI(root, licensed=False)
@@ -174,7 +189,7 @@ class TestFreeEditionGui(unittest.TestCase):
         from tkinterdnd2 import TkinterDnD
         root = TkinterDnD.Tk()
         root.withdraw()
-        self.addCleanup(root.destroy)
+        self.addCleanup(_destroy_gui_root, root)
         with patch.object(gui.conversion_manager, 'is_gpu_acceleration_available',
                            return_value=True):
             app = gui.HDRConverterGUI(root, licensed=False)
@@ -192,7 +207,7 @@ class TestFreeEditionGui(unittest.TestCase):
         from tkinterdnd2 import TkinterDnD
         root = TkinterDnD.Tk()
         root.withdraw()
-        self.addCleanup(root.destroy)
+        self.addCleanup(_destroy_gui_root, root)
         with patch.object(gui.conversion_manager, 'is_gpu_acceleration_available',
                            return_value=True):
             app = gui.HDRConverterGUI(root, licensed=False)
@@ -210,7 +225,7 @@ class TestFreeEditionGui(unittest.TestCase):
         from tkinterdnd2 import TkinterDnD
         root = TkinterDnD.Tk()
         root.withdraw()
-        self.addCleanup(root.destroy)
+        self.addCleanup(_destroy_gui_root, root)
         with patch.object(gui.conversion_manager, 'is_gpu_acceleration_available',
                            return_value=True):
             app = gui.HDRConverterGUI(root, licensed=False)

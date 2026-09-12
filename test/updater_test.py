@@ -596,20 +596,16 @@ class TestGuiUpdateIntegration(unittest.TestCase):
 
     def test_start_update_check_schedules_dialog_when_update_available(self):
         gui, _ = self._make_gui()
-        found_event = threading.Event()
-
-        def fake_after(delay, cb):
-            cb()
-            found_event.set()
-
-        gui.root.after = fake_after
+        gui.root.after.side_effect = lambda _delay, callback: callback()
 
         release_url = updater.RELEASES_URL
         with patch('src.updater.check_for_update',
-                   return_value=('4.0.0', _DOWNLOAD_URL, release_url, 123, 'a' * 64)):
-            with patch('src.gui._UpdateDialog') as MockDialog:
-                gui._start_update_check()
-                found_event.wait(timeout=2)
+                   return_value=('4.0.0', _DOWNLOAD_URL, release_url, 123, 'a' * 64)), \
+             patch('src.gui.threading.Thread') as thread, \
+             patch('src.gui._UpdateDialog') as MockDialog:
+            thread.return_value.start.side_effect = (
+                lambda: thread.call_args.kwargs['target']())
+            gui._start_update_check()
 
         MockDialog.assert_called_once_with(
             gui.root, APP_VERSION, '4.0.0', _DOWNLOAD_URL, release_url,
@@ -618,19 +614,12 @@ class TestGuiUpdateIntegration(unittest.TestCase):
 
     def test_start_update_check_no_dialog_when_current(self):
         gui, _ = self._make_gui()
-        dialog_called = threading.Event()
-
-        def fake_after(delay, cb):
-            cb()
-            dialog_called.set()
-
-        gui.root.after = fake_after
-
-        with patch('src.updater.check_for_update', return_value=None):
-            with patch('src.gui._UpdateDialog') as MockDialog:
-                gui._start_update_check()
-                # give the background thread a moment
-                import time; time.sleep(0.3)
+        with patch('src.updater.check_for_update', return_value=None), \
+             patch('src.gui.threading.Thread') as thread, \
+             patch('src.gui._UpdateDialog') as MockDialog:
+            thread.return_value.start.side_effect = (
+                lambda: thread.call_args.kwargs['target']())
+            gui._start_update_check()
 
         MockDialog.assert_not_called()
 

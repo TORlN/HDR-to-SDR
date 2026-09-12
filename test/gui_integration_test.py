@@ -1096,6 +1096,7 @@ class TestDropTargetAndClose(_GuiTestBase):
             tmp_root = TkinterDnD.Tk()
             tmp_root.withdraw()
             tmp_gui = HDRConverterGUI(tmp_root, licensed=True)
+        drain_after_timers(tmp_root)
         mock_cm.process = None
         tmp_gui.on_close()
         # Destroying the root tears down its Tcl interpreter, so any further
@@ -1826,6 +1827,11 @@ class TestFixturesDoNotEscapeTheirMocks(_GuiTestBase):
                 no_real_dialogs('handle_file_drop'), \
                 patch.object(self.gui, 'update_frame_preview'):
             self.gui.handle_file_drop(event)
+
+
+def tearDownModule() -> None:
+    if _probe_root is not None:
+        drain_after_timers(_probe_root)
 
 
 if __name__ == '__main__':

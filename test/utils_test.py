@@ -842,11 +842,13 @@ class TestMaxfallConcurrency(unittest.TestCase):
         """Four threads racing on an uncached path must spawn only one ffprobe process."""
         call_count: list[int] = []
         start = threading.Barrier(4)
+        probe_started = threading.Event()
+        release_probe = threading.Event()
 
         def slow_probe(path: str) -> dict:
-            import time
-            time.sleep(0.05)
             call_count.append(1)
+            probe_started.set()
+            release_probe.wait(timeout=1)
             return {'maxcll': 400.0}
 
         results: list = []
@@ -859,6 +861,11 @@ class TestMaxfallConcurrency(unittest.TestCase):
             threads = [threading.Thread(target=worker) for _ in range(4)]
             for t in threads:
                 t.start()
+            try:
+                self.assertTrue(probe_started.wait(timeout=1),
+                                'the mocked metadata probe did not start')
+            finally:
+                release_probe.set()
             for t in threads:
                 t.join(timeout=5)
 
@@ -898,15 +905,17 @@ class TestVideoPropertiesConcurrency(unittest.TestCase):
         """Four threads racing on an uncached path must spawn only one ffprobe process."""
         call_count: list[int] = []
         start = threading.Barrier(4)
+        probe_started = threading.Event()
+        release_probe = threading.Event()
         valid_json = self._VALID_PROPS_JSON
 
         class _SlowProc:
             returncode = 0
 
             def communicate(self):
-                import time
-                time.sleep(0.05)
                 call_count.append(1)
+                probe_started.set()
+                release_probe.wait(timeout=1)
                 return (valid_json, b'')
 
         results: list = []
@@ -919,6 +928,11 @@ class TestVideoPropertiesConcurrency(unittest.TestCase):
             threads = [threading.Thread(target=worker) for _ in range(4)]
             for t in threads:
                 t.start()
+            try:
+                self.assertTrue(probe_started.wait(timeout=1),
+                                'the mocked ffprobe process did not start')
+            finally:
+                release_probe.set()
             for t in threads:
                 t.join(timeout=5)
 

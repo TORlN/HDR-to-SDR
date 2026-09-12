@@ -6,7 +6,8 @@ _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
 
 def _read(*parts):
-    return open(os.path.join(_ROOT, *parts), encoding='utf-8').read()
+    with open(os.path.join(_ROOT, *parts), encoding='utf-8') as handle:
+        return handle.read()
 
 
 class TestBrandingReservation(unittest.TestCase):
@@ -52,8 +53,9 @@ class TestNetworkDisclosure(unittest.TestCase):
             for name in filenames:
                 if not name.endswith(('.py', '.pyw')) or name in allowed:
                     continue
-                body = open(os.path.join(dirpath, name),
-                            encoding='utf-8', errors='replace').read()
+                with open(os.path.join(dirpath, name), encoding='utf-8',
+                          errors='replace') as handle:
+                    body = handle.read()
                 if 'urllib.request' in body or 'http.client' in body \
                         or 'requests.' in body:
                     offenders.append(name)

@@ -133,6 +133,30 @@ class TestNoAgentInstructionsInThePublicRepo(unittest.TestCase):
                 "instruction files must stay out of the public repo")
 
 
+class TestUnattendedTestBoundaries(unittest.TestCase):
+
+    def test_test_sources_do_not_sleep(self):
+        offenders = []
+        test_root = os.path.dirname(__file__)
+        for dirpath, _dirnames, filenames in os.walk(test_root):
+            for name in filenames:
+                if not name.endswith('.py'):
+                    continue
+                path = os.path.join(dirpath, name)
+                with open(path, encoding='utf-8') as handle:
+                    tree = ast.parse(handle.read(), path)
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Call) and (
+                            isinstance(node.func, ast.Name) and node.func.id == 'sleep'
+                            or isinstance(node.func, ast.Attribute)
+                            and node.func.attr == 'sleep'):
+                        offenders.append(f'{os.path.relpath(path, _ROOT)}:{node.lineno}')
+        self.assertEqual(
+            offenders, [],
+            msg='tests must use deterministic mocks or synchronization, not sleep: '
+                + ', '.join(offenders))
+
+
 class TestEveryModuleIsPlaced(unittest.TestCase):
     """A new module fails the suite until someone puts it in a layer on
     purpose. That is what makes this guard outlive the refactor that

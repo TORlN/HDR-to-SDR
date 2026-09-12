@@ -6,6 +6,11 @@ import unittest
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
 
+def _read(path, **kwargs):
+    with open(path, encoding='utf-8', **kwargs) as handle:
+        return handle.read()
+
+
 class TestThirdPartyNotices(unittest.TestCase):
     def setUp(self):
         self.notices_path = os.path.join(_ROOT, 'THIRD_PARTY_NOTICES.md')
@@ -15,35 +20,35 @@ class TestThirdPartyNotices(unittest.TestCase):
                         msg='THIRD_PARTY_NOTICES.md is required for GPL compliance')
 
     def test_notices_name_ffmpeg_and_revision(self):
-        text = open(self.notices_path, encoding='utf-8').read()
+        text = _read(self.notices_path)
         self.assertIn('FFmpeg', text)
         self.assertRegex(text, r'b32f8d1c23',
                          msg='notices must cite the exact bundled revision')
 
     def test_notices_state_gpl_v2(self):
-        text = open(self.notices_path, encoding='utf-8').read()
+        text = _read(self.notices_path)
         self.assertRegex(text, r'GPL\s*v?2|General Public License.*version 2')
 
     def test_notices_do_not_claim_gplv3(self):
         """ffmpeg -L reports v2-or-later; this build has no --enable-version3."""
-        text = open(self.notices_path, encoding='utf-8').read()
+        text = _read(self.notices_path)
         self.assertNotRegex(text, r'GPLv3|GPL version 3')
 
     def test_notices_contain_written_source_offer(self):
-        text = open(self.notices_path, encoding='utf-8').read()
+        text = _read(self.notices_path)
         self.assertRegex(text, r'(?i)source', msg='GPLv2 §3 requires a source offer')
 
     def test_notices_do_not_claim_false_attached_source(self):
         """The notice must not claim FFmpeg source is attached to releases if it isn't.
         GPLv2 §3 compliance depends on an accurate written offer, not false claims."""
-        text = open(self.notices_path, encoding='utf-8').read()
+        text = _read(self.notices_path)
         self.assertNotRegex(text, r'Attached to the corresponding release',
                            msg='notices must not falsely claim source is attached to releases')
 
     def test_notices_written_offer_includes_email_contact(self):
         """GPLv2 §3(b) offer must be reachable by any third party without requiring
         an account or special access. Email is accessible to anyone."""
-        text = open(self.notices_path, encoding='utf-8').read()
+        text = _read(self.notices_path)
         self.assertRegex(text, r'hdrtosdr\.dev@outlook\.com',
                          msg='written offer must include email contact for GPLv2 §3 compliance')
 
@@ -57,7 +62,7 @@ class TestLicenseFiles(unittest.TestCase):
 
     def test_gpl_text_is_the_real_thing(self):
         path = os.path.join(_ROOT, 'licenses', 'COPYING.GPLv2')
-        text = open(path, encoding='utf-8', errors='replace').read()
+        text = _read(path, errors='replace')
         self.assertIn('GNU GENERAL PUBLIC LICENSE', text.upper())
         self.assertGreater(len(text), 10_000,
                            msg='COPYING.GPLv2 looks truncated')
@@ -65,17 +70,17 @@ class TestLicenseFiles(unittest.TestCase):
 
 class TestInstallerBundlesLicenses(unittest.TestCase):
     def test_installer_ships_licenses_dir(self):
-        iss = open(os.path.join(_ROOT, 'installer.iss'), encoding='utf-8').read()
+        iss = _read(os.path.join(_ROOT, 'installer.iss'))
         self.assertIn('licenses', iss,
                       msg='installer.iss must bundle the licenses/ directory')
 
     def test_installer_ships_notices(self):
-        iss = open(os.path.join(_ROOT, 'installer.iss'), encoding='utf-8').read()
+        iss = _read(os.path.join(_ROOT, 'installer.iss'))
         self.assertIn('THIRD_PARTY_NOTICES.md', iss)
 
     def test_uninstall_preserves_user_owned_install_directory_files(self):
         """Uninstall may remove installed files, never recursively erase {app}."""
-        iss = open(os.path.join(_ROOT, 'installer.iss'), encoding='utf-8').read()
+        iss = _read(os.path.join(_ROOT, 'installer.iss'))
         self.assertNotRegex(
             iss,
             r'(?im)^\s*Type:\s*filesandordirs\s*;\s*Name:\s*"\{app\}"\s*$',

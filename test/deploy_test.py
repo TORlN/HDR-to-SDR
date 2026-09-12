@@ -34,7 +34,6 @@ import deploy  # noqa: E402  (must come after the sys.modules patch)
 from deploy import (
     get_mime_type,
     get_cache_control,
-    should_exclude,
     s3_key,
     collect_files,
     upload_files,
@@ -69,30 +68,17 @@ class TestGetMimeType(unittest.TestCase):
     def test_html_returns_charset(self):
         self.assertEqual(get_mime_type(self._path("index.html")), "text/html; charset=utf-8")
 
-    def test_css_returns_charset(self):
-        self.assertEqual(get_mime_type(self._path("style.css")), "text/css; charset=utf-8")
-
     def test_js_returns_javascript(self):
         self.assertIn("javascript", get_mime_type(self._path("app.js")))
 
     def test_png_returns_image(self):
         self.assertEqual(get_mime_type(self._path("logo.png")), "image/png")
 
-    def test_svg_correct(self):
-        self.assertEqual(get_mime_type(self._path("icon.svg")), "image/svg+xml")
-
-    def test_woff2_correct(self):
-        self.assertEqual(get_mime_type(self._path("font.woff2")), "font/woff2")
-
     def test_unknown_extension_returns_octet_stream(self):
         self.assertEqual(get_mime_type(self._path("data.fakeext")), "application/octet-stream")
 
     def test_case_insensitive_extension(self):
         self.assertEqual(get_mime_type(self._path("IMAGE.PNG")), "image/png")
-
-    def test_webmanifest(self):
-        self.assertEqual(get_mime_type(self._path("site.webmanifest")), "application/manifest+json")
-
 
 class TestGetCacheControl(unittest.TestCase):
 
@@ -103,12 +89,6 @@ class TestGetCacheControl(unittest.TestCase):
         cc = get_cache_control(self._path("index.html"))
         self.assertIn("must-revalidate", cc)
         self.assertIn("max-age=0", cc)
-
-    def test_css_revalidates(self):
-        cc = get_cache_control(self._path("style.css"))
-        self.assertNotIn("immutable", cc)
-        self.assertIn("max-age=3600", cc)
-        self.assertIn("must-revalidate", cc)
 
     def test_js_revalidates(self):
         cc = get_cache_control(self._path("bundle.js"))
@@ -122,58 +102,6 @@ class TestGetCacheControl(unittest.TestCase):
 
     def test_unknown_uses_default(self):
         self.assertEqual(get_cache_control(self._path("data.bin")), DEFAULT_CACHE_CONTROL)
-
-    def test_ico_one_day(self):
-        self.assertIn("86400", get_cache_control(self._path("favicon.ico")))
-
-
-class TestShouldExclude(unittest.TestCase):
-
-    def setUp(self):
-        self.root = Path("/project")
-
-    def _p(self, *parts: str) -> Path:
-        return self.root.joinpath(*parts)
-
-    def test_deploy_script_excluded(self):
-        self.assertTrue(should_exclude(self._p("deploy.py"), self.root))
-
-    def test_test_file_excluded(self):
-        self.assertTrue(should_exclude(self._p("test_deploy.py"), self.root))
-
-    def test_git_directory_excluded(self):
-        self.assertTrue(should_exclude(self._p(".git", "config"), self.root))
-
-    def test_pycache_excluded(self):
-        self.assertTrue(should_exclude(self._p("__pycache__", "deploy.cpython-311.pyc"), self.root))
-
-    def test_pyc_extension_excluded(self):
-        self.assertTrue(should_exclude(self._p("module.pyc"), self.root))
-
-    def test_node_modules_excluded(self):
-        self.assertTrue(should_exclude(self._p("node_modules", "lodash", "index.js"), self.root))
-
-    def test_ds_store_excluded(self):
-        self.assertTrue(should_exclude(self._p(".DS_Store"), self.root))
-
-    def test_env_excluded(self):
-        self.assertTrue(should_exclude(self._p(".env"), self.root))
-
-    def test_html_not_excluded(self):
-        self.assertFalse(should_exclude(self._p("index.html"), self.root))
-
-    def test_css_not_excluded(self):
-        self.assertFalse(should_exclude(self._p("style.css"), self.root))
-
-    def test_js_not_excluded(self):
-        self.assertFalse(should_exclude(self._p("script.js"), self.root))
-
-    def test_nested_asset_not_excluded(self):
-        self.assertFalse(should_exclude(self._p("assets", "logo.png"), self.root))
-
-    def test_log_extension_excluded(self):
-        self.assertTrue(should_exclude(self._p("debug.log"), self.root))
-
 
 class TestS3Key(unittest.TestCase):
 
@@ -261,6 +189,17 @@ class TestProductionDeploymentGuardrails(unittest.TestCase):
 
     def test_non_dry_run_requires_explicit_production_confirmation(self):
         self.assertFalse(deploy.deploy(deploy.SITE_ROOT))
+
+
+class TestCli(unittest.TestCase):
+
+    def test_rejects_removed_source_override(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with patch.object(sys, "argv", ["deploy.py", "--source", "C:/other", "--dry-run"]), \
+                 self.assertRaises(SystemExit) as raised:
+                deploy.main()
+
+        self.assertEqual(raised.exception.code, 2)
 
 
 class TestUploadFiles(unittest.TestCase):

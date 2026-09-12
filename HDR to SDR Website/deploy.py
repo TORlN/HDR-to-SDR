@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import sys
 import time
-import mimetypes
 import argparse
 from pathlib import Path
 
@@ -50,82 +49,31 @@ BUCKET_NAME     = "hdr-to-sdr-website"
 DISTRIBUTION_ID = "E1WBXGO4C77I4Y"
 AWS_REGION      = "us-east-1"
 
-# Paths / names that are never uploaded
-EXCLUDE_NAMES = {
-    "deploy.py", "test_deploy.py", "deploy.sh",
-    ".git", ".gitignore", ".DS_Store", "__pycache__",
-    "node_modules", ".env", ".venv", "venv",
-    "Thumbs.db", "desktop.ini",
-}
-EXCLUDE_EXTENSIONS = {".pyc", ".log", ".tmp", ".swp"}
-
 MIME_MAP: dict[str, str] = {
     ".html":        "text/html; charset=utf-8",
-    ".css":         "text/css; charset=utf-8",
     ".js":          "application/javascript; charset=utf-8",
-    ".json":        "application/json; charset=utf-8",
-    ".svg":         "image/svg+xml",
-    ".ico":         "image/x-icon",
     ".png":         "image/png",
-    ".jpg":         "image/jpeg",
-    ".jpeg":        "image/jpeg",
-    ".webp":        "image/webp",
-    ".gif":         "image/gif",
-    ".woff":        "font/woff",
-    ".woff2":       "font/woff2",
-    ".ttf":         "font/ttf",
     ".txt":         "text/plain; charset=utf-8",
     ".xml":         "application/xml",
-    ".webmanifest": "application/manifest+json",
-    ".map":         "application/json",
 }
 
 # Stable filenames revalidate regularly; HTML always revalidates
 STABLE_ASSET_CACHE_CONTROL = "public, max-age=3600, must-revalidate"
 CACHE_CONTROL_MAP: dict[str, str] = {
     ".html":        "public, max-age=0, must-revalidate",
-    ".css":         STABLE_ASSET_CACHE_CONTROL,
     ".js":          STABLE_ASSET_CACHE_CONTROL,
     ".png":         STABLE_ASSET_CACHE_CONTROL,
-    ".jpg":         STABLE_ASSET_CACHE_CONTROL,
-    ".jpeg":        STABLE_ASSET_CACHE_CONTROL,
-    ".webp":        STABLE_ASSET_CACHE_CONTROL,
-    ".svg":         STABLE_ASSET_CACHE_CONTROL,
-    ".gif":         STABLE_ASSET_CACHE_CONTROL,
-    ".ico":         "public, max-age=86400, must-revalidate",
-    ".woff":        STABLE_ASSET_CACHE_CONTROL,
-    ".woff2":       STABLE_ASSET_CACHE_CONTROL,
 }
 DEFAULT_CACHE_CONTROL = "public, max-age=3600"
 
 # ── Pure helper functions (tested in test_deploy.py) ──────────────────────────
 
 def get_mime_type(path: Path) -> str:
-    ext = path.suffix.lower()
-    if ext in MIME_MAP:
-        return MIME_MAP[ext]
-    guessed, _ = mimetypes.guess_type(str(path))
-    return guessed or "application/octet-stream"
+    return MIME_MAP.get(path.suffix.lower(), "application/octet-stream")
 
 
 def get_cache_control(path: Path) -> str:
     return CACHE_CONTROL_MAP.get(path.suffix.lower(), DEFAULT_CACHE_CONTROL)
-
-
-def should_exclude(path: Path, root: Path) -> bool:
-    try:
-        rel = path.relative_to(root)
-    except ValueError:
-        return True
-
-    for part in rel.parts:
-        if part in EXCLUDE_NAMES:
-            return True
-
-    if path.suffix.lower() in EXCLUDE_EXTENSIONS:
-        return True
-
-    return False
 
 
 def s3_key(path: Path, root: Path) -> str:
@@ -371,12 +319,6 @@ def main() -> None:
         epilog=__doc__,
     )
     parser.add_argument(
-        "--source", "-s",
-        default=str(_SCRIPT_DIR),
-        metavar="DIR",
-        help="Must resolve to this script's directory (default: that directory)",
-    )
-    parser.add_argument(
         "--dry-run", "-n",
         action="store_true",
         help="Show what would be uploaded without making any changes",
@@ -388,13 +330,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    source = Path(args.source).resolve()
-    if not source.is_dir():
-        print(f"ERROR: Source directory not found: {source}")
-        sys.exit(1)
-
     success = deploy(
-        source,
+        SITE_ROOT,
         dry_run=args.dry_run,
         confirm_production=args.confirm_production,
     )

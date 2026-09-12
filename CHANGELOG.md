@@ -7,6 +7,8 @@ this header and an empty `Unreleased` section after each new version is pushed.
 
 ### Fixed
 
+- Website deployments now stop before stale-file deletion or cache invalidation
+  when an upload fails, upload entry HTML last, and report partial S3 deletions.
 - Website copy now reflects the patched FFmpeg build, current hardware encoder
   names, and the planned v3.3 LUT and resolution features.
 - Website deployments now reject untracked or incomplete source directories,

@@ -191,11 +191,21 @@ def delete_stale_files(
     for i in range(0, len(stale), 1000):
         chunk = stale[i : i + 1000]
         try:
-            s3_client.delete_objects(
+            response = s3_client.delete_objects(
                 Bucket=BUCKET_NAME,
                 Delete={"Objects": [{"Key": k} for k in chunk]},
             )
-            deleted += len(chunk)
+            deleted_keys = {
+                item.get("Key") for item in response.get("Deleted", [])
+                if item.get("Key") in chunk
+            }
+            failed_keys = {
+                item.get("Key") for item in response.get("Errors", [])
+                if item.get("Key") in chunk
+            }
+            failed_keys.update(set(chunk) - deleted_keys - failed_keys)
+            deleted += len(deleted_keys)
+            failed.extend(sorted(failed_keys))
         except ClientError as exc:
             print(f"  ✗  Delete failed: {exc}")
             failed.extend(chunk)
@@ -295,6 +305,7 @@ def deploy(
     if not files:
         print("ERROR: No deployable files found in source directory.")
         return False
+    files.sort(key=lambda path: s3_key(path, source_dir) == SITE_MARKER)
 
     local_keys = {s3_key(f, source_dir) for f in files}
 
@@ -310,29 +321,35 @@ def deploy(
         return False
 
     uploaded, upload_failed = upload_files(s3, files, source_dir, dry_run)
-    deleted, delete_failed  = delete_stale_files(s3, local_keys, dry_run)
 
     if dry_run:
+        delete_stale_files(s3, local_keys, dry_run)
         print(f"\n  [DRY RUN] Would upload {len(files)} file(s) to s3://{BUCKET_NAME}")
         return True
 
-    print(f"\n  Upload complete – {uploaded}/{len(files)} succeeded, {len(upload_failed)} failed, {deleted} stale removed")
-
     if upload_failed:
+        print("\n  Upload failed. Skipping stale-file deletion and cache invalidation.")
         print("  Failed uploads:")
         for key in upload_failed:
             print(f"    - {key}")
+        return False
+
+    deleted, delete_failed = delete_stale_files(s3, local_keys, dry_run)
+
+    print(f"\n  Upload complete – {uploaded}/{len(files)} succeeded, {deleted} stale removed")
 
     if delete_failed:
+        print("  Stale-file deletion failed. Skipping cache invalidation.")
         print("  Failed deletions:")
         for key in delete_failed:
             print(f"    - {key}")
+        return False
 
     print(f"\n{'─' * 62}")
     print(f"  Invalidating CloudFront cache …")
     inv_id = invalidate_cloudfront(cf, DISTRIBUTION_ID)
 
-    success = not upload_failed and not delete_failed and inv_id is not None
+    success = inv_id is not None
     print(f"\n{'=' * 62}")
     if success:
         print(f"  Deployment complete.")

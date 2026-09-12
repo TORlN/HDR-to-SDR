@@ -335,6 +335,9 @@ class TestDeleteStaleFiles(unittest.TestCase):
         paginator = MagicMock()
         paginator.paginate.return_value = [page]
         s3.get_paginator.return_value = paginator
+        s3.delete_objects.side_effect = (
+            lambda **kwargs: {"Deleted": kwargs["Delete"]["Objects"]}
+        )
         return s3
 
     def test_deletes_stale_managed_keys(self):
@@ -377,6 +380,47 @@ class TestDeleteStaleFiles(unittest.TestCase):
         deleted, failed = delete_stale_files(s3, set(), dry_run=False)
         self.assertEqual(deleted, 0)
         self.assertEqual(len(failed), 1)
+
+    def test_partial_delete_response_tracks_only_failed_keys(self):
+        s3 = self._make_s3(["index.html", "script.js"])
+        s3.delete_objects.side_effect = None
+        s3.delete_objects.return_value = {
+            "Deleted": [{"Key": "index.html"}],
+            "Errors": [{"Key": "script.js", "Code": "AccessDenied"}],
+        }
+
+        deleted, failed = delete_stale_files(s3, set(), dry_run=False)
+
+        self.assertEqual(deleted, 1)
+        self.assertEqual(failed, ["script.js"])
+
+
+class TestDeployTransaction(unittest.TestCase):
+
+    def test_upload_failure_skips_deletion_and_invalidation(self):
+        source = Path("C:/site")
+        with patch.object(deploy, "validate_source", return_value=True), \
+             patch.object(deploy, "collect_files", return_value=[source / "script.js"]), \
+             patch.object(deploy, "upload_files", return_value=(0, ["script.js"])), \
+             patch.object(deploy, "delete_stale_files", return_value=(0, [])) as delete_stale, \
+             patch.object(deploy, "invalidate_cloudfront") as invalidate:
+            self.assertFalse(deploy.deploy(source, confirm_production=True))
+
+        delete_stale.assert_not_called()
+        invalidate.assert_not_called()
+
+    def test_uploads_entry_html_after_other_assets(self):
+        source = Path("C:/site")
+        files = [source / "index.html", source / "script.js"]
+        with patch.object(deploy, "validate_source", return_value=True), \
+             patch.object(deploy, "collect_files", return_value=files), \
+             patch.object(deploy, "upload_files", return_value=(2, [])) as upload, \
+             patch.object(deploy, "delete_stale_files", return_value=(0, [])), \
+             patch.object(deploy, "invalidate_cloudfront", return_value="inv"):
+            self.assertTrue(deploy.deploy(source, confirm_production=True))
+
+        uploaded_files = upload.call_args.args[1]
+        self.assertEqual([path.name for path in uploaded_files], ["script.js", "index.html"])
 
 class TestInvalidateCloudFront(unittest.TestCase):
 

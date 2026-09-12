@@ -26,7 +26,7 @@ from dialog_theme import (
 try:
     _pro_license_dialog = importlib.import_module('pro.license_dialog')
 except ModuleNotFoundError as exc:
-    if exc.name != 'pro.license_dialog':
+    if exc.name not in {'pro', 'pro.license_dialog'}:
         raise
     _pro_license_dialog = None
 

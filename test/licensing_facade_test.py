@@ -103,3 +103,10 @@ class TestFreeEditionFacade(unittest.TestCase):
                    side_effect=ImportError('broken Pro dependency')):
             with self.assertRaisesRegex(ImportError, 'broken Pro dependency'):
                 importlib.reload(facade)
+
+    def test_missing_pro_package_still_uses_community_fallback(self):
+        import src.licensing as facade
+        missing = ModuleNotFoundError("No module named 'pro'", name='pro')
+        with patch('importlib.import_module', side_effect=missing):
+            facade = importlib.reload(facade)
+        self.assertFalse(facade.check_license())

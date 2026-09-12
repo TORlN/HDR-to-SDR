@@ -29,7 +29,7 @@ from preview import DEFAULT_MIN_SIZE, _PREVIEW_POOL_WORKERS, _HDRPreviewMixin
 try:
     _pro_batch = importlib.import_module('pro.batch')
 except ModuleNotFoundError as exc:
-    if exc.name != 'pro.batch':
+    if exc.name not in {'pro', 'pro.batch'}:
         raise
     _pro_batch = None
 

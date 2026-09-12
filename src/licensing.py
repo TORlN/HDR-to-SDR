@@ -39,7 +39,7 @@ __all__ = [
 try:
     _pro = importlib.import_module('pro.licensing')
 except ModuleNotFoundError as exc:
-    if exc.name != 'pro.licensing':
+    if exc.name not in {'pro', 'pro.licensing'}:
         raise
     _pro = None
 

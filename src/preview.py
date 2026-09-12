@@ -88,8 +88,11 @@ class _HDRPreviewMixin:
         convert_button: ttk.Button
         cancel_button: ttk.Button
         _preview_generation: int
+        _preview_file_generation: int
         _preview_pool: ThreadPoolExecutor
         _preview_thread: Future | None
+        _preview_processes: dict[int, set]
+        _preview_futures: dict[int, set[Future]]
         _preview_cache_original: dict[tuple[str, float], Image.Image]
         _preview_cache_converted: dict[tuple[str, float, str, bool, bool], Image.Image]
         gpu_accel_var: tk.BooleanVar
@@ -514,9 +517,41 @@ class _HDRPreviewMixin:
 
     def _reset_preview_cache(self) -> None:
         """Drop all cached preview frames (e.g. when a new file is loaded)."""
+        file_generation = getattr(self, '_preview_file_generation', 0)
+        for future in getattr(self, '_preview_futures', {}).pop(file_generation, set()):
+            future.cancel()
+        for process in getattr(self, '_preview_processes', {}).pop(file_generation, set()):
+            try:
+                process.terminate()
+            except OSError:
+                pass
+        self._preview_file_generation = file_generation + 1
         self._preview_cache_original = {}
         self._preview_cache_converted = {}
         clear_hdr_metadata_cache()
+
+    def _register_preview_process(self, file_generation: int, process: object) -> None:
+        """Associate a preview process with its file until that file is discarded."""
+        if file_generation != getattr(self, '_preview_file_generation', 0):
+            try:
+                process.terminate()  # type: ignore[attr-defined]
+            except OSError:
+                pass
+            return
+        if not hasattr(self, '_preview_processes'):
+            self._preview_processes = {}
+        self._preview_processes.setdefault(file_generation, set()).add(process)
+
+    def _submit_preview_task(self, file_generation: int, task: Callable, *args: object) -> Future:
+        """Submit preview work and retain its future for file-replacement cancellation."""
+        if not hasattr(self, '_preview_pool'):
+            self._preview_pool = ThreadPoolExecutor(
+                max_workers=_PREVIEW_POOL_WORKERS, thread_name_prefix='frame-fetch')
+        future = self._preview_pool.submit(task, *args)
+        if not hasattr(self, '_preview_futures'):
+            self._preview_futures = {}
+        self._preview_futures.setdefault(file_generation, set()).add(future)
+        return future
 
     def _cache_store(self, cache: dict, key: object, value: Image.Image) -> None:
         """Insert into a preview cache, evicting the oldest entry past the cap."""
@@ -640,6 +675,7 @@ class _HDRPreviewMixin:
         time_position: float,
         tonemapper: str,
         lut_enabled: bool = True,
+        process_started: Callable[[object], None] | None = None,
     ) -> tuple[Image.Image, Image.Image]:
         """Return (original, converted) preview frames, caching ffmpeg results.
 
@@ -657,7 +693,8 @@ class _HDRPreviewMixin:
         original = self._preview_cache_original.get(original_key)
         if original is None:
             original = extract_frame(video_path, time_position=time_position,
-                                     width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1])
+                                     width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1],
+                                     process_started=process_started)
             self._cache_store(self._preview_cache_original, original_key, original)
 
         use_gpu = self._use_gpu_extraction(tonemapper)
@@ -671,20 +708,25 @@ class _HDRPreviewMixin:
                 video_path, gamma=1.0,
                 tonemapper=tonemapper, time_position=time_position,
                 width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1],
-                lut_enabled=lut_enabled,
+                lut_enabled=lut_enabled, process_started=process_started,
             )
             self._cache_store(self._preview_cache_converted, converted_key, converted)
         return original, converted
 
     def _prewarm_batch_originals(
-        self, video_path: str, positions: list[float], generation: int
+        self, video_path: str, positions: list[float], generation: int,
+        file_generation: int | None = None,
     ) -> None:
         """Extract all original (HDR) frames for the given positions in one ffmpeg pass."""
+        if file_generation is None:
+            file_generation = getattr(self, '_preview_file_generation', 0)
+        assert file_generation is not None
         if generation != self._preview_generation:
             return
         try:
             originals = extract_frames_batch(
-                video_path, positions, PREVIEW_SIZE[0], PREVIEW_SIZE[1])
+                video_path, positions, PREVIEW_SIZE[0], PREVIEW_SIZE[1],
+                process_started=lambda process: self._register_preview_process(file_generation, process))
             for t, img in zip(positions, originals):
                 self._cache_store(
                     self._preview_cache_original, (video_path, round(t, 3)), img)
@@ -693,7 +735,7 @@ class _HDRPreviewMixin:
 
     def _prewarm_batch_converted(
         self, video_path: str, positions: list[float], tonemapper: str, generation: int,
-        lut_enabled: bool = True,
+        file_generation: int | None = None, lut_enabled: bool = True,
     ) -> None:
         """Tonemap-convert all frames for the given positions in one ffmpeg pass
         (or, for the GPU path, N looped GPU passes -- see
@@ -704,6 +746,9 @@ class _HDRPreviewMixin:
         entries become unreachable (or reachable under the wrong key) from
         the real lookup path.
         """
+        if file_generation is None:
+            file_generation = getattr(self, '_preview_file_generation', 0)
+        assert file_generation is not None
         if generation != self._preview_generation:
             return
         try:
@@ -711,11 +756,13 @@ class _HDRPreviewMixin:
             if use_gpu:
                 converted = extract_frames_with_gpu_conversion_batch(
                     video_path, positions, 1.0, tonemapper,
-                    PREVIEW_SIZE[0], PREVIEW_SIZE[1], lut_enabled=lut_enabled)
+                    PREVIEW_SIZE[0], PREVIEW_SIZE[1], lut_enabled=lut_enabled,
+                    process_started=lambda process: self._register_preview_process(file_generation, process))
             else:
                 converted = extract_frames_with_conversion_batch(
                     video_path, positions, 1.0, tonemapper,
-                    PREVIEW_SIZE[0], PREVIEW_SIZE[1], lut_enabled=lut_enabled)
+                    PREVIEW_SIZE[0], PREVIEW_SIZE[1], lut_enabled=lut_enabled,
+                    process_started=lambda process: self._register_preview_process(file_generation, process))
             for t, img in zip(positions, converted):
                 self._cache_store(
                     self._preview_cache_converted,
@@ -729,9 +776,13 @@ class _HDRPreviewMixin:
         duration: float,
         tonemapper: str,
         generation: int,
+        file_generation: int | None = None,
         lut_enabled: bool = True,
     ) -> None:
         """Dispatch pre-warm batch tasks for the non-visible seek frames."""
+        if file_generation is None:
+            file_generation = getattr(self, '_preview_file_generation', 0)
+        assert file_generation is not None
         if generation != self._preview_generation:
             return
 
@@ -755,15 +806,17 @@ class _HDRPreviewMixin:
             return
 
         if hasattr(self, '_preview_pool'):
-            self._preview_pool.submit(
-                self._prewarm_batch_originals, video_path, positions, generation)
-            self._preview_pool.submit(
-                self._prewarm_batch_converted, video_path, positions, tonemapper, generation,
+            self._submit_preview_task(
+                file_generation, self._prewarm_batch_originals, video_path, positions, generation,
+                file_generation)
+            self._submit_preview_task(
+                file_generation, self._prewarm_batch_converted, video_path, positions, tonemapper, generation,
+                file_generation,
                 lut_enabled)
         else:
-            self._prewarm_batch_originals(video_path, positions, generation)
+            self._prewarm_batch_originals(video_path, positions, generation, file_generation)
             self._prewarm_batch_converted(
-                video_path, positions, tonemapper, generation, lut_enabled)
+                video_path, positions, tonemapper, generation, file_generation, lut_enabled)
 
     # ── Main display entrypoints ───────────────────────────────────────────────
 
@@ -774,29 +827,33 @@ class _HDRPreviewMixin:
 
         self._preview_generation = getattr(self, '_preview_generation', 0) + 1
         generation = self._preview_generation
+        file_generation = getattr(self, '_preview_file_generation', 0)
+        previous_visible = getattr(self, '_preview_thread', None)
+        if previous_visible is not None:
+            previous_visible.cancel()
 
         def worker() -> None:
             try:
+                if file_generation != getattr(self, '_preview_file_generation', 0):
+                    return
                 duration = self._get_duration(video_path)
                 time_position = self._preview_time_position(duration)
                 original, converted = self._extract_preview_images(
-                    video_path, time_position, tonemapper, lut_enabled
+                    video_path, time_position, tonemapper, lut_enabled,
+                    process_started=lambda process: self._register_preview_process(file_generation, process),
                 )
                 if generation == self._preview_generation:
                     self._schedule_on_main(lambda: self._render_preview_images(
                         original, converted, time_position, generation))
                 self._prewarm_other_frames(
-                    video_path, duration, tonemapper, generation, lut_enabled)
+                    video_path, duration, tonemapper, generation, file_generation, lut_enabled)
             except Exception as e:
                 # A stale (superseded) job's error must not clobber a newer
                 # preview, like the success path already guards against above.
                 if generation == self._preview_generation:
                     self._schedule_on_main(lambda err=e: self.handle_preview_error(err))
 
-        if not hasattr(self, '_preview_pool'):
-            self._preview_pool = ThreadPoolExecutor(
-                max_workers=_PREVIEW_POOL_WORKERS, thread_name_prefix='frame-fetch')
-        self._preview_thread = self._preview_pool.submit(worker)
+        self._preview_thread = self._submit_preview_task(file_generation, worker)
 
     def _render_preview_images(
         self,

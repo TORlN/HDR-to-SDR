@@ -253,6 +253,20 @@ class TestMonitorProgress(unittest.TestCase):
 class TestPreviewWorkerThread(unittest.TestCase):
     """The preview now extracts frames off the Tk main thread (responsiveness fix)."""
 
+    def test_new_preview_request_cancels_only_the_queued_visible_request(self):
+        gui = _bare_gui()
+        gui.tonemap_var = MagicMock(); gui.tonemap_var.get.return_value = 'Mobius'
+        gui._preview_file_generation = 1
+        gui._preview_futures = {}
+        gui._preview_pool = MagicMock()
+        previous_visible = MagicMock()
+        gui._preview_thread = previous_visible
+
+        gui.display_frames('in.mp4')
+
+        previous_visible.cancel.assert_called_once()
+        gui._preview_pool.submit.assert_called_once()
+
     def test_extraction_runs_off_main_thread_then_schedules_render(self):
         gui = _bare_gui()
         gui.root = MagicMock()
@@ -265,7 +279,7 @@ class TestPreviewWorkerThread(unittest.TestCase):
 
         seen = {}
 
-        def fake_extract(video_path, time_position, tonemapper, lut_enabled=True):
+        def fake_extract(video_path, time_position, tonemapper, lut_enabled=True, process_started=None):
             seen['thread'] = threading.current_thread()
             seen['time_position'] = time_position
             seen['tonemapper'] = tonemapper
@@ -410,7 +424,7 @@ class TestPreviewWorkerThread(unittest.TestCase):
             gui._preview_thread.result(timeout=5)
 
         gui._prewarm_other_frames.assert_called_once()
-        vp, duration, tm, gen, lut_enabled = gui._prewarm_other_frames.call_args[0]
+        vp, duration, tm, gen, file_gen, lut_enabled = gui._prewarm_other_frames.call_args[0]
         self.assertEqual((vp, duration, tm), ('in.mp4', 60.0, 'mobius'))
 
 
@@ -765,7 +779,9 @@ class TestGpuOnlyTonemapperPreviewDispatch(unittest.TestCase):
         gui._preview_generation = 1
         gui._preview_cache_converted = {}
         gui._prewarm_batch_converted('v.mkv', [10.0], 'spline', generation=1, lut_enabled=False)
-        mock_gpu_batch.assert_called_once_with('v.mkv', [10.0], 1.0, 'spline', 3840, 2160, lut_enabled=False)
+        mock_gpu_batch.assert_called_once_with(
+            'v.mkv', [10.0], 1.0, 'spline', 3840, 2160,
+            lut_enabled=False, process_started=ANY)
         mock_cpu_batch.assert_not_called()
         self.assertIn(('v.mkv', 10.0, 'spline', False, True), gui._preview_cache_converted)
         self.assertNotIn(('v.mkv', 10.0, 'spline', True, True), gui._preview_cache_converted)
@@ -1422,6 +1438,20 @@ class TestPreviewExtractionCache(unittest.TestCase):
             gui._extract_preview_images('in.mp4', 5.0, 'reinhard')
             me.assert_called_once()   # re-extracted after reset
             mc.assert_called_once()
+
+    def test_replacing_file_cancels_its_queued_and_running_preview_work(self):
+        gui = _bare_gui()
+        running = MagicMock()
+        queued = MagicMock()
+        gui._preview_file_generation = 4
+        gui._preview_processes = {4: {running}}
+        gui._preview_futures = {4: {queued}}
+
+        gui._reset_preview_cache()
+
+        running.terminate.assert_called_once()
+        queued.cancel.assert_called_once()
+        self.assertEqual(gui._preview_file_generation, 5)
 
     def test_cache_is_bounded(self):
         gui = _bare_gui()

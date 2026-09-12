@@ -7,6 +7,9 @@ this header and an empty `Unreleased` section after each new version is pushed.
 
 ### Fixed
 
+- Loading or unloading a video now cancels queued and running previews for the
+  discarded file. Cached frame-button and Pro custom-seek previews remain
+  available for the currently selected file.
 - File metadata and MaxCLL probing now run off the interface thread. Late
   results cannot overwrite metadata, bitrate defaults, or bit-depth choices
   for a newly selected file, including during Pro batch processing.

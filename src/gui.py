@@ -206,6 +206,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.total_frames = 5
         self.last_time_position: float | None = None
         self._preview_generation = 0
+        self._preview_file_generation = 0
+        self._preview_processes: dict[int, set] = {}
+        self._preview_futures: dict[int, set[Future]] = {}
         self._metadata_generation = 0
         self._metadata_pending: int | None = None
         self._preview_pool = ThreadPoolExecutor(

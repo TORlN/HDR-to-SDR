@@ -250,7 +250,7 @@ except Exception:
     logging.error("ffmpeg could not be initialized at import time", exc_info=True)
 
 
-def run_ffmpeg_command(cmd):
+def run_ffmpeg_command(cmd, process_started=None):
     """Run an FFmpeg command with proper path handling"""
     startupinfo, creationflags = _startupinfo()
 
@@ -275,6 +275,8 @@ def run_ffmpeg_command(cmd):
             startupinfo=startupinfo,
             creationflags=creationflags
         )
+        if process_started is not None:
+            process_started(process)
         
         out, err = _communicate_with_timeout(process, _PREVIEW_TIMEOUT)
         
@@ -583,6 +585,7 @@ def extract_frames_batch(
     time_positions: 'list[float]',
     width: int,
     height: int,
+    process_started=None,
 ) -> 'list[Image.Image]':
     """Extract multiple original frames in a single ffmpeg process.
 
@@ -609,6 +612,8 @@ def extract_frames_batch(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         startupinfo=startupinfo, creationflags=creationflags,
     )
+    if process_started is not None:
+        process_started(process)
     out, err = _communicate_with_timeout(process, _PREVIEW_TIMEOUT)
     if process.returncode != 0:
         raise RuntimeError(
@@ -625,6 +630,7 @@ def extract_frames_with_conversion_batch(
     width: int,
     height: int,
     lut_enabled: bool = True,
+    process_started=None,
 ) -> 'list[Image.Image]':
     """Tonemap-convert multiple frames in a single ffmpeg process.
 
@@ -660,6 +666,8 @@ def extract_frames_with_conversion_batch(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         startupinfo=startupinfo, creationflags=creationflags,
     )
+    if process_started is not None:
+        process_started(process)
     out, err = _communicate_with_timeout(process, _PREVIEW_TIMEOUT)
     if process.returncode != 0:
         raise RuntimeError(
@@ -670,7 +678,8 @@ def extract_frames_with_conversion_batch(
 
 def extract_frame_with_conversion(video_path, gamma, tonemapper='reinhard',
                                   time_position=None, width: 'int | str' = 'iw',
-                                  height: 'int | str' = 'ih', lut_enabled: bool = True):
+                                  height: 'int | str' = 'ih', lut_enabled: bool = True,
+                                  process_started=None):
     """Extract a frame and apply tonemapping conversion; returns a PIL Image.
 
     width/height: default ('iw'/'ih') keeps source resolution; pass concrete
@@ -700,7 +709,8 @@ def extract_frame_with_conversion(video_path, gamma, tonemapper='reinhard',
         '-vframes', '1', '-f', 'image2pipe', '-'
     ]
 
-    out = run_ffmpeg_command(cmd)
+    out = (run_ffmpeg_command(cmd, process_started=process_started)
+           if process_started is not None else run_ffmpeg_command(cmd))
     try:
         return Image.open(io.BytesIO(out))
     except UnidentifiedImageError as e:
@@ -710,7 +720,8 @@ def extract_frame_with_conversion(video_path, gamma, tonemapper='reinhard',
 
 def extract_frame_with_gpu_conversion(video_path, gamma, tonemapper='bt.2390',
                                       time_position=None, width: 'int | str' = 'iw',
-                                      height: 'int | str' = 'ih', lut_enabled: bool = True):
+                                      height: 'int | str' = 'ih', lut_enabled: bool = True,
+                                      process_started=None):
     """GPU (libplacebo) counterpart to extract_frame_with_conversion, for
     tonemappers with no CPU implementation (see GPU_ONLY_TONEMAPPERS). Uses
     the plain-Vulkan (CPU-decode) path -- CUDA interop isn't worth it for a
@@ -732,7 +743,8 @@ def extract_frame_with_gpu_conversion(video_path, gamma, tonemapper='bt.2390',
         '-vframes', '1', '-f', 'image2pipe', '-'
     ]
 
-    out = run_ffmpeg_command(cmd)
+    out = (run_ffmpeg_command(cmd, process_started=process_started)
+           if process_started is not None else run_ffmpeg_command(cmd))
     try:
         return Image.open(io.BytesIO(out))
     except UnidentifiedImageError as e:
@@ -748,6 +760,7 @@ def extract_frames_with_gpu_conversion_batch(
     width: int,
     height: int,
     lut_enabled: bool = True,
+    process_started=None,
 ) -> 'list[Image.Image]':
     """GPU counterpart to extract_frames_with_conversion_batch.
 
@@ -760,12 +773,13 @@ def extract_frames_with_gpu_conversion_batch(
     return [
         extract_frame_with_gpu_conversion(
             video_path, gamma, tonemapper=tonemapper,
-            time_position=t, width=width, height=height, lut_enabled=lut_enabled)
+            time_position=t, width=width, height=height, lut_enabled=lut_enabled,
+            process_started=process_started)
         for t in time_positions
     ]
 
 def extract_frame(video_path, time_position=None, width: 'int | None' = None,
-                  height: 'int | None' = None):
+                  height: 'int | None' = None, process_started=None):
     """Extract a frame from the video; returns a PIL Image.
 
     width/height: when both given, ffmpeg scales the frame on the way out,
@@ -785,7 +799,8 @@ def extract_frame(video_path, time_position=None, width: 'int | None' = None,
         cmd += ['-vf', f'scale={width}:{height}:force_original_aspect_ratio=decrease']
     cmd += ['-vframes', '1', '-f', 'image2pipe', '-']
 
-    out = run_ffmpeg_command(cmd)
+    out = (run_ffmpeg_command(cmd, process_started=process_started)
+           if process_started is not None else run_ffmpeg_command(cmd))
     try:
         return Image.open(io.BytesIO(out))
     except UnidentifiedImageError as e:

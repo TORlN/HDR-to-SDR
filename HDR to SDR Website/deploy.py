@@ -80,20 +80,21 @@ MIME_MAP: dict[str, str] = {
     ".map":         "application/json",
 }
 
-# Long-lived cache for hashed assets; HTML always revalidated
+# Stable filenames revalidate regularly; HTML always revalidates
+STABLE_ASSET_CACHE_CONTROL = "public, max-age=3600, must-revalidate"
 CACHE_CONTROL_MAP: dict[str, str] = {
     ".html":        "public, max-age=0, must-revalidate",
-    ".css":         "public, max-age=31536000, immutable",
-    ".js":          "public, max-age=31536000, immutable",
-    ".png":         "public, max-age=31536000, immutable",
-    ".jpg":         "public, max-age=31536000, immutable",
-    ".jpeg":        "public, max-age=31536000, immutable",
-    ".webp":        "public, max-age=31536000, immutable",
-    ".svg":         "public, max-age=31536000, immutable",
-    ".gif":         "public, max-age=31536000, immutable",
-    ".ico":         "public, max-age=86400",
-    ".woff":        "public, max-age=31536000, immutable",
-    ".woff2":       "public, max-age=31536000, immutable",
+    ".css":         STABLE_ASSET_CACHE_CONTROL,
+    ".js":          STABLE_ASSET_CACHE_CONTROL,
+    ".png":         STABLE_ASSET_CACHE_CONTROL,
+    ".jpg":         STABLE_ASSET_CACHE_CONTROL,
+    ".jpeg":        STABLE_ASSET_CACHE_CONTROL,
+    ".webp":        STABLE_ASSET_CACHE_CONTROL,
+    ".svg":         STABLE_ASSET_CACHE_CONTROL,
+    ".gif":         STABLE_ASSET_CACHE_CONTROL,
+    ".ico":         "public, max-age=86400, must-revalidate",
+    ".woff":        STABLE_ASSET_CACHE_CONTROL,
+    ".woff2":       STABLE_ASSET_CACHE_CONTROL,
 }
 DEFAULT_CACHE_CONTROL = "public, max-age=3600"
 

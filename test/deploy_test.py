@@ -104,13 +104,21 @@ class TestGetCacheControl(unittest.TestCase):
         self.assertIn("must-revalidate", cc)
         self.assertIn("max-age=0", cc)
 
-    def test_css_immutable(self):
+    def test_css_revalidates(self):
         cc = get_cache_control(self._path("style.css"))
-        self.assertIn("immutable", cc)
-        self.assertIn("31536000", cc)
+        self.assertNotIn("immutable", cc)
+        self.assertIn("max-age=3600", cc)
+        self.assertIn("must-revalidate", cc)
 
-    def test_js_immutable(self):
-        self.assertIn("immutable", get_cache_control(self._path("bundle.js")))
+    def test_js_revalidates(self):
+        cc = get_cache_control(self._path("bundle.js"))
+        self.assertNotIn("immutable", cc)
+        self.assertIn("max-age=3600", cc)
+
+    def test_images_revalidate(self):
+        cc = get_cache_control(self._path("frame.png"))
+        self.assertNotIn("immutable", cc)
+        self.assertIn("max-age=3600", cc)
 
     def test_unknown_uses_default(self):
         self.assertEqual(get_cache_control(self._path("data.bin")), DEFAULT_CACHE_CONTROL)

@@ -13,6 +13,7 @@ import ffmpeg_command
 import platform_utils
 from utils import (get_video_properties, FFMPEG_EXECUTABLE,
                    vulkan_libplacebo_available, vulkan_cuda_interop_available,
+                   _communicate_with_timeout,
                    _startupinfo as _utils_startupinfo)
 import platform  # noqa: F401 -- unused directly, but must stay as `import
 # platform` (not `from ... import system`): test/conversion_test.py's
@@ -55,6 +56,8 @@ class ConversionRun:
 
 
 class ConversionManager:
+    _PROCESS_STOP_TIMEOUT = 2
+    _PROBE_TIMEOUT = 10
     _PATH_IDENTITY_ERROR = (
         "Could not safely verify that input and output are different files. "
         "Check that both paths are accessible and try again.")
@@ -76,6 +79,33 @@ class ConversionManager:
     def ready_for_shutdown(self) -> bool:
         """Whether no process or monitor callback can still reach the UI."""
         return self.process is None and self._monitor_done.is_set()
+
+    @classmethod
+    def _terminate_and_reap(cls, process, *, terminate=True) -> bool:
+        """Stop and reap a conversion process without an unbounded wait."""
+        if terminate:
+            try:
+                process.terminate()
+            except OSError as error:
+                logging.warning(f"Could not terminate FFmpeg process: {error}")
+        try:
+            process.wait(timeout=cls._PROCESS_STOP_TIMEOUT)
+            return True
+        except subprocess.TimeoutExpired:
+            try:
+                process.kill()
+            except OSError as error:
+                logging.warning(f"Could not kill FFmpeg process: {error}")
+                return False
+            try:
+                process.wait(timeout=cls._PROCESS_STOP_TIMEOUT)
+                return True
+            except (OSError, subprocess.TimeoutExpired) as error:
+                logging.warning(f"Could not reap FFmpeg process: {error}")
+                return False
+        except OSError as error:
+            logging.warning(f"Could not reap FFmpeg process: {error}")
+            return False
 
     def start(self, request: ConversionRequest, view: ConversionView) -> bool:
         """Public entry point. The only way to begin a conversion.
@@ -167,14 +197,7 @@ class ConversionManager:
         except Exception:
             process = self.process
             if process is not None:
-                try:
-                    process.terminate()
-                except Exception as error:
-                    logging.warning(f"Could not terminate failed conversion startup: {error}")
-                try:
-                    process.wait()
-                except Exception as error:
-                    logging.warning(f"Could not reap failed conversion startup: {error}")
+                self._terminate_and_reap(process)
             self.process = None
             self._mark_monitor_done(run)
             self._discard_temporary_output(temporary_output_path)
@@ -321,7 +344,10 @@ class ConversionManager:
                 gpu_error_detected = True
 
         if proc is not None:
-            proc.wait()
+            try:
+                proc.wait(timeout=self._PROCESS_STOP_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                self._terminate_and_reap(proc)
             returncode = proc.returncode
             cancelled = self.cancelled
             if self.process is proc:
@@ -486,7 +512,17 @@ class ConversionManager:
         run = self._run
         view = run.view if run else None
         if self.process and view is not None:
-            self.process.terminate()
+            process = self.process
+            try:
+                process.terminate()
+            except OSError as error:
+                logging.warning(f"Could not terminate cancelled conversion: {error}")
+            if process.poll() is None:
+                threading.Thread(
+                    target=lambda: self._terminate_and_reap(
+                        process, terminate=False),
+                    daemon=True,
+                ).start()
             def _notify_cancelled() -> None:
                 if self._run is run:
                     view.notify(Notice.info(
@@ -523,9 +559,10 @@ class ConversionManager:
                 stderr=subprocess.PIPE,
                 startupinfo=si,
                 creationflags=flags,
+                timeout=self._PROBE_TIMEOUT,
             )
             return result.returncode == 0
-        except (FileNotFoundError, OSError):
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
             return False
 
     def _list_encoders(self) -> str:
@@ -540,9 +577,10 @@ class ConversionManager:
                 startupinfo=si,
                 creationflags=flags,
             )
-            stdout, _ = process.communicate()
+            stdout, _ = _communicate_with_timeout(
+                process, self._PROBE_TIMEOUT)
             return stdout.lower() if process.returncode == 0 else ''
-        except (FileNotFoundError, OSError):
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
             return ''
 
     def _probe_encoder(self, encoder: str) -> bool:

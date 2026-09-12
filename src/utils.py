@@ -59,6 +59,30 @@ def is_gpu_only_tonemapper(tonemapper: str) -> bool:
 # (batch.py) dialogs, so the extension list can't drift apart between them.
 VIDEO_FILE_FILTER = ("All Video Files", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v")
 
+_FFPROBE_TIMEOUT = 15
+_PREVIEW_TIMEOUT = 30
+_PROCESS_STOP_TIMEOUT = 2
+
+
+def _communicate_with_timeout(process, timeout):
+    """Communicate with a short-lived process and reap it on timeout."""
+    try:
+        return process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            process.terminate()
+        except OSError as error:
+            logging.warning(f"Could not terminate timed-out process: {error}")
+        try:
+            process.communicate(timeout=_PROCESS_STOP_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            try:
+                process.kill()
+            except OSError as error:
+                logging.warning(f"Could not kill timed-out process: {error}")
+            process.communicate(timeout=_PROCESS_STOP_TIMEOUT)
+        raise
+
 
 def parse_drop_paths(data: str) -> list:  # type: ignore[type-arg]
     """Split a tkdnd drop payload into individual file paths.
@@ -252,7 +276,7 @@ def run_ffmpeg_command(cmd):
             creationflags=creationflags
         )
         
-        out, err = process.communicate()
+        out, err = _communicate_with_timeout(process, _PREVIEW_TIMEOUT)
         
         if process.returncode != 0:
             error_msg = err.decode('utf-8', errors='replace')
@@ -311,7 +335,8 @@ def _probe_hdr_metadata(video_path):
             stdin=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             startupinfo=startupinfo,
-            creationflags=creationflags
+            creationflags=creationflags,
+            timeout=_FFPROBE_TIMEOUT,
         )
         data = json.loads(out.decode('utf-8'))
     except (subprocess.SubprocessError, OSError, json.JSONDecodeError, ValueError) as e:
@@ -508,11 +533,12 @@ def vulkan_cuda_interop_available() -> bool:
         result = subprocess.run(
             cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
             startupinfo=startupinfo, creationflags=creationflags,
+            timeout=_GPU_PROBE_TIMEOUT,
         )
         _cuda_interop_available = (result.returncode == 0)
         if not _cuda_interop_available and result.stderr:
             logging.warning(f"CUDA interop probe stderr: {result.stderr.decode('utf-8', errors='replace').strip()}")
-    except (FileNotFoundError, OSError) as e:
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as e:
         logging.warning(f"CUDA→Vulkan interop probe raised: {e}")
         _cuda_interop_available = False
 
@@ -583,7 +609,7 @@ def extract_frames_batch(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         startupinfo=startupinfo, creationflags=creationflags,
     )
-    out, err = process.communicate()
+    out, err = _communicate_with_timeout(process, _PREVIEW_TIMEOUT)
     if process.returncode != 0:
         raise RuntimeError(
             f'FFmpeg batch frame extraction failed: {err.decode("utf-8", errors="replace")}'
@@ -634,7 +660,7 @@ def extract_frames_with_conversion_batch(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         startupinfo=startupinfo, creationflags=creationflags,
     )
-    out, err = process.communicate()
+    out, err = _communicate_with_timeout(process, _PREVIEW_TIMEOUT)
     if process.returncode != 0:
         raise RuntimeError(
             f'FFmpeg batch conversion failed: {err.decode("utf-8", errors="replace")}'
@@ -865,7 +891,7 @@ def _probe_video_properties(input_file):
             startupinfo=startupinfo,
             creationflags=creationflags
         )
-        output, _ = result.communicate()
+        output, _ = _communicate_with_timeout(result, _FFPROBE_TIMEOUT)
         
         if result.returncode != 0:
             return None

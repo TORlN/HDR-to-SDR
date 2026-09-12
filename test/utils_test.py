@@ -78,6 +78,21 @@ class TestGetVideoProperties(unittest.TestCase):
 
         properties = get_video_properties(input_file)
         self.assertEqual(properties, expected_properties)
+        self.assertIsNotNone(
+            mock_process.communicate.call_args.kwargs.get('timeout'))
+
+    @patch('src.utils.subprocess.Popen')
+    def test_timeout_terminates_kills_and_returns_none(self, mock_popen):
+        process = mock_popen.return_value
+        process.communicate.side_effect = [
+            subprocess.TimeoutExpired('ffprobe', 15),
+            subprocess.TimeoutExpired('ffprobe', 2),
+            (b'', b''),
+        ]
+
+        self.assertIsNone(get_video_properties('hung-video.mkv'))
+        process.terminate.assert_called_once_with()
+        process.kill.assert_called_once_with()
 
     @patch('src.utils.subprocess.Popen')
     def test_get_video_properties_with_subtitles(self, mock_popen):
@@ -217,6 +232,41 @@ class TestRunFfmpegCommand(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             run_ffmpeg_command(['ffmpeg', '-i', 'input.mp4', 'output.mkv'])
+
+    @patch('subprocess.Popen')
+    def test_timeout_terminates_kills_and_reaps_process(self, mock_popen):
+        process = mock_popen.return_value
+        process.communicate.side_effect = [
+            subprocess.TimeoutExpired('ffmpeg', 30),
+            subprocess.TimeoutExpired('ffmpeg', 2),
+            (b'', b''),
+        ]
+
+        with self.assertRaises(RuntimeError):
+            run_ffmpeg_command(['ffmpeg', '-i', 'input.mp4', 'output.mkv'])
+
+        process.terminate.assert_called_once_with()
+        process.kill.assert_called_once_with()
+        self.assertEqual(process.communicate.call_count, 3)
+        self.assertTrue(all(
+            call.kwargs.get('timeout') is not None
+            for call in process.communicate.call_args_list))
+
+    @patch('subprocess.Popen')
+    def test_timeout_still_reaps_when_kill_reports_process_already_gone(
+            self, mock_popen):
+        process = mock_popen.return_value
+        process.communicate.side_effect = [
+            subprocess.TimeoutExpired('ffmpeg', 30),
+            subprocess.TimeoutExpired('ffmpeg', 2),
+            (b'', b''),
+        ]
+        process.kill.side_effect = ProcessLookupError('already exited')
+
+        with self.assertRaises(RuntimeError):
+            run_ffmpeg_command(['ffmpeg', '-i', 'input.mp4', 'output.mkv'])
+
+        self.assertEqual(process.communicate.call_count, 3)
 
     @patch('subprocess.Popen')
     def test_run_ffmpeg_command_does_not_normalize_vf_filtergraph(self, mock_popen):
@@ -740,6 +790,13 @@ class TestVulkanCudaInteropProbe(unittest.TestCase):
         self.assertFalse(vulkan_cuda_interop_available())
 
     @patch('src.utils.FFMPEG_EXECUTABLE', 'ffmpeg')
+    @patch('src.utils.subprocess.run',
+           side_effect=subprocess.TimeoutExpired(cmd='ffmpeg', timeout=20))
+    def test_false_when_probe_times_out(self, mock_run):
+        self.assertFalse(vulkan_cuda_interop_available())
+        self.assertIsNotNone(mock_run.call_args.kwargs.get('timeout'))
+
+    @patch('src.utils.FFMPEG_EXECUTABLE', 'ffmpeg')
     @patch('src.utils.subprocess.run')
     def test_result_is_cached(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0)
@@ -912,7 +969,7 @@ class TestVideoPropertiesConcurrency(unittest.TestCase):
         class _SlowProc:
             returncode = 0
 
-            def communicate(self):
+            def communicate(self, timeout=None):
                 call_count.append(1)
                 probe_started.set()
                 release_probe.wait(timeout=1)
@@ -1421,6 +1478,8 @@ class TestExtractFramesBatch(unittest.TestCase):
         result = extract_frames_batch('vid.mkv', [10.0, 20.0, 30.0], 960, 540)
         self.assertEqual(mock_popen.call_count, 1)
         self.assertEqual(len(result), 3)
+        self.assertIsNotNone(
+            mock_popen.return_value.communicate.call_args.kwargs.get('timeout'))
 
     @patch('src.utils.subprocess.Popen')
     def test_empty_positions_returns_empty_without_popen(self, mock_popen):
@@ -1458,6 +1517,8 @@ class TestExtractFramesWithConversionBatch(unittest.TestCase):
         result = extract_frames_with_conversion_batch('vid.mkv', [5.0, 15.0], 1.0, 'reinhard', 960, 540)
         self.assertEqual(mock_popen.call_count, 1)
         self.assertEqual(len(result), 2)
+        self.assertIsNotNone(
+            mock_popen.return_value.communicate.call_args.kwargs.get('timeout'))
 
     @patch('src.utils.subprocess.Popen')
     def test_empty_positions_returns_empty_without_popen(self, mock_popen):
@@ -1506,6 +1567,13 @@ class TestProbeHdrMetadata(unittest.TestCase):
         mock_out.return_value = self._frame_data()
         result = self._u._probe_hdr_metadata('/fake/hdr.mkv')
         self.assertEqual(result['maxcll'], 1000.0)
+        self.assertIsNotNone(mock_out.call_args.kwargs.get('timeout'))
+
+    @patch('src.utils.subprocess.check_output',
+           side_effect=subprocess.TimeoutExpired(cmd='ffprobe', timeout=15))
+    def test_timeout_returns_no_metadata(self, _mock_out):
+        result = self._u._probe_hdr_metadata('/fake/hung.mkv')
+        self.assertIsNone(result['maxcll'])
 
     @patch('src.utils.subprocess.check_output')
     def test_returns_none_values_when_no_metadata(self, mock_out):

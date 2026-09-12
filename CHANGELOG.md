@@ -7,6 +7,8 @@ this header and an empty `Unreleased` section after each new version is pushed.
 
 ### Fixed
 
+- FFmpeg, ffprobe, GPU detection, and preview helper processes now have
+  bounded waits and terminate-kill-reap cleanup when they stop responding.
 - Update checks now accept only strict `X.Y.Z` release tags, ignoring
   malformed version metadata safely.
 - LUT paths now escape FFmpeg filtergraph-special characters, including

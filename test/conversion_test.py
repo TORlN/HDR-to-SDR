@@ -351,6 +351,8 @@ class TestTransactionalOutput(unittest.TestCase):
                     self.assertIsNotNone(process)
                     process.terminate.assert_called_once()
                     process.wait.assert_called_once()
+                    self.assertIsNotNone(
+                        process.wait.call_args.kwargs.get('timeout'))
                     self.assertIsNone(manager.process)
                 if name == 'monitor cleanup failure':
                     self.assertEqual(str(error.exception), 'monitor failed')
@@ -1054,6 +1056,31 @@ class TestCancelUsesStoredView(unittest.TestCase):
         proc.wait.assert_called_once()
         self.assertIsNone(m.process)
 
+    @patch('src.conversion.threading.Thread')
+    def test_cancel_watchdog_kills_and_reaps_stubborn_process(self, thread):
+        manager = ConversionManager()
+        process = MagicMock()
+        process.wait.side_effect = [
+            subprocess.TimeoutExpired('ffmpeg', 2),
+            0,
+        ]
+        process.poll.return_value = None
+        view = _view()
+        manager.process = process
+        manager._run = ConversionRun(request=_req(), view=view)
+        thread.return_value.start.side_effect = (
+            lambda: thread.call_args.kwargs['target']())
+
+        manager.cancel_conversion()
+
+        process.terminate.assert_called_once_with()
+        process.kill.assert_called_once_with()
+        self.assertEqual(process.wait.call_count, 2)
+        self.assertTrue(all(
+            call.kwargs.get('timeout') is not None
+            for call in process.wait.call_args_list))
+        self.assertIs(manager.process, process)
+
 
 class TestBatchCompletionHook(unittest.TestCase):
     """An on_complete callback replaces the per-file dialog for batch (queue) runs."""
@@ -1246,6 +1273,26 @@ class TestDetectGpuEncoder(unittest.TestCase):
         m = self._manager_with_encoders(
             'h264_amf h264_qsv', nvidia_present=False, probe_ok=set())
         self.assertIsNone(m.detect_gpu_encoder())
+
+    @patch('src.conversion.subprocess.run',
+           side_effect=subprocess.TimeoutExpired('nvidia-smi', 5))
+    def test_nvidia_detection_timeout_is_bounded_and_unavailable(self, run):
+        self.assertFalse(ConversionManager()._nvidia_present())
+        self.assertIsNotNone(run.call_args.kwargs.get('timeout'))
+
+    @patch('src.conversion.subprocess.Popen')
+    def test_encoder_listing_timeout_terminates_kills_and_returns_empty(
+            self, popen):
+        process = popen.return_value
+        process.communicate.side_effect = [
+            subprocess.TimeoutExpired('ffmpeg', 10),
+            subprocess.TimeoutExpired('ffmpeg', 2),
+            ('', ''),
+        ]
+
+        self.assertEqual(ConversionManager()._list_encoders(), '')
+        process.terminate.assert_called_once_with()
+        process.kill.assert_called_once_with()
 
     def test_gpu_acceleration_available_delegates_to_detect(self):
         m = ConversionManager()
@@ -1960,7 +2007,7 @@ class TestMonitorProgressCancellationRace(unittest.TestCase):
             stderr = iter([])  # empty → the for-loop exits immediately
             returncode = 0
 
-            def wait(self) -> None:
+            def wait(self, timeout=None) -> None:
                 # Simulate the main thread running cancel_conversion concurrently:
                 # the shared attribute is yanked right after the loop but before
                 # returncode is read.
@@ -1979,6 +2026,28 @@ class TestMonitorProgressCancellationRace(unittest.TestCase):
                 f"monitor_progress raised AttributeError when self.process was "
                 f"cleared inside .wait() before returncode was read: {exc}"
             )
+
+    def test_closed_stderr_with_live_process_is_terminated_killed_and_reaped(
+            self) -> None:
+        manager = ConversionManager()
+        process = MagicMock()
+        process.stderr = iter([])
+        process.returncode = 1
+        process.wait.side_effect = [
+            subprocess.TimeoutExpired('ffmpeg', 2),
+            subprocess.TimeoutExpired('ffmpeg', 2),
+            0,
+        ]
+        manager.process = process
+
+        manager.monitor_progress(_req(), _view(), 10.0)
+
+        process.terminate.assert_called_once_with()
+        process.kill.assert_called_once_with()
+        self.assertEqual(process.wait.call_count, 3)
+        self.assertTrue(all(
+            call.kwargs.get('timeout') is not None
+            for call in process.wait.call_args_list))
 
     def test_process_nulled_mid_iteration_does_not_crash(self) -> None:
         """Race (a): clearing self.process between two yielded stderr lines must

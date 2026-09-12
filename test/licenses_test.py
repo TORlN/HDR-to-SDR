@@ -72,3 +72,11 @@ class TestInstallerBundlesLicenses(unittest.TestCase):
     def test_installer_ships_notices(self):
         iss = open(os.path.join(_ROOT, 'installer.iss'), encoding='utf-8').read()
         self.assertIn('THIRD_PARTY_NOTICES.md', iss)
+
+    def test_uninstall_preserves_user_owned_install_directory_files(self):
+        """Uninstall may remove installed files, never recursively erase {app}."""
+        iss = open(os.path.join(_ROOT, 'installer.iss'), encoding='utf-8').read()
+        self.assertNotRegex(
+            iss,
+            r'(?im)^\s*Type:\s*filesandordirs\s*;\s*Name:\s*"\{app\}"\s*$',
+        )

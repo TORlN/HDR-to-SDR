@@ -73,3 +73,4 @@ this header and an empty `Unreleased` section after each new version is pushed.
   least-privilege checkout permissions, and verified packaged FFmpeg inputs.
 - Release artifacts no longer vary based on whether UPX is installed on the
   build machine.
+- Uninstall now preserves user-created files in the application directory.

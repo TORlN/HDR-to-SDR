@@ -63,6 +63,3 @@ Name: "{group}\Third-Party Licenses"; Filename: "{app}\THIRD_PARTY_NOTICES.md"
 Filename: "{app}\{#AppExeName}"; \
   Description: "{cm:LaunchProgram,{#StringChange(AppName, '&', '&&')}}"; \
   Flags: nowait postinstall skipifsilent
-
-[UninstallDelete]
-Type: filesandordirs; Name: "{app}"

@@ -60,6 +60,72 @@ class TestLoadSettings(unittest.TestCase):
         self.assertEqual(result['tonemapper'], DEFAULTS['tonemapper'])
         self.assertEqual(result['open_after_conversion'], DEFAULTS['open_after_conversion'])
 
+    def test_returns_defaults_when_json_root_is_not_an_object(self):
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(['gamma'], f)
+            tmp = f.name
+        try:
+            with patch('src.settings.SETTINGS_FILE', tmp):
+                result = load_settings()
+        finally:
+            os.unlink(tmp)
+        self.assertEqual(result, DEFAULTS)
+
+    def test_invalid_field_types_fall_back_without_losing_valid_settings(self):
+        data = {'gamma': 1.8, 'open_after_conversion': 1, 'display_preview': 'yes'}
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(data, f)
+            tmp = f.name
+        try:
+            with patch('src.settings.SETTINGS_FILE', tmp):
+                result = load_settings()
+        finally:
+            os.unlink(tmp)
+        self.assertEqual(result['gamma'], 1.8)
+        self.assertIs(result['open_after_conversion'], False)
+        self.assertIs(result['display_preview'], True)
+
+    def test_invalid_enum_values_fall_back_to_defaults(self):
+        data = {'tonemapper': 'not-a-tonemapper', 'quality_mode': 'lossless', 'filetype': 'AVI'}
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(data, f)
+            tmp = f.name
+        try:
+            with patch('src.settings.SETTINGS_FILE', tmp):
+                result = load_settings()
+        finally:
+            os.unlink(tmp)
+        self.assertEqual(result['tonemapper'], 'Mobius')
+        self.assertEqual(result['quality_mode'], 'cq')
+        self.assertEqual(result['filetype'], 'MP4')
+
+    def test_invalid_enum_type_does_not_discard_valid_settings(self):
+        data = {'gamma': 1.8, 'tonemapper': ['not', 'a', 'string']}
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(data, f)
+            tmp = f.name
+        try:
+            with patch('src.settings.SETTINGS_FILE', tmp):
+                result = load_settings()
+        finally:
+            os.unlink(tmp)
+        self.assertEqual(result['gamma'], 1.8)
+        self.assertEqual(result['tonemapper'], 'Mobius')
+
+    def test_invalid_numeric_values_fall_back_to_defaults(self):
+        data = {'gamma': float('inf'), 'quality': 0, 'quality_bitrate_kbps': 999}
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(data, f)
+            tmp = f.name
+        try:
+            with patch('src.settings.SETTINGS_FILE', tmp):
+                result = load_settings()
+        finally:
+            os.unlink(tmp)
+        self.assertEqual(result['gamma'], 1.0)
+        self.assertEqual(result['quality'], 23)
+        self.assertEqual(result['quality_bitrate_kbps'], 8000)
+
     def test_unknown_keys_are_ignored(self):
         """Includes 'gpu_accel', removed from DEFAULTS once GPU acceleration
         became always-on -- a settings.json saved by an older version with

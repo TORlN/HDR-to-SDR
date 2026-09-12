@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import os
 
 from platform_utils import settings_dir
@@ -21,14 +22,50 @@ DEFAULTS = {
     'lut_enabled': True,
 }
 
+_TONEMAPPERS = frozenset({'Reinhard', 'Mobius', 'Hable', 'BT.2390', 'Spline'})
+_QUALITY_MODES = frozenset({'cq', 'bitrate'})
+_FILETYPES = frozenset({'MP4', 'MKV', 'MOV'})
+
+
+def _is_finite_number(value, minimum, maximum):
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and minimum <= value <= maximum
+    )
+
+
+def _is_valid_setting(key, value):
+    if key == 'gamma':
+        return _is_finite_number(value, 0.1, 3.0)
+    if key == 'tonemapper':
+        return type(value) is str and value in _TONEMAPPERS
+    if key in {'open_after_conversion', 'display_preview', 'lut_enabled'}:
+        return type(value) is bool
+    if key == 'quality':
+        return type(value) is int and 15 <= value <= 30
+    if key == 'quality_mode':
+        return type(value) is str and value in _QUALITY_MODES
+    if key == 'quality_bitrate_kbps':
+        return type(value) is int and value >= 1000
+    if key == 'filetype':
+        return type(value) is str and value in _FILETYPES
+    return False
+
 
 def load_settings():
     """Return saved settings, filling any missing keys with defaults."""
     try:
         with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        return {**DEFAULTS, **{k: data[k] for k in DEFAULTS if k in data}}
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        if not isinstance(data, dict):
+            return dict(DEFAULTS)
+        return {
+            key: data[key] if key in data and _is_valid_setting(key, data[key]) else default
+            for key, default in DEFAULTS.items()
+        }
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
         return dict(DEFAULTS)
 
 

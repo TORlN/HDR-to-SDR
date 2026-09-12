@@ -7,6 +7,8 @@ this header and an empty `Unreleased` section after each new version is pushed.
 
 ### Fixed
 
+- Malformed saved preferences now fall back safely per setting, preserving
+  other valid preferences instead of letting bad persisted values reach the UI.
 - Website assets with stable filenames now revalidate hourly instead of being
   treated as immutable for a year, preventing stale browser copies after deploy.
 - Website deployments now stop before stale-file deletion or cache invalidation

@@ -124,6 +124,12 @@ class TestSpecIsRelocatable(unittest.TestCase):
 
 class TestSpecContent(unittest.TestCase):
 
+    def test_spec_disables_ambient_upx(self):
+        """A local UPX install must not change a release artifact."""
+        captured = _exec_spec(_SENTINEL)
+        self.assertFalse(captured['exe'].kwargs.get('upx'))
+        self.assertFalse(captured['collect'].kwargs.get('upx'))
+
     def test_obfuscated_build_analyzes_obfuscated_entry_point(self):
         """Selecting PyArmor output must make Analysis use _obf/main.pyw.
 

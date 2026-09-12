@@ -71,3 +71,5 @@ this header and an empty `Unreleased` section after each new version is pushed.
   dependency graph and verify the installed packages are consistent.
 - CI now uses immutable action revisions, a fixed runner and tool versions,
   least-privilege checkout permissions, and verified packaged FFmpeg inputs.
+- Release artifacts no longer vary based on whether UPX is installed on the
+  build machine.

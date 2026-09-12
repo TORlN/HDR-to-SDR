@@ -170,6 +170,46 @@ class TestPythonVersionIsSingleSourced(unittest.TestCase):
                                          f'{ranges}')
 
 
+class TestCIExecutionInputsArePinned(unittest.TestCase):
+    """CI must not silently change the code or platform it executes."""
+
+    def _workflow(self) -> str:
+        return _read(_WORKFLOW)
+
+    def test_actions_use_immutable_revisions_with_read_only_checkout(self):
+        workflow = self._workflow()
+        self.assertIn('permissions:\n  contents: read', workflow)
+        self.assertRegex(
+            workflow,
+            r'actions/checkout@[0-9a-f]{40}\s+# v4\.2\.2',
+        )
+        self.assertRegex(
+            workflow,
+            r'actions/setup-python@[0-9a-f]{40}\s+# v5\.6\.0',
+        )
+        self.assertEqual(workflow.count('persist-credentials: false'), 2)
+
+    def test_runner_pip_and_ffmpeg_versions_are_verified(self):
+        workflow = self._workflow()
+        self.assertEqual(workflow.count('runs-on: ubuntu-24.04'), 2)
+        self.assertIn("PIP_VERSION: '26.1.2'", workflow)
+        self.assertEqual(
+            workflow.count('pip install --upgrade pip==${{ env.PIP_VERSION }}'),
+            2,
+        )
+        self.assertIn("FFMPEG_VERSION: '6.1.1'", workflow)
+        self.assertIn(
+            "ffmpeg -version | grep -F 'ffmpeg version ${{ env.FFMPEG_VERSION }}'",
+            workflow,
+        )
+
+    def test_ci_verifies_the_packaged_windows_ffmpeg_manifest(self):
+        self.assertIn(
+            'python tools/verify_ffmpeg_manifest.py .',
+            self._workflow(),
+        )
+
+
 class TestGatesSurviveConsolidation(unittest.TestCase):
     """pyproject.toml now holds the settings that gate the build."""
 

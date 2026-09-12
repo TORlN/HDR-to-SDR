@@ -69,3 +69,5 @@ this header and an empty `Unreleased` section after each new version is pushed.
   application without opening its UI, and verify Authenticode signatures.
 - CI and release builds now install Python dependencies from one hash-locked
   dependency graph and verify the installed packages are consistent.
+- CI now uses immutable action revisions, a fixed runner and tool versions,
+  least-privilege checkout permissions, and verified packaged FFmpeg inputs.

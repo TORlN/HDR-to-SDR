@@ -7,7 +7,7 @@ the preview always reflects what real GPU export will actually produce."""
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
@@ -120,7 +120,8 @@ class TestPreviewLutToggle(unittest.TestCase):
 
         mock_gpu_single.assert_not_called()
         mock_gpu_batch.assert_called_once_with(
-            'v.mp4', [1.0], 1.0, 'bt.2390', 3840, 2160, lut_enabled=False)
+            'v.mp4', [1.0], 1.0, 'bt.2390', 3840, 2160,
+            lut_enabled=False, process_started=ANY)
 
     @patch('preview.extract_frame_with_gpu_conversion')
     @patch('preview.extract_frames_with_gpu_conversion_batch')

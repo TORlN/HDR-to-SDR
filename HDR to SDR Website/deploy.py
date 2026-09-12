@@ -4,9 +4,11 @@ HDR to SDR Website - AWS Deployment Script
 Syncs static files to S3 and invalidates CloudFront cache.
 
 Usage:
-    python deploy.py               # deploy current directory
-    python deploy.py --source ./dist
-    python deploy.py --dry-run     # preview without uploading
+    python deploy.py --dry-run
+    python deploy.py --confirm-production
+
+The source must be this script's complete, tracked site directory. Production
+deployments require explicit confirmation.
 """
 
 from __future__ import annotations
@@ -23,6 +25,17 @@ if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')  # type: ignore[union-attr]
 
 _SCRIPT_DIR = Path(__file__).parent
+SITE_ROOT = _SCRIPT_DIR.resolve()
+SITE_MARKER = "index.html"
+MANAGED_SITE_FILES = frozenset({
+    "hdr-frame.png",
+    "icon.png",
+    "index.html",
+    "robots.txt",
+    "script.js",
+    "sdr-frame.png",
+    "sitemap.xml",
+})
 
 try:
     import boto3
@@ -121,12 +134,28 @@ def s3_key(path: Path, root: Path) -> str:
 
 
 def collect_files(root: Path) -> list[Path]:
-    """Return all uploadable files under root, sorted for deterministic output."""
-    result: list[Path] = []
-    for path in root.rglob("*"):
-        if path.is_file() and not should_exclude(path, root):
-            result.append(path)
-    return sorted(result)
+    """Return the tracked site assets in deterministic order."""
+    return sorted(root / key for key in MANAGED_SITE_FILES if (root / key).is_file())
+
+
+def validate_source(source_dir: Path) -> bool:
+    """Reject directories that cannot be the complete production website."""
+    if source_dir.resolve() != SITE_ROOT:
+        print(f"ERROR: Production deployments must use the fixed site root: {SITE_ROOT}")
+        return False
+
+    if not (source_dir / SITE_MARKER).is_file():
+        print(f"ERROR: Site marker is missing: {SITE_MARKER}")
+        return False
+
+    missing = sorted(key for key in MANAGED_SITE_FILES if not (source_dir / key).is_file())
+    if missing:
+        print("ERROR: Site root is incomplete. Missing tracked assets:")
+        for key in missing:
+            print(f"  - {key}")
+        return False
+
+    return True
 
 
 # ── Deploy logic ──────────────────────────────────────────────────────────────
@@ -143,7 +172,7 @@ def delete_stale_files(
     for page in paginator.paginate(Bucket=BUCKET_NAME):
         for obj in page.get("Contents", []):
             key = obj["Key"]
-            if key not in local_keys:
+            if key in MANAGED_SITE_FILES and key not in local_keys:
                 stale.append(key)
 
     if not stale:
@@ -235,11 +264,22 @@ def invalidate_cloudfront(cf_client, distribution_id: str) -> str | None:
         return None
 
 
-def deploy(source_dir: Path, dry_run: bool = False) -> bool:
+def deploy(
+    source_dir: Path,
+    dry_run: bool = False,
+    confirm_production: bool = False,
+) -> bool:
     """
     Full deploy pipeline.
     Returns True on success (all files uploaded + invalidation fired).
     """
+    if not validate_source(source_dir):
+        return False
+
+    if not dry_run and not confirm_production:
+        print("ERROR: Production deployment requires --confirm-production.")
+        return False
+
     print(f"\n{'=' * 62}")
     print(f"  HDR to SDR Website - AWS Deployment")
     print(f"{'=' * 62}")
@@ -316,12 +356,17 @@ def main() -> None:
         "--source", "-s",
         default=str(_SCRIPT_DIR),
         metavar="DIR",
-        help="Source directory to deploy (default: script's own directory)",
+        help="Must resolve to this script's directory (default: that directory)",
     )
     parser.add_argument(
         "--dry-run", "-n",
         action="store_true",
         help="Show what would be uploaded without making any changes",
+    )
+    parser.add_argument(
+        "--confirm-production",
+        action="store_true",
+        help="Confirm upload, stale managed-file deletion, and cache invalidation",
     )
     args = parser.parse_args()
 
@@ -330,7 +375,11 @@ def main() -> None:
         print(f"ERROR: Source directory not found: {source}")
         sys.exit(1)
 
-    success = deploy(source, dry_run=args.dry_run)
+    success = deploy(
+        source,
+        dry_run=args.dry_run,
+        confirm_production=args.confirm_production,
+    )
     sys.exit(0 if success else 1)
 
 

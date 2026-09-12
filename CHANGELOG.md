@@ -7,6 +7,8 @@ this header and an empty `Unreleased` section after each new version is pushed.
 
 ### Fixed
 
+- Website deployments now reject untracked or incomplete source directories,
+  preserve unmanaged S3 objects, and require explicit production confirmation.
 - Packaged builds now use the official licensing service endpoint even if a
   development override is present in the environment.
 - A license activation that cannot be saved locally now reports the storage

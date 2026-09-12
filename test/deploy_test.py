@@ -9,7 +9,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from tempfile import TemporaryDirectory
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../HDR to SDR Website')))
@@ -40,6 +40,7 @@ from deploy import (
     upload_files,
     delete_stale_files,
     invalidate_cloudfront,
+    MANAGED_SITE_FILES,
     BUCKET_NAME,
     DISTRIBUTION_ID,
     DEFAULT_CACHE_CONTROL,
@@ -185,16 +186,14 @@ class TestS3Key(unittest.TestCase):
 
 class TestCollectFiles(unittest.TestCase):
 
-    def test_collects_html_css_js(self):
+    def test_collects_only_tracked_assets(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "index.html").write_text("<html/>")
             (root / "style.css").write_text("body{}")
             (root / "script.js").write_text("console.log(1)")
             names = {f.name for f in collect_files(root)}
-            self.assertIn("index.html", names)
-            self.assertIn("style.css", names)
-            self.assertIn("script.js", names)
+            self.assertEqual(names, {"index.html", "script.js"})
 
     def test_excludes_deploy_script(self):
         with TemporaryDirectory() as tmp:
@@ -216,7 +215,7 @@ class TestCollectFiles(unittest.TestCase):
     def test_result_is_sorted(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for name in ("z.html", "a.html", "m.html"):
+            for name in ("sitemap.xml", "hdr-frame.png", "index.html"):
                 (root / name).write_text(name)
             names = [f.name for f in collect_files(root)]
             self.assertEqual(names, sorted(names))
@@ -225,13 +224,35 @@ class TestCollectFiles(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             self.assertEqual(collect_files(Path(tmp)), [])
 
-    def test_nested_assets_included(self):
+    def test_nested_assets_are_not_uploaded_without_manifest_entry(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             assets = root / "assets" / "images"
             assets.mkdir(parents=True)
             (assets / "hero.png").write_bytes(b"\x89PNG")
-            self.assertTrue(any(f.name == "hero.png" for f in collect_files(root)))
+            self.assertEqual(collect_files(root), [])
+
+
+class TestProductionDeploymentGuardrails(unittest.TestCase):
+
+    def test_rejects_any_source_outside_the_fixed_site_root(self):
+        with TemporaryDirectory() as tmp:
+            source = Path(tmp)
+            (source / "index.html").write_text("not the production site")
+
+            self.assertFalse(deploy.deploy(source, dry_run=True))
+
+    def test_rejects_site_root_when_required_marker_is_missing(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for key in MANAGED_SITE_FILES - {"index.html"}:
+                (root / key).write_text("asset")
+
+            with patch.object(deploy, "SITE_ROOT", root):
+                self.assertFalse(deploy.deploy(root, dry_run=True))
+
+    def test_non_dry_run_requires_explicit_production_confirmation(self):
+        self.assertFalse(deploy.deploy(deploy.SITE_ROOT))
 
 
 class TestUploadFiles(unittest.TestCase):
@@ -316,14 +337,21 @@ class TestDeleteStaleFiles(unittest.TestCase):
         s3.get_paginator.return_value = paginator
         return s3
 
-    def test_deletes_stale_keys(self):
-        s3 = self._make_s3(["old.html", "index.html"])
+    def test_deletes_stale_managed_keys(self):
+        s3 = self._make_s3(["hdr-frame.png", "index.html"])
         deleted, failed = delete_stale_files(s3, {"index.html"}, dry_run=False)
         self.assertEqual(deleted, 1)
         self.assertEqual(failed, [])
         deleted_keys = [o["Key"] for o in s3.delete_objects.call_args.kwargs["Delete"]["Objects"]]
-        self.assertIn("old.html", deleted_keys)
+        self.assertIn("hdr-frame.png", deleted_keys)
         self.assertNotIn("index.html", deleted_keys)
+
+    def test_preserves_unmanaged_bucket_keys(self):
+        s3 = self._make_s3(["index.html", "private/keep.txt"])
+        deleted, failed = delete_stale_files(s3, set(), dry_run=False)
+        self.assertEqual((deleted, failed), (1, []))
+        deleted_keys = [o["Key"] for o in s3.delete_objects.call_args.kwargs["Delete"]["Objects"]]
+        self.assertEqual(deleted_keys, ["index.html"])
 
     def test_keeps_local_keys(self):
         s3 = self._make_s3(["index.html", "script.js"])
@@ -332,7 +360,7 @@ class TestDeleteStaleFiles(unittest.TestCase):
         s3.delete_objects.assert_not_called()
 
     def test_dry_run_does_not_delete(self):
-        s3 = self._make_s3(["old.html", "index.html"])
+        s3 = self._make_s3(["hdr-frame.png", "index.html"])
         deleted, failed = delete_stale_files(s3, {"index.html"}, dry_run=True)
         self.assertEqual(deleted, 0)
         s3.delete_objects.assert_not_called()
@@ -344,7 +372,7 @@ class TestDeleteStaleFiles(unittest.TestCase):
         s3.delete_objects.assert_not_called()
 
     def test_failed_delete_collected(self):
-        s3 = self._make_s3(["stale.html"])
+        s3 = self._make_s3(["script.js"])
         s3.delete_objects.side_effect = _FakeClientError("Access denied")
         deleted, failed = delete_stale_files(s3, set(), dry_run=False)
         self.assertEqual(deleted, 0)

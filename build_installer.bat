@@ -87,12 +87,18 @@ echo [OK] All prerequisites present
 echo.
 echo [STEP 1] Activating virtual environment
 if not exist "%REPO_ROOT%\.venv\Scripts\activate.bat" (
-    echo [ERROR] .venv not found -- run: python -m venv .venv ^&^& pip install -r requirements.txt
+    echo [ERROR] .venv not found -- run: python -m venv .venv ^&^& .venv\Scripts\python -m pip install --require-hashes -r requirements-lock.txt
     exit /b 1
 )
 call "%REPO_ROOT%\.venv\Scripts\activate.bat"
 if errorlevel 1 ( echo [ERROR] Failed to activate .venv & exit /b 1 )
 for /f "tokens=*" %%v in ('python --version 2^>^&1') do echo [OK] venv active: %%v
+
+echo [STEP 1] Installing locked Python dependencies
+python -m pip install --require-hashes -r "%REPO_ROOT%\requirements-lock.txt"
+if errorlevel 1 ( echo [ERROR] Failed to install requirements-lock.txt & exit /b 1 )
+python -m pip check
+if errorlevel 1 ( echo [ERROR] Python dependency integrity check failed & exit /b 1 )
 
 :: -- Step 1.25: FFmpeg release-input gate --------------------------------------
 echo.

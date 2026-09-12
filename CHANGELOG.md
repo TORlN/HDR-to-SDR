@@ -67,3 +67,5 @@ this header and an empty `Unreleased` section after each new version is pushed.
   checked source, preventing a silently incomplete patched binary.
 - Release builds now run coverage and type checks, smoke-test the frozen
   application without opening its UI, and verify Authenticode signatures.
+- CI and release builds now install Python dependencies from one hash-locked
+  dependency graph and verify the installed packages are consistent.

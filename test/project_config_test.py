@@ -13,12 +13,9 @@ Audit item 8. Three concrete problems, each with a test here:
   pyproject.toml; these tests pin the two settings that actually gate the build
   so a consolidation (or a future move back out) cannot quietly drop them.
 
-Runtime pins are deliberately not lockfile-managed: pillow and tkinterdnd2
-both declare zero dependencies, so requirements.txt already resolves to
-exactly two packages and a lockfile would add maintenance for no
-reproducibility gain. test_runtime_requirements_have_no_transitive_surface
-pins that assumption -- if a runtime dep ever gains dependencies, that test is
-where the decision gets revisited.
+Runtime packages currently have no transitive dependencies, but the complete
+development and release environment does. The lock input below pins both
+direct and transitive packages so clean builds stay reproducible.
 """
 import os
 import re
@@ -69,20 +66,51 @@ class TestRequirementsArePinned(unittest.TestCase):
         self._assert_all_pinned('requirements-dev.txt')
 
     def test_runtime_requirements_have_no_transitive_surface(self):
-        """The reason requirements.txt needs no lockfile.
+        """Keep the runtime input surface deliberately small.
 
-        Guards the assumption, not the packages: if a runtime dep is added or
-        one of these grows dependencies, this fails and the lockfile question
-        gets asked again instead of being silently answered 'no'.
+        requirements-lock.txt already pins the complete dependency graph. This
+        guards the separate claim that the direct runtime inputs stay limited
+        to the two reviewed packages unless that decision is revisited.
         """
         names = {re.split(r'[=<>!~\[]', r, maxsplit=1)[0].strip().lower()
                  for r in _requirement_lines('requirements.txt')}
         unexpected = names - _DEPENDENCY_FREE_RUNTIME_DEPS
         self.assertEqual(
             unexpected, set(),
-            msg=f'new runtime dependency {sorted(unexpected)} -- confirm it is '
+                msg=f'new runtime dependency {sorted(unexpected)} -- confirm it is '
                 f'dependency-free (pip show <name>, empty Requires:) and add it '
-                f'to _DEPENDENCY_FREE_RUNTIME_DEPS, or introduce a lockfile')
+                f'to _DEPENDENCY_FREE_RUNTIME_DEPS after reviewing the lock')
+
+    def test_release_lock_pins_and_hashes_direct_and_transitive_requirements(self):
+        """Release installation must reject unreviewed dependency artifacts."""
+        lock_path = os.path.join(_REPO_ROOT, 'requirements-lock.txt')
+        self.assertTrue(os.path.isfile(lock_path), 'requirements-lock.txt is missing')
+        lock = _read(lock_path)
+        direct_inputs = (
+            _requirement_lines('requirements.txt')
+            + _requirement_lines('requirements-dev.txt')
+        )
+        for requirement in direct_inputs:
+            with self.subTest(requirement=requirement):
+                self.assertRegex(
+                    lock,
+                    rf'(?m)^{re.escape(requirement)} \\\n\s+--hash=sha256:[0-9a-f]{{64}}',
+                )
+        for package in ('botocore', 's3transfer'):
+            with self.subTest(transitive_package=package):
+                self.assertRegex(
+                    lock,
+                    rf'(?m)^{package}==[^\s\\]+ \\\n\s+--hash=sha256:[0-9a-f]{{64}}',
+                )
+
+    def test_ci_and_release_install_from_lock_and_run_pip_check(self):
+        """Both installation paths must consume the same verified lock."""
+        workflow = _read(_WORKFLOW)
+        build = _read(os.path.join(_REPO_ROOT, 'build_installer.bat'))
+        for name, text in (('CI workflow', workflow), ('release build', build)):
+            with self.subTest(name=name):
+                self.assertIn('requirements-lock.txt', text)
+                self.assertIn('pip check', text)
 
 
 class TestPythonVersionIsSingleSourced(unittest.TestCase):

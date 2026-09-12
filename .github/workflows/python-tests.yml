@@ -30,7 +30,8 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y xvfb ffmpeg  # Install Xvfb and ffmpeg
         python -m pip install --upgrade pip
-        pip install -r requirements.txt -r requirements-dev.txt
+        python -m pip install --require-hashes -r requirements-lock.txt
+        python -m pip check
 
     # test/smoke_test.py matches '*_test.py' so it's already part of this
     # discovery run. Its small fixtures under test/smoke_test_videos/ are
@@ -67,7 +68,8 @@ jobs:
       run: |
         python -m venv .venv
         ./.venv/bin/python -m pip install --upgrade pip
-        ./.venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt
+        ./.venv/bin/python -m pip install --require-hashes -r requirements-lock.txt
+        ./.venv/bin/python -m pip check
 
     # No `src` argument: bare pyright takes its scope from pyproject.toml's
     # include (src + test), so test/ is gated too. It used to be checked by

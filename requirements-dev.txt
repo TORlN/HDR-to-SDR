@@ -1,8 +1,6 @@
-# Exact pins, not floors. These decide what CI runs and what the signed
-# installer contains, so a floating spec changes the shipped artifact with no
-# commit to point at. `pytest>=8.0.0` had already drifted to an installed
-# 9.1.1 -- a whole major version -- before this was pinned.
-# test/project_config_test.py fails the build if any of these loosens.
+# Exact development and release-build inputs, not floors. Keep these readable
+# for review, then regenerate requirements-lock.txt with hashes whenever they
+# change. CI and release builds install only from that shared lock.
 pyinstaller==6.21.0
 # PyInstaller's own dependency, pinned here on purpose: it supplies the hooks
 # that decide which packages get bundled, so an unpinned bump can change the

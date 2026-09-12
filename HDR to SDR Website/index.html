@@ -676,7 +676,7 @@
             <li><span class="tick">✓</span> Unlimited conversions</li>
             <li><span class="tick">✓</span> 10-Bit Output</li>
             <li><span class="tick">✓</span> Dolby Vision Support with Stereo Audio</li>
-            <li><span class="tick">✓</span> GPU Acceleration (NVENC / VCE / QSV)</li>
+            <li><span class="tick">✓</span> GPU Acceleration (NVENC / AMF / QSV)</li>
           </ul>
 
           <a href="https://github.com/TORlN/HDR-to-SDR/releases/latest/download/HDR_to_SDR_Setup.exe" class="btn"
@@ -774,38 +774,38 @@
 
       <div class="grid grid-cols-1 sm:grid-cols-2" style="gap:20px;margin-bottom:56px;">
 
-        <!-- Audio Track Selection -->
+        <!-- Preset LUTs -->
         <div class="feature-card">
           <div class="feature-icon" style="background:rgba(34,197,94,0.10);border:1px solid rgba(34,197,94,0.22);">
             <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#22c55e" stroke-width="1.7"
               stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 11v2M7 8v8M11 5v14M15 8v8M19 11v2" />
+              <path d="M11 2v18M2 11h18M4.5 4.5l13 13M17.5 4.5l-13 13" />
             </svg>
           </div>
-          <h3 style="font-size:17px;font-weight:700;margin-bottom:14px;">Audio Track Selection</h3>
+          <h3 style="font-size:17px;font-weight:700;margin-bottom:14px;">Preset LUTs</h3>
           <ul class="check-list" style="margin:0;">
-            <li><span class="tick">✓</span> <strong>Free:</strong> Every audio track in the source is listed
-              with its codec, channel layout and language, so you can pick which one the output keeps instead
-              of always getting the first.</li>
-            <li class="pro"><span class="tick">✓</span> <strong>Pro:</strong> Keep several tracks in one
-              output, with per-track copy or transcode.</li>
+            <li><span class="tick">✓</span> <strong>Free:</strong> Choose from built-in preset LUTs to
+              give your SDR exports a consistent creative look, with live preview before conversion.</li>
+            <li class="pro"><span class="tick">✓</span> <strong>Pro:</strong> Import Custom .cube LUTs for
+              camera profiles and creative grades, with the same live preview before conversion.</li>
           </ul>
         </div>
 
-        <!-- Saved Presets -->
+        <!-- Resolution Scaling -->
         <div class="feature-card">
           <div class="feature-icon" style="background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.22);">
             <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#f59e0b" stroke-width="1.7"
               stroke-linecap="round" stroke-linejoin="round">
-              <path d="M5 3h12v16l-6-4-6 4V3Z" />
+              <rect x="3" y="3" width="16" height="16" rx="2" />
+              <path d="M3 9h16M9 3v16" />
             </svg>
           </div>
-          <h3 style="font-size:17px;font-weight:700;margin-bottom:14px;">Saved Conversion Presets</h3>
+          <h3 style="font-size:17px;font-weight:700;margin-bottom:14px;">Resolution Scaling</h3>
           <ul class="check-list" style="margin:0;">
-            <li><span class="tick">✓</span> <strong>Free:</strong> Save gamma, conversion method, tonemapper
-              and bit depth as a named preset and recall it in one click.</li>
-            <li class="pro"><span class="tick">✓</span> <strong>Pro:</strong> Presets also carry quality mode
-              and output container, and apply to every item in the batch queue at once.</li>
+            <li><span class="tick">✓</span> <strong>Free:</strong> Select a 720p, 1080p, 1440p, and 4K
+              output preset for a predictable export size.</li>
+            <li class="pro"><span class="tick">✓</span> <strong>Pro:</strong> Set a Custom output resolution
+              for exact delivery and archival requirements.</li>
           </ul>
         </div>
 
@@ -814,25 +814,6 @@
       <span class="badge badge-pro" style="margin-bottom:20px;display:inline-block;">Planned for v4.0</span>
 
       <div class="grid grid-cols-1 sm:grid-cols-2" style="gap:20px;">
-
-        <!-- Preset & Custom LUTs -->
-        <div class="feature-card">
-          <div class="feature-icon" style="background:rgba(91,156,246,0.10);border:1px solid rgba(91,156,246,0.22);">
-            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#5b9cf6" stroke-width="1.7"
-              stroke-linecap="round" stroke-linejoin="round">
-              <path d="M11 2L19 6.5V15.5L11 20L3 15.5V6.5L11 2Z" />
-              <path d="M11 11L19 6.5M11 11L3 6.5M11 11V20" />
-            </svg>
-          </div>
-          <h3 style="font-size:17px;font-weight:700;margin-bottom:14px;">Preset &amp; Custom 3D LUTs (.cube)</h3>
-          <ul class="check-list" style="margin:0;">
-            <li><span class="tick">✓</span> <strong>Free:</strong> A library of built-in preset looks you can
-              apply on top of the conversion, previewed live.</li>
-            <li class="pro"><span class="tick">✓</span> <strong>Pro:</strong> Import any custom .cube file,
-              creative grades or camera-specific profiles, directly into the live preview and processing
-              chain.</li>
-          </ul>
-        </div>
 
         <!-- Dynamic Tone Mapping -->
         <div class="feature-card">
@@ -1128,10 +1109,10 @@
       <div style="color:#bbb;font-size:14px;line-height:1.8;">
 
         <h3 style="color:#eee;font-size:15px;font-weight:700;margin:0 0 8px;">FFmpeg &amp; ffprobe</h3>
-        <p style="margin:0 0 24px;">HDR to SDR bundles standard, unmodified FFmpeg and ffprobe binaries to handle
-          video decoding, tone mapping, and encoding. They ship exactly as built by the upstream project, I have
-          not patched or altered their source in any way, and the application invokes them as separate external
-          processes rather than linking against their libraries.</p>
+        <p style="margin:0 0 24px;">HDR to SDR bundles custom patched FFmpeg and ffprobe binaries to handle
+          video decoding, tone mapping, and encoding. The patches support the application's tested conversion
+          paths, and the application invokes the binaries as separate external processes rather than linking
+          against their libraries.</p>
         <p style="margin:0 0 24px;">The bundled build enables GPL-licensed components (including libx264 and
           libx265), so it is distributed under the <a href="https://www.gnu.org/licenses/gpl-2.0.html" target="_blank"
             rel="noopener" style="color:var(--accent);text-decoration:none;">GNU GPL, version 2 or later</a>. Full

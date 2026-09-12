@@ -38,7 +38,9 @@ __all__ = [
 # pyright unresolved-import trick as src/gui.py/src/dialogs.py.
 try:
     _pro = importlib.import_module('pro.licensing')
-except ImportError:  # Community Edition — no Pro backend in this build.
+except ModuleNotFoundError as exc:
+    if exc.name != 'pro.licensing':
+        raise
     _pro = None
 
 if _pro is not None:

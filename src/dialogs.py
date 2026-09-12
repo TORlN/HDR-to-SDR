@@ -25,7 +25,9 @@ from dialog_theme import (
 # same pyright unresolved-import trick as src/licensing.py.
 try:
     _pro_license_dialog = importlib.import_module('pro.license_dialog')
-except ImportError:  # Community Edition — no Pro backend in this build.
+except ModuleNotFoundError as exc:
+    if exc.name != 'pro.license_dialog':
+        raise
     _pro_license_dialog = None
 
 if _pro_license_dialog is not None:

@@ -96,3 +96,10 @@ class TestFreeEditionFacade(unittest.TestCase):
         import license_errors as errors
         self.assertIs(facade.InvalidKeyError, errors.InvalidKeyError)
         self.assertIs(facade.LicenseError, errors.LicenseError)
+
+    def test_internal_pro_import_error_is_not_silently_downgraded(self):
+        import src.licensing as facade
+        with patch('importlib.import_module',
+                   side_effect=ImportError('broken Pro dependency')):
+            with self.assertRaisesRegex(ImportError, 'broken Pro dependency'):
+                importlib.reload(facade)

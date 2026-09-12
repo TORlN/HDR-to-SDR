@@ -131,3 +131,10 @@ class TestFreeEditionLicenseDialog(unittest.TestCase):
         """7 existing tests patch dialogs.activate_license."""
         dialogs = _reload_dialogs_without_pro()
         self.assertTrue(callable(dialogs.activate_license))
+
+    def test_internal_pro_import_error_is_not_silently_downgraded(self):
+        import src.dialogs as dialogs
+        with patch('importlib.import_module',
+                   side_effect=ImportError('broken Pro dependency')):
+            with self.assertRaisesRegex(ImportError, 'broken Pro dependency'):
+                importlib.reload(dialogs)

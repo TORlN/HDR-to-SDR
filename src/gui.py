@@ -28,7 +28,9 @@ from preview import DEFAULT_MIN_SIZE, _PREVIEW_POOL_WORKERS, _HDRPreviewMixin
 # as src/licensing.py and src/dialogs.py).
 try:
     _pro_batch = importlib.import_module('pro.batch')
-except ImportError:  # Community Edition — no Pro backend in this build.
+except ModuleNotFoundError as exc:
+    if exc.name != 'pro.batch':
+        raise
     _pro_batch = None
 
 if _pro_batch is not None:

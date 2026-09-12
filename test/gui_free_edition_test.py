@@ -107,6 +107,16 @@ def _load_gui_without_pro():
     return module
 
 
+def _load_gui_with_import_error():
+    """Load a throwaway gui.py whose Pro import raises an internal error."""
+    gui_path = os.path.join(_SRC, 'gui.py')
+    spec = importlib.util.spec_from_file_location('_gui_broken_pro_probe', gui_path)
+    module = importlib.util.module_from_spec(spec)
+    with patch('importlib.import_module',
+               side_effect=ImportError('broken Pro dependency')):
+        spec.loader.exec_module(module)
+
+
 class TestFreeEditionGui(unittest.TestCase):
     def test_gui_root_cleanup_drains_callbacks_before_destroy(self):
         root = MagicMock()
@@ -120,6 +130,10 @@ class TestFreeEditionGui(unittest.TestCase):
     def test_gui_module_imports_without_pro(self):
         gui = _load_gui_without_pro()
         self.assertTrue(hasattr(gui, 'HDRConverterGUI'))
+
+    def test_internal_pro_import_error_is_not_silently_downgraded(self):
+        with self.assertRaisesRegex(ImportError, 'broken Pro dependency'):
+            _load_gui_with_import_error()
 
     def test_batch_mixin_is_a_class(self):
         gui = _load_gui_without_pro()

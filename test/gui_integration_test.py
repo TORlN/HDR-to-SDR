@@ -1061,8 +1061,10 @@ class TestInfoLabel(_GuiTestBase):
             'codec_name': 'hevc', 'audio_codec': 'truehd',
             'color_primaries': 'bt2020', 'color_transfer': 'smpte2084',
         }
-        with patch.object(self.gui, 'update_frame_preview'):
+        with patch.object(self.gui, 'update_frame_preview'), \
+             patch.object(self.gui._preview_pool, 'submit', side_effect=lambda worker: worker()):
             self.gui.select_file()
+        self.root.update()
         self.assertNotEqual(self.gui.info_label.grid_info(), {})
         self.assertIn('3840', self.gui.info_label.cget('text'))
         self.assertIn('HDR', self.gui.info_label.cget('text'))
@@ -1731,9 +1733,12 @@ class TestDolbyVisionInfoBarTag(_GuiTestBase):
         }
 
     def _load_metadata(self, dovi):
+        self.gui.input_path_var.set('movie.mkv')
         with patch('src.gui.get_video_properties', return_value=self._props(dovi)), \
-             patch('src.gui.get_maxcll', return_value=1000.0):
+             patch('src.gui.get_maxcll', return_value=1000.0), \
+             patch.object(self.gui._preview_pool, 'submit', side_effect=lambda worker: worker()):
             self.gui._update_info_label('movie.mkv')
+        self.root.update()
 
     def test_no_tag_on_startup(self):
         self.assertNotIn('Dolby Vision', self.gui.info_label.cget('text'))

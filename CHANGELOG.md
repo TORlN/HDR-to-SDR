@@ -7,6 +7,9 @@ this header and an empty `Unreleased` section after each new version is pushed.
 
 ### Fixed
 
+- File metadata and MaxCLL probing now run off the interface thread. Late
+  results cannot overwrite metadata, bitrate defaults, or bit-depth choices
+  for a newly selected file, including during Pro batch processing.
 - FFmpeg, ffprobe, GPU detection, and preview helper processes now have
   bounded waits and terminate-kill-reap cleanup when they stop responding.
 - Update checks now accept only strict `X.Y.Z` release tags, ignoring

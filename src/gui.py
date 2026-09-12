@@ -206,6 +206,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.total_frames = 5
         self.last_time_position: float | None = None
         self._preview_generation = 0
+        self._metadata_generation = 0
+        self._metadata_pending: int | None = None
         self._preview_pool = ThreadPoolExecutor(
             max_workers=_PREVIEW_POOL_WORKERS, thread_name_prefix='frame-fetch')
         self._preview_thread: Future | None = None
@@ -870,6 +872,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
 
     def _unload_input_file(self) -> None:
         """Clear the loaded input file and hide its preview area."""
+        self._metadata_generation = getattr(self, '_metadata_generation', 0) + 1
+        self._metadata_pending = None
         self.input_path_var.set('')
         self.output_path_var.set('')
         self.original_image = None
@@ -1358,18 +1362,51 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         return " | ".join(parts)
 
     def _update_info_label(self, file_path: str) -> None:
-        """Probe file metadata and update the info strip below the output path."""
+        """Probe file metadata off Tk, then update the info strip on Tk."""
         if not hasattr(self, 'info_label'):
             return
-        props = get_video_properties(file_path)
+        self._metadata_generation = getattr(self, '_metadata_generation', 0) + 1
+        generation = self._metadata_generation
+        self._metadata_pending = generation
+        self._source_bit_depth = 8
+        self._cached_props = None
+        self._cached_maxcll = None
+        self._update_bit_depth_choice()
+        self._refresh_info_label_text()
+
+        def probe_metadata() -> None:
+            try:
+                props = get_video_properties(file_path)
+                maxcll = get_maxcll(file_path) if props else None
+            except Exception:
+                props, maxcll = None, None
+            self._schedule_on_main(lambda: self._apply_metadata_probe(
+                file_path, generation, props, maxcll))
+
+        try:
+            self._preview_pool.submit(probe_metadata)
+        except RuntimeError:
+            pass
+
+    def _apply_metadata_probe(
+        self, file_path: str, generation: int, props: dict | None, maxcll: float | None,
+    ) -> None:
+        """Apply metadata only when it still belongs to the selected input."""
+        if (generation != getattr(self, '_metadata_generation', 0)
+                or file_path != self.input_path_var.get()):
+            return
         self._source_bit_depth = props.get('bit_depth', 8) if props else 8
         self._update_bit_depth_choice()
         self._cached_props = props
-        self._cached_maxcll = get_maxcll(file_path) if props else None
+        self._cached_maxcll = maxcll
+        self._metadata_pending = None
         self._bitrate_needs_reseed = True  # reseed to 50% of this file, not a stale value
         if hasattr(self, 'quality_slider'):
             self._apply_quality_mode()
         self._refresh_info_label_text()
+        on_complete = getattr(self, '_on_metadata_probe_complete', None)
+        if on_complete is not None:
+            on_complete(file_path)
 
     def _refresh_info_label_text(self) -> None:
         """Re-render the info strip from the last probe results, without

@@ -37,6 +37,17 @@ def _bare_gui():
     return object.__new__(HDRConverterGUI)
 
 
+class _QueuedExecutor:
+    """Records submitted work so metadata tests can control completion."""
+
+    def __init__(self):
+        self.tasks = []
+
+    def submit(self, task):
+        self.tasks.append(task)
+        return MagicMock()
+
+
 class _FakeScale:
     """Minimal stand-in for ttk.Scale that tracks its range and value, so a
     test can read the knob's fractional position (where it sits on the track)."""
@@ -2786,32 +2797,87 @@ class TestBuildInfoText(unittest.TestCase):
 class TestUpdateInfoLabel(unittest.TestCase):
     """_update_info_label reads metadata and updates the info strip."""
 
-    def test_shows_text_when_props_available(self):
+    def _gui_with_queued_metadata_probe(self, input_path='clip.mkv'):
         gui = _bare_gui()
         gui.info_label = MagicMock()
+        gui.root = MagicMock()
+        gui.input_path_var = MagicMock()
+        gui.input_path_var.get.return_value = input_path
+        gui._preview_pool = _QueuedExecutor()
+        gui._metadata_generation = 0
+        gui._update_bit_depth_choice = MagicMock()
+        gui._refresh_info_label_text = MagicMock()
+        return gui
+
+    @staticmethod
+    def _finish_metadata_probe(gui):
+        gui._preview_pool.tasks.pop()()
+        gui.root.after.call_args.args[1]()
+
+    def test_probes_metadata_on_preview_worker_before_touching_tk(self):
+        gui = self._gui_with_queued_metadata_probe()
+        props = {'bit_depth': 10}
+        callbacks = []
+        gui.root.after.side_effect = lambda _delay, callback: callbacks.append(callback)
+
+        with patch('src.gui.get_video_properties', return_value=props) as get_props, \
+             patch('src.gui.get_maxcll', return_value=400.0):
+            gui._update_info_label('clip.mkv')
+            self.assertFalse(get_props.called)
+            self.assertEqual(len(gui._preview_pool.tasks), 1)
+            gui._preview_pool.tasks.pop()()
+
+        self.assertEqual(len(callbacks), 1)
+        callbacks.pop()()
+        self.assertEqual(gui._source_bit_depth, 10)
+        self.assertEqual(gui._refresh_info_label_text.call_count, 2)
+
+    def test_stale_metadata_result_cannot_replace_new_input(self):
+        gui = self._gui_with_queued_metadata_probe()
+        callbacks = []
+        gui.root.after.side_effect = lambda _delay, callback: callbacks.append(callback)
+        old_props = {'bit_depth': 12}
+        new_props = {'bit_depth': 10}
+
+        with patch('src.gui.get_video_properties', side_effect=[old_props, new_props]), \
+             patch('src.gui.get_maxcll', return_value=None):
+            gui._update_info_label('old.mkv')
+            gui.input_path_var.get.return_value = 'new.mkv'
+            gui._update_info_label('new.mkv')
+            old_probe, new_probe = gui._preview_pool.tasks
+            old_probe()
+            callbacks.pop()()
+            self.assertIsNone(gui._cached_props)
+            new_probe()
+            callbacks.pop()()
+
+        self.assertEqual(gui._cached_props, new_props)
+        self.assertEqual(gui._source_bit_depth, 10)
+
+    def test_shows_text_when_props_available(self):
+        gui = self._gui_with_queued_metadata_probe()
         props = {
             'width': 1920, 'height': 1080, 'frame_rate': 24.0,
             'codec_name': 'hevc', 'audio_codec': 'aac',
             'color_primaries': 'bt2020', 'color_transfer': '',
         }
         with patch('src.gui.get_video_properties', return_value=props), \
-             patch('src.gui.get_maxcll', return_value=400.0):
+            patch('src.gui.get_maxcll', return_value=400.0):
             gui._update_info_label('clip.mkv')
-        gui.info_label.config.assert_called_once()
-        gui.info_label.grid.assert_called_once()
+            self._finish_metadata_probe(gui)
+        self.assertEqual(gui._refresh_info_label_text.call_count, 2)
 
     def test_hides_label_when_probe_fails(self):
-        gui = _bare_gui()
-        gui.info_label = MagicMock()
+        gui = self._gui_with_queued_metadata_probe('bad.mkv')
         with patch('src.gui.get_video_properties', return_value=None):
             gui._update_info_label('bad.mkv')
-        gui.info_label.grid_remove.assert_called_once()
+            self._finish_metadata_probe(gui)
+        self.assertEqual(gui._refresh_info_label_text.call_count, 2)
 
     def test_stores_source_bit_depth_for_later_auto_ten_bit_decision(self):
         """The probed bit depth is remembered so convert_video/start_batch can
         pick the output bit depth automatically without re-probing the file."""
-        gui = _bare_gui()
-        gui.info_label = MagicMock()
+        gui = self._gui_with_queued_metadata_probe()
         props = {
             'width': 3840, 'height': 2160, 'frame_rate': 23.976,
             'codec_name': 'hevc', 'audio_codec': 'truehd',
@@ -2819,15 +2885,16 @@ class TestUpdateInfoLabel(unittest.TestCase):
             'bit_depth': 12,
         }
         with patch('src.gui.get_video_properties', return_value=props), \
-             patch('src.gui.get_maxcll', return_value=400.0):
+            patch('src.gui.get_maxcll', return_value=400.0):
             gui._update_info_label('clip.mkv')
+            self._finish_metadata_probe(gui)
         self.assertEqual(gui._source_bit_depth, 12)
 
     def test_source_bit_depth_defaults_to_8_when_probe_fails(self):
-        gui = _bare_gui()
-        gui.info_label = MagicMock()
+        gui = self._gui_with_queued_metadata_probe('bad.mkv')
         with patch('src.gui.get_video_properties', return_value=None):
             gui._update_info_label('bad.mkv')
+            self._finish_metadata_probe(gui)
         self.assertEqual(gui._source_bit_depth, 8)
 
 
@@ -3448,6 +3515,11 @@ class TestApplyQualityMode(unittest.TestCase):
         gui = self._gui(mode='Target Bitrate')
         gui.quality_slider = MagicMock()
         gui.bitrate_var.get.return_value = 8000
+        gui.root = MagicMock()
+        gui.input_path_var = MagicMock()
+        gui.input_path_var.get.return_value = 'clip.mkv'
+        gui._preview_pool = _QueuedExecutor()
+        gui._metadata_generation = 0
         with patch('src.gui.get_video_properties',
                     return_value={'bit_rate': 40_000_000, 'bit_depth': 8}), \
              patch('src.gui.get_maxcll', return_value=None):
@@ -3455,6 +3527,8 @@ class TestApplyQualityMode(unittest.TestCase):
             gui._update_bit_depth_choice = MagicMock()
             gui._refresh_info_label_text = MagicMock()
             gui._update_info_label('clip.mkv')
+            gui._preview_pool.tasks.pop()()
+            gui.root.after.call_args.args[1]()
         gui.quality_slider.configure.assert_called_once_with(from_=1000, to=40000)
 
     def test_update_info_label_seeds_fifty_percent_for_newly_loaded_file(self):
@@ -3463,6 +3537,11 @@ class TestApplyQualityMode(unittest.TestCase):
         gui = self._gui(mode='Target Bitrate')
         gui.quality_slider = MagicMock()
         gui.bitrate_var.get.return_value = 8000  # leftover value from before this file loaded
+        gui.root = MagicMock()
+        gui.input_path_var = MagicMock()
+        gui.input_path_var.get.return_value = 'clip.mkv'
+        gui._preview_pool = _QueuedExecutor()
+        gui._metadata_generation = 0
         with patch('src.gui.get_video_properties',
                     return_value={'bit_rate': 40_000_000, 'bit_depth': 8}), \
              patch('src.gui.get_maxcll', return_value=None):
@@ -3470,6 +3549,8 @@ class TestApplyQualityMode(unittest.TestCase):
             gui._update_bit_depth_choice = MagicMock()
             gui._refresh_info_label_text = MagicMock()
             gui._update_info_label('clip.mkv')
+            gui._preview_pool.tasks.pop()()
+            gui.root.after.call_args.args[1]()
         gui.bitrate_var.set.assert_any_call(20000)  # 50% of the new file's 40,000 kbps
 
 

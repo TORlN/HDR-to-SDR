@@ -181,11 +181,11 @@ class TestCIExecutionInputsArePinned(unittest.TestCase):
         self.assertIn('permissions:\n  contents: read', workflow)
         self.assertRegex(
             workflow,
-            r'actions/checkout@[0-9a-f]{40}\s+# v4\.2\.2',
+            r'actions/checkout@[0-9a-f]{40}\s+# v5',
         )
         self.assertRegex(
             workflow,
-            r'actions/setup-python@[0-9a-f]{40}\s+# v5\.6\.0',
+            r'actions/setup-python@[0-9a-f]{40}\s+# v6',
         )
         self.assertEqual(workflow.count('persist-credentials: false'), 2)
 

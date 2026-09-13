@@ -81,6 +81,9 @@ this header and an empty `Unreleased` section after each new version is pushed.
 - Preview caching now keeps all tone-mapper variants only for the active frame,
   retains one fallback image for inactive presets, clears replaced custom-seek
   frames, and lets useful same-file prewarming finish in the background.
+- Preview caching now tracks decoded image memory, releases discarded images,
+  and adapts preview resolution and prewarming for machines with limited
+  available RAM while preserving normal up-to-4K preview extraction.
 - Dolby Vision profile 5 conversion now fails safely when RPU-aware GPU
   tonemapping is unavailable, preventing output with incorrect colors.
 - Pro MP4 and MOV conversion now handles each audio track individually,

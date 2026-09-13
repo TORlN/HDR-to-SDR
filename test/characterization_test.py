@@ -1528,14 +1528,123 @@ class TestPreviewExtractionCache(unittest.TestCase):
         old_tonemapper.close.assert_called_once()
         displayed_tonemapper.close.assert_not_called()
 
-    def test_cache_is_bounded(self):
+    def test_inactive_extra_variant_is_evicted_by_byte_budget(self):
         gui = _bare_gui()
-        with patch('src.preview.extract_frame', return_value='o'), \
-             patch('src.preview.extract_frame_with_conversion', return_value='c'):
-            for i in range(HDRConverterGUI._PREVIEW_CACHE_MAX + 20):
-                gui._extract_preview_images('in.mp4', float(i), 'reinhard')
-        self.assertLessEqual(len(gui._preview_cache_converted),
-                             HDRConverterGUI._PREVIEW_CACHE_MAX)
+        gui._preview_cache_original = {}
+        gui._preview_cache_converted = {}
+        gui._cache_lock = threading.Lock()
+        gui._preview_cache_budget_bytes = 5
+        gui._preview_memory_pressure = False
+        gui._active_preview_cache_position = ('active.mp4', 1.0)
+        first = MagicMock(width=1, height=1)
+        first.getbands.return_value = ('R', 'G', 'B')
+        extra = MagicMock(width=1, height=1)
+        extra.getbands.return_value = ('R', 'G', 'B')
+        first_key = ('in.mp4', 5.0, 'mobius', True, False)
+        extra_key = ('in.mp4', 5.0, 'hable', True, False)
+
+        gui._cache_store(gui._preview_cache_converted, first_key, first)
+        gui._cache_store(gui._preview_cache_converted, extra_key, extra)
+
+        self.assertIn(first_key, gui._preview_cache_converted)
+        self.assertNotIn(extra_key, gui._preview_cache_converted)
+        extra.close.assert_called_once()
+
+    def test_active_tonemapper_variants_are_protected_above_byte_budget(self):
+        gui = _bare_gui()
+        gui._preview_cache_original = {}
+        gui._preview_cache_converted = {}
+        gui._cache_lock = threading.Lock()
+        gui._preview_cache_budget_bytes = 5
+        gui._preview_memory_pressure = False
+        gui._active_preview_cache_position = ('in.mp4', 5.0)
+        first = MagicMock(width=1, height=1)
+        first.getbands.return_value = ('R', 'G', 'B')
+        second = MagicMock(width=1, height=1)
+        second.getbands.return_value = ('R', 'G', 'B')
+        first_key = ('in.mp4', 5.0, 'mobius', True, False)
+        second_key = ('in.mp4', 5.0, 'hable', True, False)
+
+        gui._cache_store(gui._preview_cache_converted, first_key, first)
+        gui._cache_store(gui._preview_cache_converted, second_key, second)
+
+        self.assertEqual(set(gui._preview_cache_converted), {first_key, second_key})
+        first.close.assert_not_called()
+        second.close.assert_not_called()
+
+    def test_memory_pressure_evicts_an_older_fallback_but_keeps_displayed_preview(self):
+        gui = _bare_gui()
+        gui._preview_cache_original = {}
+        gui._preview_cache_converted = {}
+        gui._cache_lock = threading.Lock()
+        gui._preview_cache_budget_bytes = 5
+        gui._preview_memory_pressure = True
+        old = MagicMock(width=1, height=1)
+        old.getbands.return_value = ('R', 'G', 'B')
+        displayed = MagicMock(width=1, height=1)
+        displayed.getbands.return_value = ('R', 'G', 'B')
+        old_key = ('old.mp4', 5.0, 'mobius', True, False)
+        displayed_key = ('in.mp4', 5.0, 'hable', True, False)
+        gui._last_displayed_preview_key = displayed_key
+
+        gui._cache_store(gui._preview_cache_converted, old_key, old)
+        gui._cache_store(gui._preview_cache_converted, displayed_key, displayed)
+
+        self.assertNotIn(old_key, gui._preview_cache_converted)
+        self.assertIn(displayed_key, gui._preview_cache_converted)
+        old.close.assert_called_once()
+        displayed.close.assert_not_called()
+
+
+class TestPreviewMemoryProfiles(unittest.TestCase):
+    def _gui(self):
+        gui = _bare_gui()
+        gui._preview_cache_original = {}
+        gui._preview_cache_converted = {}
+        gui._cache_lock = threading.Lock()
+        return gui
+
+    @patch('src.preview._available_memory_bytes', return_value=2 * 1024 ** 3)
+    def test_normal_memory_uses_up_to_4k_previews(self, _memory):
+        gui = self._gui()
+
+        gui._configure_preview_memory()
+
+        self.assertEqual(gui._preview_extraction_size, PREVIEW_SIZE)
+        self.assertEqual(gui._preview_cache_budget_bytes, 256 * 1024 ** 2)
+        self.assertTrue(gui._preview_prewarm_enabled)
+
+    @patch('src.preview._available_memory_bytes', return_value=1024 ** 3)
+    def test_limited_memory_uses_1080p_previews(self, _memory):
+        gui = self._gui()
+
+        gui._configure_preview_memory()
+
+        self.assertEqual(gui._preview_extraction_size, (1920, 1080))
+        self.assertEqual(gui._preview_cache_budget_bytes, 64 * 1024 ** 2)
+        self.assertTrue(gui._preview_prewarm_enabled)
+
+    @patch('src.preview._available_memory_bytes', return_value=256 * 1024 ** 2)
+    def test_severe_memory_pressure_uses_720p_and_disables_prewarming(self, _memory):
+        gui = self._gui()
+
+        gui._configure_preview_memory()
+
+        self.assertEqual(gui._preview_extraction_size, (1280, 720))
+        self.assertEqual(gui._preview_cache_budget_bytes, 32 * 1024 ** 2)
+        self.assertFalse(gui._preview_prewarm_enabled)
+
+    def test_severe_memory_pressure_does_not_submit_prewarm_work(self):
+        gui = self._gui()
+        gui.current_frame_index = 1
+        gui.total_frames = 5
+        gui._preview_file_generation = 1
+        gui._preview_prewarm_enabled = False
+        gui._preview_pool = MagicMock()
+
+        gui._prewarm_other_frames('in.mp4', 60.0, 'mobius', generation=1, file_generation=1)
+
+        gui._preview_pool.submit.assert_not_called()
 
 
 class TestPreviewPerformance(unittest.TestCase):

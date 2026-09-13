@@ -40,6 +40,39 @@ _MIN_SIZE_MARGIN = (16, 16)
 _INITIAL_WIDTH_STRETCH = 400
 _GAMMA_MIN = 0.1
 _GAMMA_MAX = 3.0
+_MIB = 1024 ** 2
+_GIB = 1024 ** 3
+_NORMAL_MEMORY_THRESHOLD = 2 * _GIB
+_LOW_MEMORY_THRESHOLD = 512 * _MIB
+
+
+def _available_memory_bytes() -> int | None:
+    """Return available physical memory on Windows, or None when unavailable."""
+    if os.name != 'nt':
+        return None
+    try:
+        import ctypes
+
+        class _MemoryStatus(ctypes.Structure):
+            _fields_ = [
+                ('dwLength', ctypes.c_ulong),
+                ('dwMemoryLoad', ctypes.c_ulong),
+                ('ullTotalPhys', ctypes.c_ulonglong),
+                ('ullAvailPhys', ctypes.c_ulonglong),
+                ('ullTotalPageFile', ctypes.c_ulonglong),
+                ('ullAvailPageFile', ctypes.c_ulonglong),
+                ('ullTotalVirtual', ctypes.c_ulonglong),
+                ('ullAvailVirtual', ctypes.c_ulonglong),
+                ('ullAvailExtendedVirtual', ctypes.c_ulonglong),
+            ]
+
+        status = _MemoryStatus()
+        status.dwLength = ctypes.sizeof(status)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return int(status.ullAvailPhys)
+    except (AttributeError, OSError):
+        pass
+    return None
 
 
 # ── _HDRPreviewMixin ───────────────────────────────────────────────────────────
@@ -97,6 +130,10 @@ class _HDRPreviewMixin:
         _preview_cache_converted: dict[tuple[str, float, str, bool, bool], Image.Image]
         _active_preview_cache_position: tuple[str, float] | None
         _last_displayed_preview_key: tuple[str, float, str, bool, bool] | None
+        _preview_extraction_size: tuple[int, int]
+        _preview_cache_budget_bytes: int
+        _preview_memory_pressure: bool
+        _preview_prewarm_enabled: bool
         gpu_accel_var: tk.BooleanVar
         _cache_lock: threading.Lock
         current_frame_index: int
@@ -108,8 +145,6 @@ class _HDRPreviewMixin:
         _window_auto_fitted: bool
         _min_window_size: tuple[int, int]
         frame_buttons: list[ttk.Button]
-
-    _PREVIEW_CACHE_MAX = 48  # bound preview-frame memory (~1.5MB each at 960x540)
 
     # ── Gamma ──────────────────────────────────────────────────────────────────
 
@@ -536,10 +571,15 @@ class _HDRPreviewMixin:
             except OSError:
                 pass
         self._preview_file_generation = file_generation + 1
+        for cache in (getattr(self, '_preview_cache_original', {}),
+                      getattr(self, '_preview_cache_converted', {})):
+            for image in cache.values():
+                self._close_preview_image(image)
         self._preview_cache_original = {}
         self._preview_cache_converted = {}
         self._active_preview_cache_position = None
         self._last_displayed_preview_key = None
+        self._configure_preview_memory()
         clear_hdr_metadata_cache()
 
     def _register_preview_process(self, file_generation: int, process: object) -> None:
@@ -566,13 +606,92 @@ class _HDRPreviewMixin:
         return future
 
     def _cache_store(self, cache: dict, key: object, value: Image.Image) -> None:
-        """Insert into a preview cache, evicting the oldest entry past the cap."""
+        """Insert into a preview cache and discard byte-budget overflow safely."""
         if not hasattr(self, '_cache_lock'):
             self._cache_lock = threading.Lock()
         with self._cache_lock:
             cache[key] = value
-            if len(cache) > self._PREVIEW_CACHE_MAX:
-                self._close_preview_image(cache.pop(next(iter(cache))))
+            discarded = self._trim_preview_cache_locked()
+        for image in discarded:
+            self._close_preview_image(image)
+
+    def _configure_preview_memory(self) -> None:
+        """Snapshot a conservative preview profile for the selected file."""
+        available = _available_memory_bytes()
+        if available is None or available >= _NORMAL_MEMORY_THRESHOLD:
+            size, budget, pressure, prewarm = PREVIEW_SIZE, 256 * _MIB, False, True
+        elif available >= _LOW_MEMORY_THRESHOLD:
+            size, budget, pressure, prewarm = (1920, 1080), 64 * _MIB, False, True
+        else:
+            size, budget, pressure, prewarm = (1280, 720), 32 * _MIB, True, False
+        self._preview_extraction_size = size
+        self._preview_cache_budget_bytes = budget
+        self._preview_memory_pressure = pressure
+        self._preview_prewarm_enabled = prewarm
+
+    def _preview_extraction_dimensions(self) -> tuple[int, int]:
+        """Return the file's memory-aware preview extraction dimensions."""
+        return getattr(self, '_preview_extraction_size', PREVIEW_SIZE)
+
+    @staticmethod
+    def _estimated_image_bytes(image: object) -> int:
+        """Estimate decoded image bytes without creating a second pixel buffer."""
+        width = getattr(image, 'width', None)
+        height = getattr(image, 'height', None)
+        getbands = getattr(image, 'getbands', None)
+        if not isinstance(width, int) or not isinstance(height, int) or not callable(getbands):
+            return 0
+        bands = getbands()
+        return width * height * len(bands) if isinstance(bands, tuple) else 0
+
+    def _cache_bytes_locked(self) -> int:
+        return sum(self._estimated_image_bytes(image)
+                   for cache in (self._preview_cache_original, self._preview_cache_converted)
+                   for image in cache.values())
+
+    def _converted_key_is_protected(self, key: object) -> bool:
+        if not isinstance(key, tuple) or len(key) < 2:
+            return False
+        position = key[:2]
+        if position == getattr(self, '_active_preview_cache_position', None):
+            return True
+        displayed = getattr(self, '_last_displayed_preview_key', None)
+        if displayed is not None and position == displayed[:2]:
+            return key == displayed
+        return next((candidate for candidate in self._preview_cache_converted
+                     if candidate[:2] == position), None) == key
+
+    def _trim_preview_cache_locked(self) -> list[object]:
+        """Return cache entries removable without violating the active preview policy."""
+        budget = getattr(self, '_preview_cache_budget_bytes', 256 * _MIB)
+        if self._cache_bytes_locked() <= budget:
+            return []
+
+        discarded: list[object] = []
+        for key in list(self._preview_cache_converted):
+            if not self._converted_key_is_protected(key):
+                discarded.append(self._preview_cache_converted.pop(key))
+                if self._cache_bytes_locked() <= budget:
+                    return discarded
+
+        if not getattr(self, '_preview_memory_pressure', False):
+            return discarded
+
+        displayed = getattr(self, '_last_displayed_preview_key', None)
+        displayed_position = displayed[:2] if displayed is not None else None
+        for key in list(self._preview_cache_converted):
+            if key == displayed:
+                continue
+            discarded.append(self._preview_cache_converted.pop(key))
+            if self._cache_bytes_locked() <= budget:
+                return discarded
+        for key in list(self._preview_cache_original):
+            if key == displayed_position:
+                continue
+            discarded.append(self._preview_cache_original.pop(key))
+            if self._cache_bytes_locked() <= budget:
+                return discarded
+        return discarded
 
     @staticmethod
     def _close_preview_image(image: object) -> None:
@@ -622,12 +741,13 @@ class _HDRPreviewMixin:
                 for existing_key in self._preview_cache_converted)
             if not has_fallback:
                 self._preview_cache_converted[key] = image
-                if len(self._preview_cache_converted) > self._PREVIEW_CACHE_MAX:
-                    self._close_preview_image(
-                        self._preview_cache_converted.pop(
-                            next(iter(self._preview_cache_converted))))
+                discarded = self._trim_preview_cache_locked()
+            else:
+                discarded = []
         if has_fallback:
             self._close_preview_image(image)
+        for discarded_image in discarded:
+            self._close_preview_image(discarded_image)
 
     def _effective_lut_enabled(self) -> bool:
         """The lut_enabled value actually used by preview/export: simply
@@ -756,11 +876,12 @@ class _HDRPreviewMixin:
             self._preview_cache_converted = {}
 
         time_key = round(time_position, 3)
+        preview_width, preview_height = self._preview_extraction_dimensions()
         original_key = (video_path, time_key)
         original = self._preview_cache_original.get(original_key)
         if original is None:
             original = extract_frame(video_path, time_position=time_position,
-                                     width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1],
+                                     width=preview_width, height=preview_height,
                                      process_started=process_started)
             self._cache_store(self._preview_cache_original, original_key, original)
 
@@ -774,7 +895,7 @@ class _HDRPreviewMixin:
             converted = extract_fn(
                 video_path, gamma=1.0,
                 tonemapper=tonemapper, time_position=time_position,
-                width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1],
+                width=preview_width, height=preview_height,
                 lut_enabled=lut_enabled, process_started=process_started,
             )
             self._cache_store(self._preview_cache_converted, converted_key, converted)
@@ -791,8 +912,9 @@ class _HDRPreviewMixin:
         if file_generation != getattr(self, '_preview_file_generation', 0):
             return
         try:
+            preview_width, preview_height = self._preview_extraction_dimensions()
             originals = extract_frames_batch(
-                video_path, positions, PREVIEW_SIZE[0], PREVIEW_SIZE[1],
+                video_path, positions, preview_width, preview_height,
                 process_started=lambda process: self._register_preview_process(file_generation, process))
             for t, img in zip(positions, originals):
                 self._cache_store(
@@ -819,16 +941,17 @@ class _HDRPreviewMixin:
         if file_generation != getattr(self, '_preview_file_generation', 0):
             return
         try:
+            preview_width, preview_height = self._preview_extraction_dimensions()
             use_gpu = self._use_gpu_extraction(tonemapper)
             if use_gpu:
                 converted = extract_frames_with_gpu_conversion_batch(
                     video_path, positions, 1.0, tonemapper,
-                    PREVIEW_SIZE[0], PREVIEW_SIZE[1], lut_enabled=lut_enabled,
+                    preview_width, preview_height, lut_enabled=lut_enabled,
                     process_started=lambda process: self._register_preview_process(file_generation, process))
             else:
                 converted = extract_frames_with_conversion_batch(
                     video_path, positions, 1.0, tonemapper,
-                    PREVIEW_SIZE[0], PREVIEW_SIZE[1], lut_enabled=lut_enabled,
+                    preview_width, preview_height, lut_enabled=lut_enabled,
                     process_started=lambda process: self._register_preview_process(file_generation, process))
             for t, img in zip(positions, converted):
                 self._store_prewarmed_converted(
@@ -850,6 +973,8 @@ class _HDRPreviewMixin:
             file_generation = getattr(self, '_preview_file_generation', 0)
         assert file_generation is not None
         if file_generation != getattr(self, '_preview_file_generation', 0):
+            return
+        if not getattr(self, '_preview_prewarm_enabled', True):
             return
 
         if not hasattr(self, '_preview_cache_original'):

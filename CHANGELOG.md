@@ -78,6 +78,9 @@ this header and an empty `Unreleased` section after each new version is pushed.
   and the color LUT instead of reducing frames to 8-bit before encoding.
 - Variable-frame-rate video now preserves its original frame timestamps
   instead of being forced to a single average frame rate during conversion.
+- Preview caching now keeps all tone-mapper variants only for the active frame,
+  retains one fallback image for inactive presets, clears replaced custom-seek
+  frames, and lets useful same-file prewarming finish in the background.
 - Dolby Vision profile 5 conversion now fails safely when RPU-aware GPU
   tonemapping is unavailable, preventing output with incorrect colors.
 - Pro MP4 and MOV conversion now handles each audio track individually,

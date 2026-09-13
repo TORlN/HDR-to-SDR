@@ -472,9 +472,11 @@ class TestPreviewPrewarm(unittest.TestCase):
     @patch('src.preview.extract_frames_with_conversion_batch')
     @patch('src.preview.extract_frames_batch')
     def test_stops_immediately_when_superseded(self, mock_orig, mock_conv):
-        """Stale generation → batch functions never called."""
-        gui = self._gui()  # _preview_generation=3
-        gui._prewarm_other_frames('in.mkv', 60.0, 'mobius', generation=1)
+        """Discarded file generation means batch functions never run."""
+        gui = self._gui()
+        gui._preview_file_generation = 2
+        gui._prewarm_other_frames(
+            'in.mkv', 60.0, 'mobius', generation=1, file_generation=1)
         mock_orig.assert_not_called()
         mock_conv.assert_not_called()
 
@@ -582,11 +584,13 @@ class TestPreviewPool(unittest.TestCase):
         gui.current_frame_index = 1
         gui.total_frames = 5
         gui._preview_generation = 5
+        gui._preview_file_generation = 2
         gui._preview_cache_original = {}
         gui._preview_cache_converted = {}
         gui._preview_pool = MagicMock()
 
-        gui._prewarm_other_frames('v.mkv', 60.0, 'reinhard', generation=1)
+        gui._prewarm_other_frames(
+            'v.mkv', 60.0, 'reinhard', generation=1, file_generation=1)
 
         gui._preview_pool.submit.assert_not_called()
 
@@ -633,10 +637,25 @@ class TestPreviewPool(unittest.TestCase):
     def test_batch_originals_bails_when_stale(self, mock_batch):
         gui = _bare_gui()
         gui._preview_generation = 5
+        gui._preview_file_generation = 2
 
-        gui._prewarm_batch_originals('v.mkv', [10.0], generation=1)
+        gui._prewarm_batch_originals('v.mkv', [10.0], generation=1, file_generation=1)
 
         mock_batch.assert_not_called()
+
+    @patch('src.preview.extract_frames_batch')
+    def test_batch_originals_keeps_same_file_prewarm_after_new_preview_request(self, mock_batch):
+        gui = _bare_gui()
+        img = MagicMock()
+        mock_batch.return_value = [img]
+        gui._preview_generation = 5
+        gui._preview_file_generation = 1
+        gui._preview_cache_original = {}
+        gui._cache_lock = threading.Lock()
+
+        gui._prewarm_batch_originals('v.mkv', [10.0], generation=1, file_generation=1)
+
+        self.assertIs(gui._preview_cache_original[('v.mkv', 10.0)], img)
 
     @patch('src.preview.extract_frames_batch')
     def test_batch_originals_swallows_error(self, mock_batch):
@@ -669,8 +688,9 @@ class TestPreviewPool(unittest.TestCase):
     def test_batch_converted_bails_when_stale(self, mock_batch):
         gui = _bare_gui()
         gui._preview_generation = 5
+        gui._preview_file_generation = 2
 
-        gui._prewarm_batch_converted('v.mkv', [10.0], 'mobius', generation=1)
+        gui._prewarm_batch_converted('v.mkv', [10.0], 'mobius', generation=1, file_generation=1)
 
         mock_batch.assert_not_called()
 
@@ -1252,6 +1272,27 @@ class TestCustomSeek(unittest.TestCase):
         gui.on_frame_button_click(2)
         self.assertIsNone(gui.custom_time_position)  # back to frame-index mode
 
+    def test_new_custom_seek_discards_the_previous_custom_frame_cache(self):
+        gui = self._gui()
+        gui.input_path_var = MagicMock()
+        gui.input_path_var.get.return_value = 'in.mp4'
+        gui.custom_time_position = 5.0
+        gui.last_time_position = 5.0
+        original = MagicMock()
+        converted = MagicMock()
+        gui._preview_cache_original = {('in.mp4', 5.0): original}
+        gui._preview_cache_converted = {
+            ('in.mp4', 5.0, 'mobius', True, False): converted,
+        }
+        gui.custom_time_var.get.return_value = '10'
+
+        gui.on_custom_seek()
+
+        self.assertNotIn(('in.mp4', 5.0), gui._preview_cache_original)
+        self.assertFalse(gui._preview_cache_converted)
+        original.close.assert_called_once()
+        converted.close.assert_called_once()
+
 
 class TestDropPathParsing(unittest.TestCase):
     """_parse_drop_paths splits a tkdnd drop payload into individual file paths."""
@@ -1446,12 +1487,46 @@ class TestPreviewExtractionCache(unittest.TestCase):
         gui._preview_file_generation = 4
         gui._preview_processes = {4: {running}}
         gui._preview_futures = {4: {queued}}
+        gui._active_preview_cache_position = ('in.mp4', 5.0)
+        gui._last_displayed_preview_key = ('in.mp4', 5.0, 'hable', True, False)
 
         gui._reset_preview_cache()
 
         running.terminate.assert_called_once()
         queued.cancel.assert_called_once()
         self.assertEqual(gui._preview_file_generation, 5)
+        self.assertIsNone(gui._active_preview_cache_position)
+        self.assertIsNone(gui._last_displayed_preview_key)
+
+    def test_leaving_preset_keeps_only_its_last_displayed_tonemapper(self):
+        gui = _bare_gui()
+        gui.input_path_var = MagicMock()
+        gui.input_path_var.get.return_value = 'in.mp4'
+        gui.custom_time_position = None
+        gui.last_time_position = 5.0
+        gui.original_image = None
+        gui.converted_image_base = None
+        gui.highlight_frame_button = MagicMock()
+        gui.update_frame_preview = MagicMock()
+        original = MagicMock()
+        old_tonemapper = MagicMock()
+        displayed_tonemapper = MagicMock()
+        old_key = ('in.mp4', 5.0, 'mobius', True, False)
+        displayed_key = ('in.mp4', 5.0, 'hable', True, False)
+        gui._last_displayed_preview_key = displayed_key
+        gui._preview_cache_original = {('in.mp4', 5.0): original}
+        gui._preview_cache_converted = {
+            old_key: old_tonemapper,
+            displayed_key: displayed_tonemapper,
+        }
+
+        gui.on_frame_button_click(2)
+
+        self.assertIn(('in.mp4', 5.0), gui._preview_cache_original)
+        self.assertNotIn(old_key, gui._preview_cache_converted)
+        self.assertIs(gui._preview_cache_converted[displayed_key], displayed_tonemapper)
+        old_tonemapper.close.assert_called_once()
+        displayed_tonemapper.close.assert_not_called()
 
     def test_cache_is_bounded(self):
         gui = _bare_gui()

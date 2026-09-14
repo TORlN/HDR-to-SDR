@@ -74,6 +74,28 @@ class TestRequirementsArePinned(unittest.TestCase):
     def test_dev_requirements_are_exactly_pinned(self):
         self._assert_all_pinned('requirements-dev.txt')
 
+    def test_dev_requirements_contain_only_tools_used_by_ci_or_build(self):
+        """Unused test runners must not expand the locked release environment."""
+        names = {
+            re.split(r'[=<>!~\\[]', requirement, maxsplit=1)[0].strip().lower()
+            for requirement in _requirement_lines('requirements-dev.txt')
+        }
+        self.assertNotIn(
+            'pytest', names,
+            'pytest is not used by the unittest-based CI or release build; '
+            'remove the unused dependency and its lockfile entries',
+        )
+
+    def test_lock_does_not_retain_removed_pytest_dependency_tree(self):
+        lock = _read(os.path.join(_REPO_ROOT, 'requirements-lock.txt'))
+        for package in ('pytest', 'iniconfig', 'pluggy', 'pygments'):
+            with self.subTest(package=package):
+                self.assertNotRegex(
+                    lock,
+                    rf'(?m)^{package}==',
+                    f'{package} remains in the lock after removing unused pytest',
+                )
+
     def test_runtime_requirements_have_no_transitive_surface(self):
         """Keep the runtime input surface deliberately small.
 

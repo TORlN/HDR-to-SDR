@@ -7,7 +7,6 @@ pyinstaller==6.21.0
 # contents of a release build without touching pyinstaller itself.
 pyinstaller-hooks-contrib==2026.6
 pyright==1.1.411
-pytest==9.1.1
 boto3==1.43.34
 # Was installed by its own `pip install` line in the CI workflow, which put a
 # dev dependency somewhere nobody looks for one. It enforces the coverage floor.

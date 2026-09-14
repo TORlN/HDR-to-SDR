@@ -7,6 +7,8 @@ this header and an empty `Unreleased` section after each new version is pushed.
 
 ### Fixed
 
+- Preview duration caching now validates the selected file's identity and
+  resets together with the frame cache, preventing stale timing data.
 - Loading or unloading a video now cancels queued and running previews for the
   discarded file. Cached frame-button and Pro custom-seek previews remain
   available for the currently selected file.

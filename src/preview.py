@@ -139,8 +139,7 @@ class _HDRPreviewMixin:
         current_frame_index: int
         total_frames: int
         last_time_position: float | None
-        _duration_path: str | None
-        _duration_value: float | None
+        _duration_cache: tuple[str, tuple[int, int, int] | None, float] | None
         _resize_job: str | None
         _window_auto_fitted: bool
         _min_window_size: tuple[int, int]
@@ -579,6 +578,7 @@ class _HDRPreviewMixin:
         self._preview_cache_converted = {}
         self._active_preview_cache_position = None
         self._last_displayed_preview_key = None
+        self._duration_cache = None
         self._configure_preview_memory()
         clear_hdr_metadata_cache()
 
@@ -822,8 +822,12 @@ class _HDRPreviewMixin:
         """Return True if both frames for the current state are already cached."""
         if not hasattr(self, '_preview_cache_original'):
             return False
-        duration = getattr(self, '_duration_value', None)
-        if getattr(self, '_duration_path', None) != video_path or not duration:
+        duration_cache = getattr(self, '_duration_cache', None)
+        duration = (duration_cache[2] if duration_cache is not None
+                    and duration_cache[0] == video_path
+                    and duration_cache[1] == self._file_identity(video_path)
+                    else None)
+        if not duration:
             return False
         time_position = self._preview_time_position(duration)
         time_key = round(time_position, 3)
@@ -837,17 +841,32 @@ class _HDRPreviewMixin:
 
     # ── Frame extraction ───────────────────────────────────────────────────────
 
+    @staticmethod
+    def _file_identity(video_path: str) -> tuple[int, int, int] | None:
+        """Return stable metadata used to validate a cached duration."""
+        try:
+            stat = os.stat(video_path)
+        except OSError:
+            return None
+        return (
+            int(getattr(stat, 'st_size', 0)),
+            int(getattr(stat, 'st_mtime_ns', 0)),
+            int(getattr(stat, 'st_ino', 0)),
+        )
+
     def _get_duration(self, video_path: str) -> float:
-        """Return the video duration, probing ffprobe only once per file."""
-        if (getattr(self, '_duration_path', None) == video_path
-                and getattr(self, '_duration_value', None)):
-            return self._duration_value  # type: ignore[return-value]
+        """Return duration, reusing it only while the file identity matches."""
+        identity = self._file_identity(video_path)
+        cached = getattr(self, '_duration_cache', None)
+        if (cached is not None and cached[0] == video_path
+                and (identity is None or cached[1] == identity)):
+            return cached[2]
         properties = get_video_properties(video_path)
         if not properties or not properties.get('duration'):
             raise ValueError("Failed to retrieve video properties.")
-        self._duration_path = video_path
-        self._duration_value = properties['duration']
-        return self._duration_value  # type: ignore[return-value]
+        duration = float(properties['duration'])
+        self._duration_cache = (video_path, identity, duration)
+        return duration
 
     def _schedule_on_main(self, callback: Callable[[], object]) -> None:
         """Run a callback on the Tk main thread, tolerating shutdown races."""

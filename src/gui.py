@@ -215,8 +215,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             max_workers=_PREVIEW_POOL_WORKERS, thread_name_prefix='frame-fetch')
         self._preview_thread: Future | None = None
         self._converted_preview_base: Image.Image | None = None
-        self._duration_path: str | None = None
-        self._duration_value: float | None = None
+        self._duration_cache: tuple[str, tuple[int, int, int] | None, float] | None = None
         self._source_bit_depth: int = 8
         self._preview_cache_original: dict = {}
         self._preview_cache_converted: dict = {}

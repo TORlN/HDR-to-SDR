@@ -1781,6 +1781,29 @@ class TestPreviewPerformance(unittest.TestCase):
         # Second preview of the same file reuses the cached duration.
         self.assertEqual(mock_props.call_count, 1)
 
+    @patch('src.preview.os.stat')
+    def test_duration_cache_requires_matching_file_identity(self, mock_stat):
+        gui = _bare_gui()
+        identity = MagicMock(st_size=100, st_mtime_ns=1, st_ino=7)
+        mock_stat.return_value = identity
+        with patch('src.preview.get_video_properties',
+                   return_value={'duration': 100.0}) as mock_props:
+            self.assertEqual(gui._get_duration('clip.mkv'), 100.0)
+            identity.st_mtime_ns = 2
+            self.assertEqual(gui._get_duration('clip.mkv'), 100.0)
+        self.assertEqual(mock_props.call_count, 2)
+
+    @patch('src.preview.os.stat')
+    def test_duration_cache_is_cleared_with_preview_cache(self, mock_stat):
+        gui = _bare_gui()
+        mock_stat.return_value = MagicMock(st_size=100, st_mtime_ns=1, st_ino=7)
+        with patch('src.preview.get_video_properties',
+                   return_value={'duration': 100.0}) as mock_props:
+            gui._get_duration('clip.mkv')
+            gui._reset_preview_cache()
+            gui._get_duration('clip.mkv')
+        self.assertEqual(mock_props.call_count, 2)
+
 
 class TestFfmpegAvailabilityGuard(unittest.TestCase):
     """The GUI surfaces a missing ffmpeg on startup (init no longer dialogs)."""

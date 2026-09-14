@@ -55,6 +55,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name='HDR_to_SDR_Converter',
+    contents_directory='.',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

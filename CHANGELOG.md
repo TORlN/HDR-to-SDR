@@ -60,6 +60,8 @@ and reproducible releases.
   cleanliness, frozen startup, and Authenticode signatures before packaging.
 - PyArmor builds package the selected obfuscated source, FFmpeg rebuilds reject
   mismatched local patches, and ambient UPX installs cannot alter artifacts.
+- Onedir builds place runtime files beside the executable so bundled FFmpeg,
+  LUTs, and other assets are available to both the app and release validator.
 - CI and release builds use one hash-locked dependency graph and immutable
   tool and action revisions.
 - Installer license notices cover Pillow and tkinterdnd2 in addition to the

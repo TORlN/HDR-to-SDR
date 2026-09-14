@@ -130,6 +130,14 @@ class TestSpecContent(unittest.TestCase):
         self.assertFalse(captured['exe'].kwargs.get('upx'))
         self.assertFalse(captured['collect'].kwargs.get('upx'))
 
+    def test_both_build_branches_place_runtime_files_beside_executable(self):
+        """FFmpeg and LUTs must use the layout expected by runtime lookup."""
+        captured = _exec_spec(_SENTINEL)
+        self.assertEqual(captured['exe'].kwargs.get('contents_directory'), '.')
+        with open(os.path.join(_ROOT, 'build_installer.bat'), encoding='utf-8') as f:
+            bat = f.read()
+        self.assertIn('--contents-directory "."', bat)
+
     def test_obfuscated_build_analyzes_obfuscated_entry_point(self):
         """Selecting PyArmor output must make Analysis use _obf/main.pyw.
 

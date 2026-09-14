@@ -201,6 +201,7 @@ if exist "%REPO_ROOT%\_obf\main.pyw" (
     echo [INFO] Building from src\main.pyw
     python -m PyInstaller ^
         --onedir ^
+        --contents-directory "." ^
         --windowed ^
         --name "HDR_to_SDR_Converter" ^
         --specpath "%REPO_ROOT%\build" ^

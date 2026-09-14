@@ -24,6 +24,8 @@ import unittest
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 _WORKFLOW = os.path.join(_REPO_ROOT, '.github', 'workflows', 'python-tests.yml')
+_PRO_COMPAT_WORKFLOW = os.path.join(
+    _REPO_ROOT, '.github', 'workflows', 'pro-compatibility.yml')
 _PYPROJECT = os.path.join(_REPO_ROOT, 'pyproject.toml')
 _README = os.path.join(_REPO_ROOT, 'README.md')
 
@@ -225,6 +227,34 @@ class TestCIExecutionInputsArePinned(unittest.TestCase):
             'python tools/verify_ffmpeg_manifest.py .',
             self._workflow(),
         )
+
+
+class TestProCompatibilityDispatch(unittest.TestCase):
+    """Shared public changes must be checked against Pro without exposing it."""
+
+    def test_public_runner_only_dispatches_and_waits_for_private_ci(self):
+        workflow = _read(_PRO_COMPAT_WORKFLOW)
+        self.assertIn('push:\n    branches: [ main ]\n    paths:', workflow)
+        shared_paths = (
+            'src/conversion.py', 'src/conversion_view.py',
+            'src/tk_conversion_view.py', 'src/dark_theme.py',
+            'src/dialog_theme.py', 'src/dialogs.py', 'src/license_errors.py',
+            'src/licensing.py', 'src/preview.py', 'src/settings.py',
+            'src/updater.py', 'src/utils.py', 'src/gui.py',
+            'requirements.txt', 'requirements-dev.txt',
+            'requirements-lock.txt', 'pyproject.toml',
+        )
+        for path in shared_paths:
+            with self.subTest(path=path):
+                self.assertIn(f"- '{path}'", workflow)
+        self.assertIn('permissions:\n  contents: read', workflow)
+        self.assertIn('secrets.PRO_CI_TOKEN', workflow)
+        self.assertIn('--repo TORlN/hdr-to-sdr-pro', workflow)
+        self.assertIn('public_sha="$GITHUB_SHA"', workflow)
+        self.assertIn('request_id="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"', workflow)
+        self.assertIn('gh run watch', workflow)
+        self.assertNotIn('actions/checkout@', workflow)
+        self.assertNotIn('pull_request', workflow)
 
 
 class TestGatesSurviveConsolidation(unittest.TestCase):

@@ -1,0 +1,69 @@
+name: Pro Compatibility Dispatch
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/conversion.py'
+      - 'src/conversion_view.py'
+      - 'src/tk_conversion_view.py'
+      - 'src/dark_theme.py'
+      - 'src/dialog_theme.py'
+      - 'src/dialogs.py'
+      - 'src/license_errors.py'
+      - 'src/licensing.py'
+      - 'src/preview.py'
+      - 'src/settings.py'
+      - 'src/updater.py'
+      - 'src/utils.py'
+      - 'src/gui.py'
+      - 'requirements.txt'
+      - 'requirements-dev.txt'
+      - 'requirements-lock.txt'
+      - 'pyproject.toml'
+      - '.github/workflows/pro-compatibility.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Dispatch private compatibility tests and wait
+        env:
+          GH_TOKEN: ${{ secrets.PRO_CI_TOKEN }}
+          GH_PROMPT_DISABLED: '1'
+        run: |
+          set -euo pipefail
+          public_sha="$GITHUB_SHA"
+          request_id="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          run_name="Pro compatibility $public_sha ($request_id)"
+
+          gh workflow run pro-compatibility.yml \
+            --repo TORlN/hdr-to-sdr-pro \
+            --ref main \
+            -f public_sha="$public_sha" \
+            -f request_id="$request_id"
+
+          for _ in $(seq 1 60); do
+            private_run_id=$(gh run list \
+              --repo TORlN/hdr-to-sdr-pro \
+              --workflow pro-compatibility.yml \
+              --event workflow_dispatch \
+              --limit 30 \
+              --json databaseId,displayTitle \
+              --jq ".[] | select(.displayTitle == \"$run_name\") | .databaseId" \
+              | head -n 1)
+            if [ -n "$private_run_id" ]; then
+              gh run watch "$private_run_id" \
+                --repo TORlN/hdr-to-sdr-pro \
+                --exit-status
+              exit 0
+            fi
+            sleep 5
+          done
+
+          echo "Timed out waiting for the private compatibility run to start." >&2
+          exit 1

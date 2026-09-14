@@ -1,112 +1,76 @@
-# Changelog
+# HDR to SDR v3.2.4
 
-This document is the release-note draft for the next version. It is reset to
-this header and an empty `Unreleased` section after each new version is pushed.
+This release focuses on conversion safety, responsive previews, secure updates,
+and reproducible releases.
 
-## Unreleased
+## Conversion reliability
 
-### Fixed
+- Existing output files are replaced only after a successful conversion.
+- Input and output paths that refer to the same file through links or mapped
+  drives are rejected before conversion and before publishing output.
+- FFmpeg, ffprobe, GPU detection, and preview helpers now use bounded waits
+  with terminate, kill, and reap cleanup.
+- Stale conversion callbacks can no longer affect a later conversion.
+- Failed startup restores controls and cleans up partial processes and output.
+- Cancel remains available during conversion, and preview controls stay
+  disabled until the active conversion ends.
+- Pro batch queues yield between items so repeated rejected items cannot
+  exhaust the call stack.
+- HDR side data is removed from SDR output so players do not misclassify it.
+- Variable-frame-rate sources retain their original timestamps.
+- GPU 10-bit conversion preserves 10-bit precision through tonemapping.
+- Dolby Vision Profile 5 conversion fails safely when required GPU support is
+  unavailable.
+- Pro MP4 and MOV conversion preserves compatible audio tracks individually,
+  transcoding only incompatible tracks.
+- MKV conversion preserves embedded attachments such as subtitle fonts.
 
-- Installer license notices now include Pillow and tkinterdnd2 alongside the
+## Preview and settings
+
+- Metadata and MaxCLL probing no longer blocks the interface or applies stale
+  results to a newly selected file.
+- Preview caching validates file identity and duration, cancels work for
+  discarded files, keeps useful tonemapper variants for the active frame, and
+  releases discarded images. It adapts to available memory while supporting
+  extraction up to 4K.
+- Gamma input is validated and clamped safely, and malformed saved settings
+  fall back per setting without discarding valid preferences.
+- LUT paths are escaped correctly for FFmpeg filtergraph punctuation.
+
+## Licensing and updates
+
+- Pro import failures are distinguished from an absent Pro package instead of
+  silently downgrading a broken installation.
+- Packaged builds always use the official licensing endpoint, and malformed
+  local license data is rejected without an unnecessary online request.
+- Activation storage failures report clearly and roll back remote activation
+  when possible.
+- Batch processing stops consistently when a license becomes invalid while
+  Community single-file conversion remains available.
+- Update checks validate release versions, asset size, SHA-256, redirects, and
+  installer signatures before launch.
+- Failed update launches recover cleanly and stale updater temporary folders
+  are removed safely.
+- Updates save settings, stop preview work, and wait for active conversion
+  cleanup before closing the application.
+
+## Build and deployment
+
+- Release builds verify FFmpeg provenance, dependency integrity, source
+  cleanliness, frozen startup, and Authenticode signatures before packaging.
+- PyArmor builds package the selected obfuscated source, FFmpeg rebuilds reject
+  mismatched local patches, and ambient UPX installs cannot alter artifacts.
+- CI and release builds use one hash-locked dependency graph and immutable
+  tool and action revisions.
+- Installer license notices cover Pillow and tkinterdnd2 in addition to the
   bundled media components.
-- Preview duration caching now validates the selected file's identity and
-  resets together with the frame cache, preventing stale timing data.
-- Loading or unloading a video now cancels queued and running previews for the
-  discarded file. Cached frame-button and Pro custom-seek previews remain
-  available for the currently selected file.
-- File metadata and MaxCLL probing now run off the interface thread. Late
-  results cannot overwrite metadata, bitrate defaults, or bit-depth choices
-  for a newly selected file, including during Pro batch processing.
-- FFmpeg, ffprobe, GPU detection, and preview helper processes now have
-  bounded waits and terminate-kill-reap cleanup when they stop responding.
-- Update checks now accept only strict `X.Y.Z` release tags, ignoring
-  malformed version metadata safely.
-- LUT paths now escape FFmpeg filtergraph-special characters, including
-  punctuation in installation directories.
-- Pro import failures are no longer silently treated as Community-only mode;
-  genuine absence still supports fork and development builds.
-- Invalid typed gamma values now safely restore the last valid value, while
-  finite values outside the supported range are clamped before preview or conversion.
-- Malformed saved preferences now fall back safely per setting, preserving
-  other valid preferences instead of letting bad persisted values reach the UI.
-- Website assets with stable filenames now revalidate hourly instead of being
-  treated as immutable for a year, preventing stale browser copies after deploy.
-- Website deployments now stop before stale-file deletion or cache invalidation
-  when an upload fails, upload entry HTML last, and report partial S3 deletions.
-- Website copy now reflects the patched FFmpeg build, current hardware encoder
-  names, and the planned v3.3 LUT and resolution features.
-- Website deployments now reject untracked or incomplete source directories,
-  preserve unmanaged S3 objects, and require explicit production confirmation.
-- Packaged builds now use the official licensing service endpoint even if a
-  development override is present in the environment.
-- A license activation that cannot be saved locally now reports the storage
-  failure and rolls back a newly created remote activation when possible.
-- Batch processing now stops consistently when a license is no longer valid,
-  while Community single-file conversion remains available.
-- Malformed local license data is now rejected safely instead of causing a
-  startup error or an unnecessary online request.
-- Existing output files are now replaced only after a conversion finishes
-  successfully. Cancellation, encoding failure, and fallback failure preserve
-  the previous file instead of leaving a partial replacement.
-- Input and output paths that identify the same file through links, junctions,
-  mapped drives, or other filesystem aliases are now rejected before conversion
-  and checked again before the completed output is published.
-- Mocked conversion tests no longer leave zero-byte temporary output files in
-  the working tree.
-- Release builds now verify the exact Git LFS-tracked FFmpeg and ffprobe inputs
-  against a source-provenance manifest before packaging or signing.
-- In-app updates now verify GitHub's asset size and SHA-256 digest, restrict
-  download redirects to GitHub hosts, and require a valid installer signature
-  from the expected publisher before launch.
-- Packaged builds now fail safely when a bundled FFmpeg executable is missing
-  instead of using an unrelated executable found on `PATH`.
-- Update downloads now recover cleanly if the installer cannot launch, and
-  stale updater-only temporary directories are removed safely after 24 hours.
-- A cancelled or completed conversion can no longer let stale monitor, retry,
-  or completion callbacks affect a later conversion.
-- Conversion-launch tests now reject unmocked temporary-file allocation, so
-  test runs cannot leave `.hdr-to-sdr-*` artifacts in the repository.
-- Failed FFmpeg or monitor startup now restores conversion controls and cleans
-  up any partially started process and temporary output.
-- Cancel remains available throughout an active conversion, even when preview
-  layout refreshes, and preview-mutating controls are disabled meanwhile.
-- Updates now save settings and stop preview work before closing, and wait for
-  an active conversion monitor to reap its process before the app exits.
-- Pro batch queues now yield between items, preventing long synchronous
-  rejection runs from exhausting the call stack.
-- Tone-mapped HDR video now removes HDR10, HDR10+, and Dolby Vision side data
-  from SDR output so players do not misclassify it as HDR.
-- HDR metadata cleanup now uses filters supported by the FFmpeg versions used
-  in both packaged builds and CI.
-- GPU 10-bit conversion now preserves 10-bit precision through tonemapping
-  and the color LUT instead of reducing frames to 8-bit before encoding.
-- Variable-frame-rate video now preserves its original frame timestamps
-  instead of being forced to a single average frame rate during conversion.
-- Preview caching now keeps all tone-mapper variants only for the active frame,
-  retains one fallback image for inactive presets, clears replaced custom-seek
-  frames, and lets useful same-file prewarming finish in the background.
-- Preview caching now tracks decoded image memory, releases discarded images,
-  and adapts preview resolution and prewarming for machines with limited
-  available RAM while preserving normal up-to-4K preview extraction.
-- Dolby Vision profile 5 conversion now fails safely when RPU-aware GPU
-  tonemapping is unavailable, preventing output with incorrect colors.
-- Pro MP4 and MOV conversion now handles each audio track individually,
-  preserving compatible tracks while transcoding only incompatible ones.
-- MKV conversions now preserve embedded attachments, including subtitle fonts.
-- PyArmor release builds now package the selected obfuscated entry point
-  instead of silently analyzing the unobfuscated source tree.
-- Documentation now clarifies that normal releases use one freemium installer
-  and that the FREE-ONLY build is an emergency fallback, not a release.
-- Release builds now require clean source repositories and record a manifest
-  with paired commit IDs, build inputs, tool versions, and installer hashes.
-- FFmpeg rebuilds now stop when their local source patches no longer match the
-  checked source, preventing a silently incomplete patched binary.
-- Release builds now run coverage and type checks, smoke-test the frozen
-  application without opening its UI, and verify Authenticode signatures.
-- CI and release builds now install Python dependencies from one hash-locked
-  dependency graph and verify the installed packages are consistent.
-- CI now uses immutable action revisions, a fixed runner and tool versions,
-  least-privilege checkout permissions, and verified packaged FFmpeg inputs.
-- Release artifacts no longer vary based on whether UPX is installed on the
-  build machine.
-- Uninstall now preserves user-created files in the application directory.
+- Website deployment validates source completeness, uploads entry HTML last,
+  preserves unmanaged objects, and stops safely on upload failures.
+- Website assets with stable filenames revalidate hourly to prevent stale
+  browser copies after deployment.
+- Website copy now reflects the current FFmpeg build, hardware encoder names,
+  and the planned v3.3 LUT and resolution features.
+- Uninstall preserves user-created files in the application directory.
+
+---
+**Full Changelog**: https://github.com/TORlN/HDR-to-SDR/compare/v3.2.3...v3.2.4

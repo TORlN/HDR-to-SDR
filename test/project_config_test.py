@@ -30,6 +30,13 @@ _README = os.path.join(_REPO_ROOT, 'README.md')
 # The two runtime packages, each verified with `pip show` to have an empty
 # Requires: field as of 2026-08-02.
 _DEPENDENCY_FREE_RUNTIME_DEPS = frozenset(('pillow', 'tkinterdnd2'))
+_PACKAGED_RUNTIME_NOTICES = {
+    'ffmpeg': 'ffmpeg-LICENSE.md',
+    'x264': 'x264-COPYING',
+    'x265': 'x265-COPYING',
+    'pillow': 'Pillow-LICENSE.txt',
+    'tkinterdnd2': 'tkinterdnd2-LICENSE.txt',
+}
 
 
 def _read(path: str) -> str:
@@ -80,6 +87,16 @@ class TestRequirementsArePinned(unittest.TestCase):
                 msg=f'new runtime dependency {sorted(unexpected)} -- confirm it is '
                 f'dependency-free (pip show <name>, empty Requires:) and add it '
                 f'to _DEPENDENCY_FREE_RUNTIME_DEPS after reviewing the lock')
+
+    def test_packaged_runtime_dependencies_have_license_notices(self):
+        licenses_dir = os.path.join(_REPO_ROOT, 'licenses')
+        for dependency, notice_name in _PACKAGED_RUNTIME_NOTICES.items():
+            with self.subTest(dependency=dependency):
+                notice = os.path.join(licenses_dir, notice_name)
+                self.assertTrue(os.path.isfile(notice),
+                                f'{dependency} is missing {notice_name}')
+                self.assertGreater(os.path.getsize(notice), 0,
+                                   f'{notice_name} is empty')
 
     def test_release_lock_pins_and_hashes_direct_and_transitive_requirements(self):
         """Release installation must reject unreviewed dependency artifacts."""

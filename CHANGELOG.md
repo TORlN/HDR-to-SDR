@@ -7,6 +7,8 @@ this header and an empty `Unreleased` section after each new version is pushed.
 
 ### Fixed
 
+- Installer license notices now include Pillow and tkinterdnd2 alongside the
+  bundled media components.
 - Preview duration caching now validates the selected file's identity and
   resets together with the frame cache, preventing stale timing data.
 - Loading or unloading a video now cancels queued and running previews for the

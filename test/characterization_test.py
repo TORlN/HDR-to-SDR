@@ -1550,6 +1550,54 @@ class TestPreviewExtractionCache(unittest.TestCase):
         self.assertNotIn(extra_key, gui._preview_cache_converted)
         extra.close.assert_called_once()
 
+    @patch('src.preview.extract_frame_with_conversion')
+    @patch('src.preview.extract_frame')
+    def test_visible_frame_survives_cache_trim_during_position_switch(
+        self, mock_extract, mock_convert,
+    ):
+        old_position = ('in.mp4', 5.0)
+        new_position = ('in.mp4', 10.0)
+        old_displayed_key = (*old_position, 'hable', True, False)
+        new_fallback_key = (*new_position, 'mobius', True, False)
+        new_requested_key = (*new_position, 'hable', True, False)
+
+        def image():
+            value = MagicMock(width=1, height=1)
+            value.getbands.return_value = ('R', 'G', 'B')
+            return value
+
+        for memory_pressure in (False, True):
+            with self.subTest(memory_pressure=memory_pressure):
+                gui = _bare_gui()
+                old_original = image()
+                new_original = image()
+                old_displayed = image()
+                new_fallback = image()
+                new_requested = image()
+                mock_extract.return_value = new_original
+                mock_convert.return_value = new_requested
+                gui._preview_cache_original = {old_position: old_original}
+                gui._preview_cache_converted = {
+                    old_displayed_key: old_displayed,
+                    new_fallback_key: new_fallback,
+                }
+                gui._cache_lock = threading.Lock()
+                gui._preview_cache_budget_bytes = 6
+                gui._preview_memory_pressure = memory_pressure
+                gui._active_preview_cache_position = old_position
+                gui._last_displayed_preview_key = old_displayed_key
+                gui._use_gpu_extraction = MagicMock(return_value=False)
+
+                original, converted = gui._extract_preview_images(
+                    'in.mp4', 10.0, 'hable', lut_enabled=True)
+
+                self.assertIn(new_position, gui._preview_cache_original)
+                self.assertIn(new_requested_key, gui._preview_cache_converted)
+                self.assertIs(original, new_original)
+                self.assertIs(converted, new_requested)
+                new_original.close.assert_not_called()
+                new_requested.close.assert_not_called()
+
     def test_active_tonemapper_variants_are_protected_above_byte_budget(self):
         gui = _bare_gui()
         gui._preview_cache_original = {}
@@ -1611,7 +1659,7 @@ class TestPreviewMemoryProfiles(unittest.TestCase):
         gui._configure_preview_memory()
 
         self.assertEqual(gui._preview_extraction_size, PREVIEW_SIZE)
-        self.assertEqual(gui._preview_cache_budget_bytes, 256 * 1024 ** 2)
+        self.assertEqual(gui._preview_cache_budget_bytes, 512 * 1024 ** 2)
         self.assertTrue(gui._preview_prewarm_enabled)
 
     @patch('src.preview._available_memory_bytes', return_value=1024 ** 3)
@@ -1621,7 +1669,7 @@ class TestPreviewMemoryProfiles(unittest.TestCase):
         gui._configure_preview_memory()
 
         self.assertEqual(gui._preview_extraction_size, (1920, 1080))
-        self.assertEqual(gui._preview_cache_budget_bytes, 64 * 1024 ** 2)
+        self.assertEqual(gui._preview_cache_budget_bytes, 128 * 1024 ** 2)
         self.assertTrue(gui._preview_prewarm_enabled)
 
     @patch('src.preview._available_memory_bytes', return_value=256 * 1024 ** 2)

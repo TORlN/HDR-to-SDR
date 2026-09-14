@@ -605,13 +605,19 @@ class _HDRPreviewMixin:
         self._preview_futures.setdefault(file_generation, set()).add(future)
         return future
 
-    def _cache_store(self, cache: dict, key: object, value: Image.Image) -> None:
+    def _cache_store(
+        self,
+        cache: dict,
+        key: object,
+        value: Image.Image,
+        protected_position: tuple[str, float] | None = None,
+    ) -> None:
         """Insert into a preview cache and discard byte-budget overflow safely."""
         if not hasattr(self, '_cache_lock'):
             self._cache_lock = threading.Lock()
         with self._cache_lock:
             cache[key] = value
-            discarded = self._trim_preview_cache_locked()
+            discarded = self._trim_preview_cache_locked(protected_position)
         for image in discarded:
             self._close_preview_image(image)
 
@@ -619,9 +625,9 @@ class _HDRPreviewMixin:
         """Snapshot a conservative preview profile for the selected file."""
         available = _available_memory_bytes()
         if available is None or available >= _NORMAL_MEMORY_THRESHOLD:
-            size, budget, pressure, prewarm = PREVIEW_SIZE, 256 * _MIB, False, True
+            size, budget, pressure, prewarm = PREVIEW_SIZE, 512 * _MIB, False, True
         elif available >= _LOW_MEMORY_THRESHOLD:
-            size, budget, pressure, prewarm = (1920, 1080), 64 * _MIB, False, True
+            size, budget, pressure, prewarm = (1920, 1080), 128 * _MIB, False, True
         else:
             size, budget, pressure, prewarm = (1280, 720), 32 * _MIB, True, False
         self._preview_extraction_size = size
@@ -649,10 +655,16 @@ class _HDRPreviewMixin:
                    for cache in (self._preview_cache_original, self._preview_cache_converted)
                    for image in cache.values())
 
-    def _converted_key_is_protected(self, key: object) -> bool:
+    def _converted_key_is_protected(
+        self,
+        key: object,
+        protected_position: tuple[str, float] | None = None,
+    ) -> bool:
         if not isinstance(key, tuple) or len(key) < 2:
             return False
         position = key[:2]
+        if position == protected_position:
+            return True
         if position == getattr(self, '_active_preview_cache_position', None):
             return True
         displayed = getattr(self, '_last_displayed_preview_key', None)
@@ -661,15 +673,18 @@ class _HDRPreviewMixin:
         return next((candidate for candidate in self._preview_cache_converted
                      if candidate[:2] == position), None) == key
 
-    def _trim_preview_cache_locked(self) -> list[object]:
+    def _trim_preview_cache_locked(
+        self,
+        protected_position: tuple[str, float] | None = None,
+    ) -> list[object]:
         """Return cache entries removable without violating the active preview policy."""
-        budget = getattr(self, '_preview_cache_budget_bytes', 256 * _MIB)
+        budget = getattr(self, '_preview_cache_budget_bytes', 512 * _MIB)
         if self._cache_bytes_locked() <= budget:
             return []
 
         discarded: list[object] = []
         for key in list(self._preview_cache_converted):
-            if not self._converted_key_is_protected(key):
+            if not self._converted_key_is_protected(key, protected_position):
                 discarded.append(self._preview_cache_converted.pop(key))
                 if self._cache_bytes_locked() <= budget:
                     return discarded
@@ -680,13 +695,13 @@ class _HDRPreviewMixin:
         displayed = getattr(self, '_last_displayed_preview_key', None)
         displayed_position = displayed[:2] if displayed is not None else None
         for key in list(self._preview_cache_converted):
-            if key == displayed:
+            if key == displayed or key[:2] == protected_position:
                 continue
             discarded.append(self._preview_cache_converted.pop(key))
             if self._cache_bytes_locked() <= budget:
                 return discarded
         for key in list(self._preview_cache_original):
-            if key == displayed_position:
+            if key == displayed_position or key == protected_position:
                 continue
             discarded.append(self._preview_cache_original.pop(key))
             if self._cache_bytes_locked() <= budget:
@@ -902,7 +917,9 @@ class _HDRPreviewMixin:
             original = extract_frame(video_path, time_position=time_position,
                                      width=preview_width, height=preview_height,
                                      process_started=process_started)
-            self._cache_store(self._preview_cache_original, original_key, original)
+            self._cache_store(
+                self._preview_cache_original, original_key, original,
+                protected_position=original_key)
 
         use_gpu = self._use_gpu_extraction(tonemapper)
         converted_key = (video_path, time_key, tonemapper, lut_enabled, use_gpu)
@@ -917,7 +934,9 @@ class _HDRPreviewMixin:
                 width=preview_width, height=preview_height,
                 lut_enabled=lut_enabled, process_started=process_started,
             )
-            self._cache_store(self._preview_cache_converted, converted_key, converted)
+            self._cache_store(
+                self._preview_cache_converted, converted_key, converted,
+                protected_position=original_key)
         return original, converted
 
     def _prewarm_batch_originals(

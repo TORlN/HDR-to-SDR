@@ -26,6 +26,7 @@ _SRC = os.path.join(_ROOT, 'src')
 # merely permits. (main.pyw imports tkinterdnd2, not tkinter, and would fail
 # an assertion that True modules must import it.)
 _ALLOWED: "dict[str, tuple[frozenset[str], bool]]" = {
+    'resolution':         (frozenset(), False),
     'settings':           (frozenset({'platform_utils'}), False),
     'updater':            (frozenset(), False),
     'license_errors':     (frozenset(), False),

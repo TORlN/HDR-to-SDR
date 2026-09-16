@@ -33,7 +33,7 @@ _ALLOWED: "dict[str, tuple[frozenset[str], bool]]" = {
     'utils':              (frozenset({'platform_utils'}), False),
     'conversion_view':    (frozenset(), False),
     'platform_utils':     (frozenset(), False),
-    'ffmpeg_command':     (frozenset({'conversion_view', 'utils'}), False),
+    'ffmpeg_command':     (frozenset({'conversion_view', 'utils', 'resolution'}), False),
     'licensing':          (frozenset({'license_errors'}), False),
     'conversion':         (frozenset({'utils', 'conversion_view', 'ffmpeg_command',
                                       'platform_utils', 'resolution'}), False),

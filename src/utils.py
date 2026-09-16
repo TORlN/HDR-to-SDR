@@ -375,7 +375,8 @@ def build_libplacebo_filter(gamma, tonemapper, width: 'int | str' = 'iw',
                             height: 'int | str' = 'ih',
                             cuda_input: bool = False,
                             lut_enabled: bool = True,
-                            bit_depth: int = 8) -> str:
+                            bit_depth: int = 8,
+                            scaler: str | None = None) -> str:
     """Build the GPU tonemapping filter chain (HDR->SDR) using libplacebo.
 
     Always peak_detect=1. cuda_input=False uploads from system RAM
@@ -397,6 +398,7 @@ def build_libplacebo_filter(gamma, tonemapper, width: 'int | str' = 'iw',
         lut_enabled=False restores that fast path.
     bit_depth: requested encoder depth. The 10-bit GPU path retains precision
         through a 16-bit RGB LUT intermediate before returning to p010le.
+    scaler: optional libplacebo up/down filter for an explicit resize target.
     """
     tm = tonemapper.lower()
     prefix = ('hwmap=derive_device=vulkan,'
@@ -412,8 +414,9 @@ def build_libplacebo_filter(gamma, tonemapper, width: 'int | str' = 'iw',
     ten_bit_output = bit_depth == 10
     download_fmt = ('rgba64le' if ten_bit_output else 'rgba') if lut_enabled else (
         'p010le' if ten_bit_output else 'nv12')
+    scaling = f'upscaler={scaler}:downscaler={scaler}:' if scaler is not None else ''
     libplacebo = (
-        f'libplacebo=w={width}:h={height}:tonemapping={tm}:'
+        f'libplacebo=w={width}:h={height}:{scaling}tonemapping={tm}:'
         f'colorspace=bt709:color_primaries={primaries}:color_trc=bt709:range=tv:'
         f'peak_detect=1:format={download_fmt}'
     )

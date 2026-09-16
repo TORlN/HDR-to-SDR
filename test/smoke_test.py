@@ -109,6 +109,7 @@ from src.utils import (
 )
 from _recording_view import RecordingConversionView
 from src.conversion import ConversionManager, ConversionRequest
+from resolution import ResolutionTarget
 
 
 def _req(input_path, output_path, **overrides) -> ConversionRequest:
@@ -170,6 +171,7 @@ def _probe_video(path):
          '-show_entries', 'stream=color_transfer,width,height,pix_fmt',
          '-of', 'json', path],
         stderr=subprocess.DEVNULL,
+        timeout=30,
     )
     s = json.loads(out)['streams'][0]
     return s.get('color_transfer'), s.get('width'), s.get('height'), s.get('pix_fmt')
@@ -273,6 +275,38 @@ class TestRealSdrBaseline(unittest.TestCase):
 class TestRealHdr10TenBit(unittest.TestCase):
     """Genuine HDR10 (bt2020/smpte2084, properly PQ-mastered pixel data) at
     the free-tier default 10-bit depth, run through the real tonemap chain."""
+
+    def test_cpu_preset_downscale_outputs_expected_dimensions(self):
+        props = get_video_properties(HDR10_10BIT_VIDEO)
+        with tempfile.TemporaryDirectory(prefix='hdr_smoke_downscale_') as tmpdir:
+            output = os.path.join(tmpdir, 'out.mp4')
+            cmd = ConversionManager().construct_ffmpeg_command(
+                _req(HDR10_10BIT_VIDEO, output, bit_depth=10,
+                     resolution=ResolutionTarget(480)), props, RecordingConversionView())
+            result = subprocess.run(cmd, capture_output=True, timeout=120)
+            self.assertEqual(result.returncode, 0,
+                             msg=result.stderr.decode('utf-8', 'replace')[-2000:])
+            transfer, width, height, pix_fmt = _probe_video(output)
+            self.assertEqual((width, height), (852, 480))
+            self.assertEqual(pix_fmt, 'yuv420p10le')
+            self.assertEqual(transfer, 'bt709')
+
+    @unittest.skipUnless(_LIBPLACEBO_OK, 'Vulkan/libplacebo not available on this machine')
+    def test_gpu_pro_upscale_outputs_expected_dimensions(self):
+        props = get_video_properties(HDR10_10BIT_VIDEO)
+        with tempfile.TemporaryDirectory(prefix='hdr_smoke_upscale_') as tmpdir:
+            output = os.path.join(tmpdir, 'out.mp4')
+            cmd = ConversionManager().construct_ffmpeg_command(
+                _req(HDR10_10BIT_VIDEO, output, use_gpu=True, licensed=True,
+                     bit_depth=10, resolution=ResolutionTarget(1440)),
+                props, RecordingConversionView())
+            result = subprocess.run(cmd, capture_output=True, timeout=120)
+            self.assertEqual(result.returncode, 0,
+                             msg=result.stderr.decode('utf-8', 'replace')[-2000:])
+            transfer, width, height, pix_fmt = _probe_video(output)
+            self.assertEqual((width, height), (2560, 1440))
+            self.assertEqual(pix_fmt, 'yuv420p10le')
+            self.assertEqual(transfer, 'bt709')
 
     def test_properties_detect_hdr10_not_dolby_vision(self):
         props = get_video_properties(HDR10_10BIT_VIDEO)
@@ -796,6 +830,29 @@ class TestRealSquareAspectRatio(unittest.TestCase):
 class TestRealPortraitAspectRatio(unittest.TestCase):
     """A 9:16 source must extract and fit at its own aspect ratio, not the
     hardcoded 16:9 PREVIEW_SIZE box."""
+
+    def test_cpu_pro_custom_downscale_preserves_portrait_orientation(self):
+        with tempfile.TemporaryDirectory(prefix='hdr_smoke_portrait_scale_') as tmpdir:
+            # This preview fixture has no color tags. Supply its SDR colorspace
+            # on a temporary stream copy so zscale can run the export pipeline.
+            source = os.path.join(tmpdir, 'tagged.mp4')
+            tagged = subprocess.run(
+                [FFMPEG_EXECUTABLE, '-nostdin', '-i', SDR_9_16_VIDEO,
+                 '-c', 'copy', '-color_primaries', 'bt709', '-color_trc', 'bt709',
+                 '-colorspace', 'bt709', source], capture_output=True, timeout=30)
+            self.assertEqual(tagged.returncode, 0,
+                             msg=tagged.stderr.decode('utf-8', 'replace')[-2000:])
+            props = get_video_properties(source)
+            output = os.path.join(tmpdir, 'out.mp4')
+            cmd = ConversionManager().construct_ffmpeg_command(
+                _req(source, output, licensed=True,
+                     resolution=ResolutionTarget(180, custom=True)),
+                props, RecordingConversionView())
+            result = subprocess.run(cmd, capture_output=True, timeout=120)
+            self.assertEqual(result.returncode, 0,
+                             msg=result.stderr.decode('utf-8', 'replace')[-2000:])
+            _, width, height, _ = _probe_video(output)
+            self.assertEqual((width, height), (180, 320))
 
     def test_extracted_frame_is_portrait(self):
         # Same note as TestRealSquareAspectRatio.test_extracted_frame_is_square:

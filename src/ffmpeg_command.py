@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
 from conversion_view import ConversionView, Notice
+from resolution import ResolutionTarget, output_dimensions
 from utils import (VULKAN_DEVICE_ARGS, VULKAN_CUDA_DEVICE_ARGS,
                    build_libplacebo_filter, is_gpu_only_tonemapper,
                    FFMPEG_CONVERT_FILTER, get_lut_filter_path,
@@ -78,6 +79,8 @@ class RequestLike(Protocol):
     def licensed(self) -> bool: ...
     @property
     def lut_enabled(self) -> bool: ...
+    @property
+    def resolution(self) -> ResolutionTarget | None: ...
 
 
 @dataclass(frozen=True)
@@ -210,7 +213,8 @@ def _gpu_device_args(plan: TonemapPlan,
                    use_cuda_interop=use_cuda_interop, notices=notices)
 
 
-def _filter_args(request: RequestLike, plan: TonemapPlan, gpu: GpuPlan) -> str:
+def _filter_args(request: RequestLike, plan: TonemapPlan, gpu: GpuPlan,
+                 properties: 'dict[str, Any]') -> str:
     """The tonemap filter chain body, without the [0:v:0]...[vout] wrapper
     -- build() owns that, since it also owns the -filter_complex
     flag itself.
@@ -219,18 +223,29 @@ def _filter_args(request: RequestLike, plan: TonemapPlan, gpu: GpuPlan) -> str:
     the CPU zscale path, which has no equivalent -- unchanged from the
     pre-split function."""
     tonemapper = request.tonemapper.lower()
+    dimensions = None
+    if request.resolution is not None:
+        dimensions = output_dimensions(
+            int(properties['width']), int(properties['height']), request.resolution)
     if plan.use_libplacebo:
+        width, height = dimensions or ('iw', 'ih')
         return build_libplacebo_filter(
-            request.gamma, tonemapper, cuda_input=gpu.use_cuda_interop,
-            lut_enabled=request.lut_enabled, bit_depth=request.bit_depth)
+            request.gamma, tonemapper, width=width, height=height,
+            cuda_input=gpu.use_cuda_interop,
+            lut_enabled=request.lut_enabled, bit_depth=request.bit_depth,
+            scaler='ewa_lanczos' if dimensions is not None else None)
     if is_gpu_only_tonemapper(tonemapper):
         raise ValueError(
             f"{tonemapper} requires GPU tonemapping; this item's "
             "settings force CPU processing — change the tonemapper "
             "or output bit depth."
         )
-    return FFMPEG_CONVERT_FILTER.format(
+    filter_str = FFMPEG_CONVERT_FILTER.format(
         gamma=request.gamma, tonemapper=tonemapper, lut_path=get_lut_filter_path())
+    if dimensions is not None:
+        width, height = dimensions
+        filter_str += f',scale={width}:{height}:flags=lanczos'
+    return filter_str
 
 
 _HDR_TRANSFER_CHARACTERISTICS = {'smpte2084', 'arib-std-b67'}
@@ -520,7 +535,7 @@ def build(request: RequestLike, properties: 'dict[str, Any]',
     for notice in gpu.notices:
         view.notify(notice)
 
-    filter_str = _filter_args(request, tone, gpu)  # may raise ValueError
+    filter_str = _filter_args(request, tone, gpu, properties)  # may raise ValueError
     filter_str = _strip_hdr_frame_side_data(filter_str, properties)
 
     cmd = [FFMPEG_EXECUTABLE, '-loglevel', 'info']

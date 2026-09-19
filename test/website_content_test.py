@@ -23,11 +23,13 @@ class TestWebsiteProductCopy(unittest.TestCase):
         self.assertIn("NVENC / AMF / QSV", self.html)
         self.assertNotIn("NVENC / VCE / QSV", self.html)
 
-    def test_v33_roadmap_matches_approved_lut_and_resolution_tiers(self) -> None:
+    def test_resolution_scaling_copy_matches_community_and_pro_tiers(self) -> None:
         self.assertIn("Preset LUTs", self.html)
         self.assertIn("Custom .cube LUTs", self.html)
-        self.assertIn("720p, 1080p, 1440p, and 4K", self.html)
-        self.assertIn("Custom output resolution", self.html)
+        self.assertIn("Preset downscaling through 480p", self.html)
+        self.assertIn("Preset upscaling through 8K", self.html)
+        self.assertIn("Custom resolution", self.html)
+        self.assertNotIn("Downsample to 480p only", self.html)
         self.assertNotIn("Audio Track Selection", self.html)
         self.assertNotIn("Saved Conversion Presets", self.html)
 

@@ -375,10 +375,15 @@ class TestConstruction(_GuiTestBase):
         self.assertEqual(int(info['column']), 1)
 
     def test_resolution_dropdown_sits_immediately_right_of_tonemapper(self):
+        self.assertIs(self.gui.resolution_frame.master, self.gui.tonemap_frame)
         info = self.gui.resolution_frame.grid_info()
-        self.assertEqual(int(info['row']), 4)
-        self.assertEqual(int(info['column']), 2)
+        self.assertEqual(int(info['row']), 0)
+        self.assertEqual(int(info['column']), 1)
         self.assertEqual(self.gui.resolution_menubutton.winfo_manager(), 'grid')
+        self.assertIs(self.gui.gpu_status_label.master, self.gui.control_frame)
+        gpu_info = self.gui.gpu_status_label.grid_info()
+        self.assertEqual(int(gpu_info['row']), 4)
+        self.assertEqual(int(gpu_info['column']), 2)
 
     def test_resolution_starts_loading_and_disabled(self):
         self.assertEqual(self.gui.resolution_display_var.get(), 'Loading resolution...')
@@ -565,6 +570,19 @@ class TestDarkTheme(_GuiTestBase):
                 str(style.lookup('Horizontal.TScale', key)), ACCENT,
                 f"Horizontal.TScale {key} should be the accent color")
 
+    def test_resolution_selector_and_popup_keep_text_readable_when_active(self):
+        from src.dark_theme import ACCENT, DISABLED, FG, FIELD
+        style = ttk.Style(self.root)
+        self.assertEqual(str(style.lookup('TMenubutton', 'foreground')), FG)
+        self.assertEqual(
+            str(style.lookup('TMenubutton', 'foreground', ('active',))), FG)
+        self.assertEqual(str(self.gui.resolution_menu.cget('background')), FIELD)
+        self.assertEqual(str(self.gui.resolution_menu.cget('foreground')), FG)
+        self.assertEqual(str(self.gui.resolution_menu.cget('activebackground')), ACCENT)
+        self.assertEqual(str(self.gui.resolution_menu.cget('activeforeground')), FG)
+        self.assertEqual(
+            str(self.gui.resolution_menu.cget('disabledforeground')), DISABLED)
+
 
 class TestBatchQueueWidgets(_GuiTestBase):
     """Real-widget checks for the batch (multi-file) queue panel.
@@ -634,14 +652,14 @@ class TestStateAndLayout(_GuiTestBase):
         self.assertIs(self.gui.lut_export_checkbutton.master, self.gui.lut_export_row)
 
     def test_no_gap_between_quality_row_and_gpu_row(self):
-        """Row 4 held only the caption, now a tooltip (see the quality info
-        button) -- once nothing else claims it, the GPU/tonemap row must
-        shift up to fill it rather than leaving a blank grid row."""
+        """The GPU status remains in row 4 alongside the output controls,
+        rather than leaving a blank row below the quality controls."""
         info = self.gui.lut_export_row.grid_info()
         self.assertEqual(int(info['row']), 4)
-        info = self.gui.resolution_frame.grid_info()
+        self.assertIs(self.gui.gpu_status_label.master, self.gui.control_frame)
+        info = self.gui.gpu_status_label.grid_info()
         self.assertEqual(int(info['row']), 4)
-        self.assertIs(self.gui.gpu_status_label.master, self.gui.resolution_frame)
+        self.assertEqual(int(info['column']), 2)
         info = self.gui.display_image_checkbutton.grid_info()
         self.assertEqual(int(info['row']), 5)
 

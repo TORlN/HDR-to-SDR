@@ -6,7 +6,7 @@ import webbrowser
 from typing import TypeVar
 from tkinter import filedialog, messagebox
 from tkinter import ttk
-from dark_theme import apply_dark_theme
+from dark_theme import ACCENT, DISABLED, FG, FIELD, apply_dark_theme
 from conversion import ConversionRequest, conversion_manager
 from tk_conversion_view import TkConversionView
 from utils import (get_video_properties, get_maxcll, TONEMAP,
@@ -530,7 +530,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.tonemap_combobox.grid(row=0, column=0, padx=(0, 5))
         self.tonemap_combobox.bind('<<ComboboxSelected>>', self._on_tonemap_selected)
         info_button_tonemap = ttk.Label(self.tonemap_frame, text="ⓘ", cursor="hand2")
-        info_button_tonemap.grid(row=0, column=1)
+        info_button_tonemap.grid(row=0, column=2)
         tooltip_text_tonemap = (
             "Reinhard: Basic HDR to SDR conversion\n"
             "Mobius: Natural-looking conversion\n"
@@ -580,16 +580,20 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.bit_depth_12_radio.grid(row=0, column=2, padx=(5, 0))
         self.bit_depth_frame.grid_remove()
 
-        self.resolution_frame = ttk.Frame(self.control_frame)
-        self.resolution_frame.grid(row=4, column=2, sticky=tk.W, padx=(5, 0), pady=(5, 0))
-        self.resolution_menu = tk.Menu(self.resolution_frame, tearoff=False)
+        self.resolution_frame = ttk.Frame(self.tonemap_frame)
+        self.resolution_frame.grid(row=0, column=1, sticky=tk.W, padx=(0, 5))
+        self.resolution_menu = tk.Menu(
+            self.resolution_frame, tearoff=False, background=FIELD,
+            foreground=FG, activebackground=ACCENT, activeforeground=FG,
+            disabledforeground=DISABLED,
+        )
         self.resolution_menubutton = ttk.Menubutton(
             self.resolution_frame, textvariable=self.resolution_display_var,
             menu=self.resolution_menu, state='disabled')
         self.resolution_menubutton.grid(row=0, column=0)
 
-        self.gpu_status_label = ttk.Label(self.resolution_frame, text='')
-        self.gpu_status_label.grid(row=0, column=1, sticky=tk.W, padx=(10, 0))
+        self.gpu_status_label = ttk.Label(self.control_frame, text='')
+        self.gpu_status_label.grid(row=4, column=2, sticky=tk.W, padx=(5, 0), pady=(5, 0))
 
         self.custom_resolution_frame = ttk.Frame(self.resolution_frame)
         self.custom_resolution_frame.grid(

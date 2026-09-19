@@ -86,6 +86,13 @@ def apply_dark_theme(root):
               selectbackground=[('readonly', FIELD)],
               selectforeground=[('readonly', FG)])
 
+    style.configure('TMenubutton', background=BTN, foreground=FG,
+                    arrowcolor=FG, bordercolor=BORDER, padding=4)
+    style.map('TMenubutton',
+              background=[('active', BTN_HOVER)],
+              foreground=[('active', FG), ('disabled', DISABLED)],
+              bordercolor=[('focus', ACCENT)])
+
     # Sliders: pin fill + border + both bevel colors to accent, so clam's
     # normal light/dark bevel doesn't show as "blue edges, dark middle".
     for orient in ('Horizontal', 'Vertical'):

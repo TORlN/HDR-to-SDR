@@ -446,6 +446,45 @@ class TestPreviewScaling(unittest.TestCase):
         vf = mock_run.call_args[0][0][mock_run.call_args[0][0].index('-vf') + 1]
         self.assertIn('scale=960:540', vf)
 
+    @patch('src.utils.get_lut_filter_path', return_value='FAKE_LUT_PATH')
+    @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
+    @patch('src.utils.run_ffmpeg_command', return_value=_VALID_PNG)
+    def test_cpu_conversion_scales_output_then_fits_pane(
+            self, mock_run, _props, _lut_path):
+        extract_frame_with_conversion(
+            'in.mp4', gamma=1.0, width=960, height=540,
+            output_width=1920, output_height=1080)
+
+        cmd = mock_run.call_args[0][0]
+        vf = cmd[cmd.index('-vf') + 1]
+        self.assertEqual(vf, (
+            'zscale=t=linear:npl=100,tonemap=reinhard,'
+            'zscale=t=bt709:m=bt709:r=tv,'
+            'lut3d=file=FAKE_LUT_PATH:interp=tetrahedral,'
+            'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709,'
+            'eq=gamma=1.0,scale=1920:1080:flags=lanczos,'
+            'scale=960:540:force_original_aspect_ratio=decrease'
+        ))
+
+    @patch('src.utils.get_lut_filter_path', return_value='FAKE_LUT_PATH')
+    @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
+    @patch('src.utils.run_ffmpeg_command', return_value=_VALID_PNG)
+    def test_cpu_conversion_without_output_size_preserves_filter(
+            self, mock_run, _props, _lut_path):
+        extract_frame_with_conversion(
+            'in.mp4', gamma=1.0, width=960, height=540)
+
+        cmd = mock_run.call_args[0][0]
+        vf = cmd[cmd.index('-vf') + 1]
+        self.assertEqual(vf, (
+            'zscale=t=linear:npl=100,tonemap=reinhard,'
+            'zscale=t=bt709:m=bt709:r=tv,'
+            'lut3d=file=FAKE_LUT_PATH:interp=tetrahedral,'
+            'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709,'
+            'eq=gamma=1.0,'
+            'scale=960:540:force_original_aspect_ratio=decrease'
+        ))
+
     @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
     @patch('src.utils.run_ffmpeg_command', return_value=_VALID_PNG)
     def test_extract_frame_scale_does_not_upscale(self, mock_run, _props):
@@ -1543,6 +1582,45 @@ class TestExtractFramesWithConversionBatch(unittest.TestCase):
         self.assertIn('reinhard', filter_arg)
         self.assertNotIn('Reinhard', filter_arg)
 
+    @patch('src.utils.get_lut_filter_path', return_value='FAKE_LUT_PATH')
+    @patch('src.utils.subprocess.Popen')
+    def test_output_size_scales_before_pane_fit(self, mock_popen, _lut_path):
+        self._popen_ok(mock_popen, 1)
+        extract_frames_with_conversion_batch(
+            'vid.mkv', [5.0], 1.0, 'reinhard', 960, 540,
+            output_width=1920, output_height=1080)
+
+        cmd = mock_popen.call_args[0][0]
+        filter_complex = cmd[cmd.index('-filter_complex') + 1]
+        self.assertEqual(filter_complex, (
+            '[0:v]trim=end_frame=1,setpts=PTS-STARTPTS,'
+            'zscale=t=linear:npl=100,tonemap=reinhard,'
+            'zscale=t=bt709:m=bt709:r=tv,'
+            'lut3d=file=FAKE_LUT_PATH:interp=tetrahedral,'
+            'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709,'
+            'eq=gamma=1.0,scale=1920:1080:flags=lanczos,'
+            'scale=960:540:force_original_aspect_ratio=decrease[out]'
+        ))
+
+    @patch('src.utils.get_lut_filter_path', return_value='FAKE_LUT_PATH')
+    @patch('src.utils.subprocess.Popen')
+    def test_omitted_output_size_preserves_filter(self, mock_popen, _lut_path):
+        self._popen_ok(mock_popen, 1)
+        extract_frames_with_conversion_batch(
+            'vid.mkv', [5.0], 1.0, 'reinhard', 960, 540)
+
+        cmd = mock_popen.call_args[0][0]
+        filter_complex = cmd[cmd.index('-filter_complex') + 1]
+        self.assertEqual(filter_complex, (
+            '[0:v]trim=end_frame=1,setpts=PTS-STARTPTS,'
+            'zscale=t=linear:npl=100,tonemap=reinhard,'
+            'zscale=t=bt709:m=bt709:r=tv,'
+            'lut3d=file=FAKE_LUT_PATH:interp=tetrahedral,'
+            'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709,'
+            'eq=gamma=1.0,'
+            'scale=960:540:force_original_aspect_ratio=decrease[out]'
+        ))
+
 
 class TestProbeHdrMetadata(unittest.TestCase):
     """_probe_hdr_metadata returns MaxCLL, MAXFALL, and mastering peak from the first frame."""
@@ -1724,6 +1802,50 @@ class TestExtractFrameWithGpuConversion(unittest.TestCase):
             extract_frame_with_gpu_conversion(
                 'input.mp4', gamma=1.0, tonemapper='spline', time_position=1.0)
 
+    @patch('src.utils.get_lut_filter_path', return_value='FAKE_LUT_PATH')
+    @patch('src.utils.run_ffmpeg_command', return_value=_VALID_PNG)
+    @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
+    def test_scales_output_in_libplacebo_then_fits_pane(
+            self, _props, mock_run, _lut_path):
+        extract_frame_with_gpu_conversion(
+            'input.mp4', gamma=1.0, tonemapper='bt.2390',
+            width=960, height=540, output_width=1920, output_height=1080)
+
+        cmd = mock_run.call_args[0][0]
+        vf = cmd[cmd.index('-vf') + 1]
+        self.assertEqual(vf, (
+            'format=p010,hwupload,'
+            'libplacebo=w=1920:h=1080:'
+            'upscaler=ewa_lanczos:downscaler=ewa_lanczos:'
+            'tonemapping=bt.2390:colorspace=bt709:color_primaries=auto:'
+            'color_trc=bt709:range=tv:peak_detect=1:format=rgba,'
+            'hwdownload,format=rgba,'
+            'lut3d=file=FAKE_LUT_PATH:interp=tetrahedral,'
+            'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709,'
+            'scale=960:540:force_original_aspect_ratio=decrease'
+        ))
+
+    @patch('src.utils.get_lut_filter_path', return_value='FAKE_LUT_PATH')
+    @patch('src.utils.run_ffmpeg_command', return_value=_VALID_PNG)
+    @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
+    def test_omitted_output_size_preserves_filter(
+            self, _props, mock_run, _lut_path):
+        extract_frame_with_gpu_conversion(
+            'input.mp4', gamma=1.0, tonemapper='bt.2390',
+            width=960, height=540)
+
+        cmd = mock_run.call_args[0][0]
+        vf = cmd[cmd.index('-vf') + 1]
+        self.assertEqual(vf, (
+            'format=p010,hwupload,'
+            'libplacebo=w=960:h=540:'
+            'tonemapping=bt.2390:colorspace=bt709:color_primaries=auto:'
+            'color_trc=bt709:range=tv:peak_detect=1:format=rgba,'
+            'hwdownload,format=rgba,'
+            'lut3d=file=FAKE_LUT_PATH:interp=tetrahedral,'
+            'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709'
+        ))
+
 
 class TestExtractFramesWithGpuConversionBatch(unittest.TestCase):
     """Loops the single-frame GPU extraction -- no batched Vulkan filter graph
@@ -1746,6 +1868,18 @@ class TestExtractFramesWithGpuConversionBatch(unittest.TestCase):
             'vid.mkv', [], 1.0, 'bt.2390', 960, 540)
         self.assertEqual(result, [])
         mock_single.assert_not_called()
+
+    @patch('src.utils.extract_frame_with_gpu_conversion')
+    def test_forwards_output_size_to_each_frame(self, mock_single):
+        mock_single.side_effect = ['img0', 'img1']
+        result = extract_frames_with_gpu_conversion_batch(
+            'vid.mkv', [5.0, 15.0], 1.0, 'bt.2390', 960, 540,
+            output_width=1920, output_height=1080)
+
+        self.assertEqual(result, ['img0', 'img1'])
+        for call in mock_single.call_args_list:
+            self.assertEqual(call.kwargs['output_width'], 1920)
+            self.assertEqual(call.kwargs['output_height'], 1080)
 
 
 class TestLutPathResolution(unittest.TestCase):

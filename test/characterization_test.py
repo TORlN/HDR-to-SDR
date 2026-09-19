@@ -279,7 +279,8 @@ class TestPreviewWorkerThread(unittest.TestCase):
 
         seen = {}
 
-        def fake_extract(video_path, time_position, tonemapper, lut_enabled=True, process_started=None):
+        def fake_extract(video_path, time_position, tonemapper, lut_enabled=True,
+                         process_started=None, file_generation=None):
             seen['thread'] = threading.current_thread()
             seen['time_position'] = time_position
             seen['tonemapper'] = tonemapper
@@ -608,7 +609,7 @@ class TestPreviewPool(unittest.TestCase):
             t = round((idx / 6) * duration, 3)
             orig[('v.mkv', t)] = MagicMock()
             # Cache key's 5th element is use_gpu -- False here (no gpu_accel_var, CPU-capable tonemapper).
-            conv[('v.mkv', t, 'reinhard', True, False)] = MagicMock()
+            conv[('v.mkv', t, 'reinhard', True, False, None)] = MagicMock()
         gui._preview_cache_original = orig
         gui._preview_cache_converted = conv
         gui._preview_pool = MagicMock()
@@ -681,8 +682,8 @@ class TestPreviewPool(unittest.TestCase):
         gui._prewarm_batch_converted('v.mkv', [10.0], 'mobius', generation=1)
 
         # Cache key's 5th element is use_gpu -- False here (no gpu_accel_var, CPU-capable tonemapper).
-        self.assertIn(('v.mkv', 10.0, 'mobius', True, False), gui._preview_cache_converted)
-        self.assertIs(gui._preview_cache_converted[('v.mkv', 10.0, 'mobius', True, False)], img)
+        self.assertIn(('v.mkv', 10.0, 'mobius', True, False, None), gui._preview_cache_converted)
+        self.assertIs(gui._preview_cache_converted[('v.mkv', 10.0, 'mobius', True, False, None)], img)
 
     @patch('src.preview.extract_frames_with_conversion_batch')
     def test_batch_converted_bails_when_stale(self, mock_batch):
@@ -783,7 +784,7 @@ class TestGpuOnlyTonemapperPreviewDispatch(unittest.TestCase):
         mock_gpu_batch.assert_called_once()
         mock_cpu_batch.assert_not_called()
         # Cache key's 5th element is use_gpu -- True here since 'spline' is GPU-only.
-        self.assertIn(('v.mkv', 10.0, 'spline', True, True), gui._preview_cache_converted)
+        self.assertIn(('v.mkv', 10.0, 'spline', True, True, None), gui._preview_cache_converted)
 
     @patch('src.preview.extract_frames_with_gpu_conversion_batch', return_value=['g0'])
     @patch('src.preview.extract_frames_with_conversion_batch')
@@ -803,8 +804,8 @@ class TestGpuOnlyTonemapperPreviewDispatch(unittest.TestCase):
             'v.mkv', [10.0], 1.0, 'spline', 3840, 2160,
             lut_enabled=False, process_started=ANY)
         mock_cpu_batch.assert_not_called()
-        self.assertIn(('v.mkv', 10.0, 'spline', False, True), gui._preview_cache_converted)
-        self.assertNotIn(('v.mkv', 10.0, 'spline', True, True), gui._preview_cache_converted)
+        self.assertIn(('v.mkv', 10.0, 'spline', False, True, None), gui._preview_cache_converted)
+        self.assertNotIn(('v.mkv', 10.0, 'spline', True, True, None), gui._preview_cache_converted)
 
     @patch('src.preview.extract_frames_with_gpu_conversion_batch')
     @patch('src.preview.extract_frames_with_conversion_batch', return_value=['c0'])
@@ -846,7 +847,7 @@ class TestPreviewWorkerThreadRender(unittest.TestCase):
         ])
         self.assertEqual(mock_photo.call_count, 2)
         gui.original_image_label.config.assert_called_with(image=photo)
-        gui.converted_image_label.config.assert_called_with(image=photo)
+        gui.converted_image_label.config.assert_called_with(image=photo, text='')
         self.assertIs(gui.original_image, mock_img)
         self.assertIs(gui.converted_image_base, mock_img)
         self.assertEqual(gui.last_time_position, 12.0)
@@ -1282,7 +1283,7 @@ class TestCustomSeek(unittest.TestCase):
         converted = MagicMock()
         gui._preview_cache_original = {('in.mp4', 5.0): original}
         gui._preview_cache_converted = {
-            ('in.mp4', 5.0, 'mobius', True, False): converted,
+            ('in.mp4', 5.0, 'mobius', True, False, None): converted,
         }
         gui.custom_time_var.get.return_value = '10'
 
@@ -1488,7 +1489,7 @@ class TestPreviewExtractionCache(unittest.TestCase):
         gui._preview_processes = {4: {running}}
         gui._preview_futures = {4: {queued}}
         gui._active_preview_cache_position = ('in.mp4', 5.0)
-        gui._last_displayed_preview_key = ('in.mp4', 5.0, 'hable', True, False)
+        gui._last_displayed_preview_key = ('in.mp4', 5.0, 'hable', True, False, None)
 
         gui._reset_preview_cache()
 
@@ -1511,8 +1512,8 @@ class TestPreviewExtractionCache(unittest.TestCase):
         original = MagicMock()
         old_tonemapper = MagicMock()
         displayed_tonemapper = MagicMock()
-        old_key = ('in.mp4', 5.0, 'mobius', True, False)
-        displayed_key = ('in.mp4', 5.0, 'hable', True, False)
+        old_key = ('in.mp4', 5.0, 'mobius', True, False, None)
+        displayed_key = ('in.mp4', 5.0, 'hable', True, False, None)
         gui._last_displayed_preview_key = displayed_key
         gui._preview_cache_original = {('in.mp4', 5.0): original}
         gui._preview_cache_converted = {
@@ -1540,8 +1541,8 @@ class TestPreviewExtractionCache(unittest.TestCase):
         first.getbands.return_value = ('R', 'G', 'B')
         extra = MagicMock(width=1, height=1)
         extra.getbands.return_value = ('R', 'G', 'B')
-        first_key = ('in.mp4', 5.0, 'mobius', True, False)
-        extra_key = ('in.mp4', 5.0, 'hable', True, False)
+        first_key = ('in.mp4', 5.0, 'mobius', True, False, None)
+        extra_key = ('in.mp4', 5.0, 'hable', True, False, None)
 
         gui._cache_store(gui._preview_cache_converted, first_key, first)
         gui._cache_store(gui._preview_cache_converted, extra_key, extra)
@@ -1557,9 +1558,9 @@ class TestPreviewExtractionCache(unittest.TestCase):
     ):
         old_position = ('in.mp4', 5.0)
         new_position = ('in.mp4', 10.0)
-        old_displayed_key = (*old_position, 'hable', True, False)
-        new_fallback_key = (*new_position, 'mobius', True, False)
-        new_requested_key = (*new_position, 'hable', True, False)
+        old_displayed_key = (*old_position, 'hable', True, False, None)
+        new_fallback_key = (*new_position, 'mobius', True, False, None)
+        new_requested_key = (*new_position, 'hable', True, False, None)
 
         def image():
             value = MagicMock(width=1, height=1)
@@ -1610,8 +1611,8 @@ class TestPreviewExtractionCache(unittest.TestCase):
         first.getbands.return_value = ('R', 'G', 'B')
         second = MagicMock(width=1, height=1)
         second.getbands.return_value = ('R', 'G', 'B')
-        first_key = ('in.mp4', 5.0, 'mobius', True, False)
-        second_key = ('in.mp4', 5.0, 'hable', True, False)
+        first_key = ('in.mp4', 5.0, 'mobius', True, False, None)
+        second_key = ('in.mp4', 5.0, 'hable', True, False, None)
 
         gui._cache_store(gui._preview_cache_converted, first_key, first)
         gui._cache_store(gui._preview_cache_converted, second_key, second)
@@ -1631,8 +1632,8 @@ class TestPreviewExtractionCache(unittest.TestCase):
         old.getbands.return_value = ('R', 'G', 'B')
         displayed = MagicMock(width=1, height=1)
         displayed.getbands.return_value = ('R', 'G', 'B')
-        old_key = ('old.mp4', 5.0, 'mobius', True, False)
-        displayed_key = ('in.mp4', 5.0, 'hable', True, False)
+        old_key = ('old.mp4', 5.0, 'mobius', True, False, None)
+        displayed_key = ('in.mp4', 5.0, 'hable', True, False, None)
         gui._last_displayed_preview_key = displayed_key
 
         gui._cache_store(gui._preview_cache_converted, old_key, old)

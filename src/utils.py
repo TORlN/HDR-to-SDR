@@ -375,7 +375,8 @@ def build_libplacebo_filter(gamma, tonemapper, width: 'int | str' = 'iw',
                             height: 'int | str' = 'ih',
                             cuda_input: bool = False,
                             lut_enabled: bool = True,
-                            bit_depth: int = 8) -> str:
+                            bit_depth: int = 8,
+                            scaler: str | None = None) -> str:
     """Build the GPU tonemapping filter chain (HDR->SDR) using libplacebo.
 
     Always peak_detect=1. cuda_input=False uploads from system RAM
@@ -397,6 +398,7 @@ def build_libplacebo_filter(gamma, tonemapper, width: 'int | str' = 'iw',
         lut_enabled=False restores that fast path.
     bit_depth: requested encoder depth. The 10-bit GPU path retains precision
         through a 16-bit RGB LUT intermediate before returning to p010le.
+    scaler: optional libplacebo up/down filter for an explicit resize target.
     """
     tm = tonemapper.lower()
     prefix = ('hwmap=derive_device=vulkan,'
@@ -412,8 +414,9 @@ def build_libplacebo_filter(gamma, tonemapper, width: 'int | str' = 'iw',
     ten_bit_output = bit_depth == 10
     download_fmt = ('rgba64le' if ten_bit_output else 'rgba') if lut_enabled else (
         'p010le' if ten_bit_output else 'nv12')
+    scaling = f'upscaler={scaler}:downscaler={scaler}:' if scaler is not None else ''
     libplacebo = (
-        f'libplacebo=w={width}:h={height}:tonemapping={tm}:'
+        f'libplacebo=w={width}:h={height}:{scaling}tonemapping={tm}:'
         f'colorspace=bt709:color_primaries={primaries}:color_trc=bt709:range=tv:'
         f'peak_detect=1:format={download_fmt}'
     )
@@ -631,11 +634,15 @@ def extract_frames_with_conversion_batch(
     height: int,
     lut_enabled: bool = True,
     process_started=None,
+    output_width: 'int | None' = None,
+    output_height: 'int | None' = None,
 ) -> 'list[Image.Image]':
     """Tonemap-convert multiple frames in a single ffmpeg process.
 
     Applies the same CPU tonemap filter chain as extract_frame_with_conversion
     but to all N frames in one pass, reducing process count from N to 1.
+    output_width/output_height optionally scale the converted frame before it
+    is fitted to the width/height preview pane.
 
     lut_enabled: TEMPORARY, dev-verification only (see FFMPEG_FILTER_LEGACY_NO_LUT).
     """
@@ -653,6 +660,12 @@ def extract_frames_with_conversion_batch(
     else:
         tone_filter = FFMPEG_FILTER_LEGACY_NO_LUT.format(
             gamma=gamma, width=width, height=height, tonemapper=tonemapper.lower()
+        )
+    if output_width is not None and output_height is not None:
+        pane_scale = f'scale={width}:{height}:force_original_aspect_ratio=decrease'
+        tone_filter = (
+            f'{tone_filter.removesuffix(pane_scale)}'
+            f'scale={output_width}:{output_height}:flags=lanczos,{pane_scale}'
         )
     cmd = [FFMPEG_EXECUTABLE]
     for t in time_positions:
@@ -679,11 +692,14 @@ def extract_frames_with_conversion_batch(
 def extract_frame_with_conversion(video_path, gamma, tonemapper='reinhard',
                                   time_position=None, width: 'int | str' = 'iw',
                                   height: 'int | str' = 'ih', lut_enabled: bool = True,
-                                  process_started=None):
+                                  process_started=None,
+                                  output_width: 'int | None' = None,
+                                  output_height: 'int | None' = None):
     """Extract a frame and apply tonemapping conversion; returns a PIL Image.
 
-    width/height: default ('iw'/'ih') keeps source resolution; pass concrete
-    sizes to have ffmpeg scale the preview down for snappier decoding.
+    width/height are the preview pane dimensions. Their default ('iw'/'ih')
+    keeps source resolution. output_width/output_height optionally scale the
+    converted frame before it is fitted to that pane.
     lut_enabled: TEMPORARY, dev-verification only -- see FFMPEG_FILTER_LEGACY_NO_LUT."""
     properties = get_video_properties(video_path)
     if not properties or properties['duration'] == 0:
@@ -703,6 +719,12 @@ def extract_frame_with_conversion(video_path, gamma, tonemapper='reinhard',
         filter_str = FFMPEG_FILTER_LEGACY_NO_LUT.format(
             gamma=gamma, width=width, height=height, tonemapper=tonemapper.lower()
         )
+    if output_width is not None and output_height is not None:
+        pane_scale = f'scale={width}:{height}:force_original_aspect_ratio=decrease'
+        filter_str = (
+            f'{filter_str.removesuffix(pane_scale)}'
+            f'scale={output_width}:{output_height}:flags=lanczos,{pane_scale}'
+        )
     cmd = [
         FFMPEG_EXECUTABLE, '-ss', str(target_time), '-i', video_path,
         '-vf', filter_str,
@@ -721,11 +743,16 @@ def extract_frame_with_conversion(video_path, gamma, tonemapper='reinhard',
 def extract_frame_with_gpu_conversion(video_path, gamma, tonemapper='bt.2390',
                                       time_position=None, width: 'int | str' = 'iw',
                                       height: 'int | str' = 'ih', lut_enabled: bool = True,
-                                      process_started=None):
+                                      process_started=None,
+                                      output_width: 'int | None' = None,
+                                      output_height: 'int | None' = None):
     """GPU (libplacebo) counterpart to extract_frame_with_conversion, for
     tonemappers with no CPU implementation (see GPU_ONLY_TONEMAPPERS). Uses
     the plain-Vulkan (CPU-decode) path -- CUDA interop isn't worth it for a
     single preview frame.
+
+    output_width/output_height optionally set the libplacebo scaling target;
+    width/height remain the final preview pane dimensions.
 
     lut_enabled: TEMPORARY, dev-verification only -- see build_libplacebo_filter.
     """
@@ -735,8 +762,14 @@ def extract_frame_with_gpu_conversion(video_path, gamma, tonemapper='bt.2390',
 
     target_time = properties['duration'] / 3 if time_position is None else time_position
 
-    filter_str = build_libplacebo_filter(
-        gamma, tonemapper, width=width, height=height, lut_enabled=lut_enabled)
+    if output_width is not None and output_height is not None:
+        filter_str = build_libplacebo_filter(
+            gamma, tonemapper, width=output_width, height=output_height,
+            lut_enabled=lut_enabled, scaler='ewa_lanczos')
+        filter_str += f',scale={width}:{height}:force_original_aspect_ratio=decrease'
+    else:
+        filter_str = build_libplacebo_filter(
+            gamma, tonemapper, width=width, height=height, lut_enabled=lut_enabled)
     cmd = [FFMPEG_EXECUTABLE] + VULKAN_DEVICE_ARGS + [
         '-ss', str(target_time), '-i', video_path,
         '-vf', filter_str,
@@ -761,12 +794,15 @@ def extract_frames_with_gpu_conversion_batch(
     height: int,
     lut_enabled: bool = True,
     process_started=None,
+    output_width: 'int | None' = None,
+    output_height: 'int | None' = None,
 ) -> 'list[Image.Image]':
     """GPU counterpart to extract_frames_with_conversion_batch.
 
     Loops extract_frame_with_gpu_conversion once per position rather than
     building a shared multi-input Vulkan filter graph -- that's materially
     more complex and not worth it for this narrower, heavier-weight path.
+    Output dimensions are forwarded to each individual extraction.
     """
     if not time_positions:
         return []
@@ -774,7 +810,8 @@ def extract_frames_with_gpu_conversion_batch(
         extract_frame_with_gpu_conversion(
             video_path, gamma, tonemapper=tonemapper,
             time_position=t, width=width, height=height, lut_enabled=lut_enabled,
-            process_started=process_started)
+            process_started=process_started, output_width=output_width,
+            output_height=output_height)
         for t in time_positions
     ]
 

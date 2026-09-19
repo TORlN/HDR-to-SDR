@@ -11,6 +11,7 @@ from typing import Any
 from conversion_view import ConversionView, Notice
 import ffmpeg_command
 import platform_utils
+from resolution import ResolutionTarget, validate_target
 from utils import (get_video_properties, FFMPEG_EXECUTABLE,
                    vulkan_libplacebo_available, vulkan_cuda_interop_available,
                    _communicate_with_timeout,
@@ -40,6 +41,7 @@ class ConversionRequest:
     bit_depth: int = 8
     licensed: bool = False
     lut_enabled: bool = True
+    resolution: ResolutionTarget | None = None
 
 
 @dataclass(frozen=True)
@@ -154,6 +156,17 @@ class ConversionManager:
             self._reject(
                 "Could not determine the video's duration, so it can't be converted.",
                 view)
+            return False
+
+        try:
+            validate_target(
+                int(properties.get('width', 0)),
+                int(properties.get('height', 0)),
+                request.resolution,
+                request.licensed,
+            )
+        except (TypeError, ValueError) as error:
+            self._reject(str(error), view)
             return False
 
         descriptor, temporary_output_path = tempfile.mkstemp(

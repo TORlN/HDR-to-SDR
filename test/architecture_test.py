@@ -26,23 +26,25 @@ _SRC = os.path.join(_ROOT, 'src')
 # merely permits. (main.pyw imports tkinterdnd2, not tkinter, and would fail
 # an assertion that True modules must import it.)
 _ALLOWED: "dict[str, tuple[frozenset[str], bool]]" = {
+    'resolution':         (frozenset(), False),
     'settings':           (frozenset({'platform_utils'}), False),
     'updater':            (frozenset(), False),
     'license_errors':     (frozenset(), False),
     'utils':              (frozenset({'platform_utils'}), False),
     'conversion_view':    (frozenset(), False),
     'platform_utils':     (frozenset(), False),
-    'ffmpeg_command':     (frozenset({'conversion_view', 'utils'}), False),
+    'ffmpeg_command':     (frozenset({'conversion_view', 'utils', 'resolution'}), False),
     'licensing':          (frozenset({'license_errors'}), False),
-    'conversion':         (frozenset({'utils', 'conversion_view', 'ffmpeg_command', 'platform_utils'}), False),
+    'conversion':         (frozenset({'utils', 'conversion_view', 'ffmpeg_command',
+                                      'platform_utils', 'resolution'}), False),
     'dark_theme':         (frozenset(), True),
     'dialog_theme':       (frozenset(), True),
     'tk_conversion_view': (frozenset({'conversion_view'}), True),
-    'preview':            (frozenset({'utils'}), True),
+    'preview':            (frozenset({'utils', 'resolution'}), True),
     'dialogs':            (frozenset({'dialog_theme', 'licensing', 'updater'}), True),
     'gui':                (frozenset({'dark_theme', 'conversion', 'tk_conversion_view',
                                       'utils', 'settings', 'dialogs', 'preview',
-                                      'updater'}), True),
+                                      'updater', 'resolution'}), True),
     'main':               (frozenset({'gui', 'licensing', 'utils', 'platform_utils', 'updater'}), True),
 }
 

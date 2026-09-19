@@ -44,7 +44,7 @@ _ALLOWED: "dict[str, tuple[frozenset[str], bool]]" = {
     'dialogs':            (frozenset({'dialog_theme', 'licensing', 'updater'}), True),
     'gui':                (frozenset({'dark_theme', 'conversion', 'tk_conversion_view',
                                       'utils', 'settings', 'dialogs', 'preview',
-                                      'updater'}), True),
+                                      'updater', 'resolution'}), True),
     'main':               (frozenset({'gui', 'licensing', 'utils', 'platform_utils', 'updater'}), True),
 }
 

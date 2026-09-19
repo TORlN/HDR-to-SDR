@@ -22,6 +22,8 @@ from concurrent.futures import Future, ThreadPoolExecutor
 
 from dialogs import _LicenseDialog, _UpdateDialog
 from preview import DEFAULT_MIN_SIZE, _PREVIEW_POOL_WORKERS, _HDRPreviewMixin
+from resolution import (PRESETS, ResolutionTarget, output_suffix,
+                        preset_for_short_edge, validate_target)
 # Imported as a module object, not `from pro.batch import _BatchMixin` --
 # a `from`-import of an unresolved module makes pyright bind the name to
 # the import declaration, not the free-edition `class` below (same trick
@@ -189,6 +191,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.bitrate_var.trace_add('write', self._sync_quality_display)
         self._sync_quality_display()
         self.format_var = tk.StringVar(value=_s['filetype'])
+        self.resolution_target: ResolutionTarget | None = None
+        self.resolution_display_var = tk.StringVar(value='Loading resolution...')
+        self._output_path_is_auto = True
         # Not persisted -- per-source only. Queued files keep their own choice
         # via settings['bit_depth_choice'], restored on (re)load.
         self.bit_depth_var = tk.StringVar(value='10-bit')
@@ -378,6 +383,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.open_after_conversion_checkbutton, self.display_image_checkbutton,
             self.input_entry, self.output_entry, self.gamma_entry,
             self.tonemap_combobox, self.lut_export_checkbutton,
+            self.resolution_menubutton,
             *self.frame_buttons, self.bit_depth_10_radio, self.batch_listbox,
         ]
         premium = [
@@ -396,6 +402,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         for element in self.interactable_elements:
             state = 'readonly' if isinstance(element, ttk.Combobox) else 'normal'
             element.config(state=state)
+        self._rebuild_resolution_menu()
         self._apply_lut_export_availability()
 
     # ── Window / session ────────────────────────────────────────────────────────
@@ -552,8 +559,16 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.bit_depth_12_radio.grid(row=0, column=2, padx=(5, 0))
         self.bit_depth_frame.grid_remove()
 
-        self.gpu_status_label = ttk.Label(self.control_frame, text='')
-        self.gpu_status_label.grid(row=4, column=2, sticky=tk.E, padx=(15, 0), pady=(5, 0))
+        self.resolution_frame = ttk.Frame(self.control_frame)
+        self.resolution_frame.grid(row=4, column=2, sticky=tk.W, padx=(5, 0), pady=(5, 0))
+        self.resolution_menu = tk.Menu(self.resolution_frame, tearoff=False)
+        self.resolution_menubutton = ttk.Menubutton(
+            self.resolution_frame, textvariable=self.resolution_display_var,
+            menu=self.resolution_menu, state='disabled')
+        self.resolution_menubutton.grid(row=0, column=0)
+
+        self.gpu_status_label = ttk.Label(self.resolution_frame, text='')
+        self.gpu_status_label.grid(row=0, column=1, sticky=tk.W, padx=(10, 0))
 
         self.quality_mode_frame = ttk.Frame(self.control_frame)
         self.quality_mode_frame.grid(row=5, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))
@@ -769,6 +784,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.open_after_conversion_checkbutton, self.display_image_checkbutton,
             self.input_entry, self.output_entry, self.gamma_entry,
             self.tonemap_combobox, self.lut_export_checkbutton,
+            self.resolution_menubutton,
             *self.frame_buttons,
             self.batch_listbox,
             self.quality_slider, self.quality_entry, self.quality_mode_combobox,
@@ -847,6 +863,14 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.input_path_var.set(file_path)
         fmt = self._format_for_input(file_path) if self._licensed else 'MP4'
         self.format_var.set(fmt)
+        self.resolution_target = None
+        if hasattr(self, 'resolution_display_var'):
+            self.resolution_display_var.set('Loading resolution...')
+        if hasattr(self, 'resolution_menu'):
+            self.resolution_menu.delete(0, 'end')
+        if hasattr(self, 'resolution_menubutton'):
+            self.resolution_menubutton.config(state='disabled')
+        self._output_path_is_auto = True
         self.original_image = None
         self.converted_image_base = None
         self._reset_custom_seek()
@@ -858,8 +882,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             if item is not None and item.get('output'):
                 self.output_path_var.set(item['output'])
             else:
-                base = os.path.splitext(file_path)[0]
-                self.output_path_var.set(self._output_path_with_format(f"{base}_sdr", fmt))
+                self.output_path_var.set(
+                    self._default_output_path(file_path, fmt, None))
             self._update_info_label(file_path)
             if item is not None and item.get('settings'):
                 self._restore_settings_dict(item['settings'])
@@ -878,6 +902,14 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._metadata_pending = None
         self.input_path_var.set('')
         self.output_path_var.set('')
+        self.resolution_target = None
+        if hasattr(self, 'resolution_display_var'):
+            self.resolution_display_var.set('Loading resolution...')
+        if hasattr(self, 'resolution_menu'):
+            self.resolution_menu.delete(0, 'end')
+        if hasattr(self, 'resolution_menubutton'):
+            self.resolution_menubutton.config(state='disabled')
+        self._output_path_is_auto = True
         self.original_image = None
         self.converted_image_base = None
         self._converted_preview_base = None
@@ -905,6 +937,22 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         base = os.path.splitext(path)[0]
         return f"{base}.{fmt.lower()}"
 
+    def _default_output_path(
+        self,
+        file_path: str,
+        format_name: str,
+        target: ResolutionTarget | None,
+    ) -> str:
+        """Return the automatic output path for the selected resolution."""
+        base = os.path.splitext(file_path)[0]
+        props = getattr(self, '_cached_props', None)
+        suffix = None
+        if props:
+            suffix = output_suffix(
+                int(props['width']), int(props['height']), target)
+        stem = f'{base}_sdr' + (f'_{suffix}' if suffix else '')
+        return self._output_path_with_format(stem, format_name)
+
     @classmethod
     def _format_for_input(cls, input_path: str) -> str:
         """Pick a sensible default output container from the input's extension."""
@@ -927,7 +975,64 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         gamma_entry) -- without this, editing the box for a queued item is
         silently discarded the moment the batch actually runs, since
         _start_next_batch_item reads item['output'], not the live var."""
+        self._output_path_is_auto = False
         self._write_back_current_settings()
+
+    def _rebuild_resolution_menu(self) -> None:
+        """Show source and lower Community presets from greatest to least."""
+        if not hasattr(self, 'resolution_menu'):
+            return
+        self.resolution_menu.delete(0, 'end')
+        props = getattr(self, '_cached_props', None)
+        if not props:
+            self.resolution_display_var.set('Loading resolution...')
+            self.resolution_menubutton.config(state='disabled')
+            return
+
+        width = int(props['width'])
+        height = int(props['height'])
+        source_short = min(width, height)
+        source_preset = preset_for_short_edge(source_short)
+        source_label = source_preset.label if source_preset else f'{width} x {height}'
+        self.resolution_menu.add_command(
+            label=f'{source_label} (Current)',
+            command=lambda: self._select_resolution_target(None),
+            state='disabled' if self.resolution_target is None else 'normal',
+        )
+        for preset in PRESETS:
+            if preset.short_edge < source_short:
+                self.resolution_menu.add_command(
+                    label=preset.label,
+                    command=lambda target=ResolutionTarget(preset.short_edge):
+                        self._select_resolution_target(target),
+                )
+
+        if self.resolution_target is None:
+            self.resolution_display_var.set(source_label)
+        else:
+            selected = preset_for_short_edge(self.resolution_target.short_edge)
+            self.resolution_display_var.set(
+                selected.label if selected else str(self.resolution_target.short_edge))
+        state = 'disabled' if self._conversion_controls_disabled else 'normal'
+        self.resolution_menubutton.config(state=state)
+
+    def _select_resolution_target(
+        self, target: ResolutionTarget | None,
+    ) -> None:
+        """Select a Community resolution and refresh only the converted preview."""
+        props = getattr(self, '_cached_props', None)
+        if not props:
+            return
+        validate_target(
+            int(props['width']), int(props['height']), target, licensed=False)
+        self.resolution_target = target
+        self._rebuild_resolution_menu()
+        if self._output_path_is_auto:
+            self.output_path_var.set(self._default_output_path(
+                self.input_path_var.get(), self.format_var.get(), target))
+        self._reset_converted_preview_cache()
+        self._show_preview_loading()
+        self.update_frame_preview()
 
     # ── Output Color Depth ──────────────────────────────────────────────────────
 
@@ -1402,6 +1507,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._cached_props = props
         self._cached_maxcll = maxcll
         self._metadata_pending = None
+        self._rebuild_resolution_menu()
         self._bitrate_needs_reseed = True  # reseed to 50% of this file, not a stale value
         if hasattr(self, 'quality_slider'):
             self._apply_quality_mode()
@@ -1516,6 +1622,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 tonemapper=tonemapper, quality=quality, quality_mode=quality_mode,
                 bit_depth=bit_depth, licensed=self._licensed,
                 lut_enabled=self._effective_lut_enabled(),
+                resolution=getattr(self, 'resolution_target', None),
             )
             view = TkConversionView(self, self.progress_var,
                                     self.interactable_elements, self.cancel_button)

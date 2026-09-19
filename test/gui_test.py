@@ -6,6 +6,7 @@ from unittest.mock import patch, MagicMock, call
 import tkinter as tk
 from tkinter import ttk, DoubleVar, BooleanVar
 from src.gui import HDRConverterGUI
+from src.resolution import ResolutionTarget
 from PIL import Image
 
 class TestHDRConverterGUI(TestCase):
@@ -304,6 +305,24 @@ class TestHDRConverterGUI(TestCase):
         self.gui.convert_video()
 
         self.assertIs(mock_start.call_args.args[0].licensed, True)  # setUp builds licensed=True
+
+    @patch('src.gui.messagebox.askyesno')
+    @patch('src.gui.HDRConverterGUI.unregister_drop_target')
+    @patch('src.gui.conversion_manager.start')
+    @patch('src.gui.os.path.isfile')
+    def test_video_conversion_forwards_resolution_target(
+        self, mock_isfile, mock_start, _mock_unregister, mock_confirm,
+    ):
+        self._setup_conversion_test(mock_confirm)
+        mock_isfile.return_value = True
+        self.gui.resolution_target = ResolutionTarget(720)
+
+        self.gui.convert_video()
+
+        self.assertEqual(
+            mock_start.call_args.args[0].resolution,
+            ResolutionTarget(720),
+        )
 
     def _assert_frame_updates(self):
         """Helper method to verify frame updates."""

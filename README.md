@@ -24,6 +24,7 @@ The [latest release](https://github.com/TORlN/HDR-to-SDR/releases) is one freemi
 - **Select Input Video Files**: Browse for video files (`.mp4`, `.mkv`, `.mov`, `.avi`, `.webm`, `.m4v`), or use the "All files" filter for anything else FFmpeg can read.
 - **Drag and Drop**: Drop a single file to load and preview it.
 - **Live Frame Preview**: See the original (HDR) frame next to the converted (SDR) result side by side. Five evenly-spaced frame buttons let you scrub through the video, and the previews scale smoothly as you resize the window.
+- **Output Resolution**: Choose standard downscaling presets below the source resolution, through 480p. Source resolution is the default for each video. The original preview remains the source reference while the converted preview and automatic filename update for the selected preset.
 - **Adjust Gamma Value**: Drag a slider (or type a value) to fine-tune the gamma of the output; the preview updates instantly.
 - **Tonemappers**: Pick between Reinhard, Mobius, Hable, BT.2390, and Spline. BT.2390 and Spline are GPU-only (libplacebo) and shown greyed out until GPU tonemapping is active.
 - **Video Info Strip**: After a file loads, a one-line summary shows resolution, frame rate, codec, HDR/SDR, audio codec, and the probed source bitrate (estimated from the container total when a source, e.g. MKV, doesn't expose a per-stream bitrate). Dolby Vision sources are detected automatically and flagged in this strip.

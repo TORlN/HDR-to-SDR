@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../s
 
 from PIL import Image
 from preview import _HDRPreviewMixin
+from resolution import ResolutionTarget
 
 
 class _FakeGui(_HDRPreviewMixin):
@@ -259,7 +260,10 @@ class TestDisplayFramesReadsLutExportVar(unittest.TestCase):
         gui.tonemap_var = MagicMock(); gui.tonemap_var.get.return_value = tonemapper
         gui.lut_export_var = MagicMock(); gui.lut_export_var.get.return_value = lut_enabled
         gui._preview_pool = MagicMock()
-        gui._preview_pool.submit.side_effect = lambda fn, *a, **k: fn(*a, **k)
+        def submit(fn, *args, **kwargs):
+            fn(*args, **kwargs)
+            return MagicMock()
+        gui._preview_pool.submit.side_effect = submit
         gui._schedule_on_main = lambda cb: cb()
         gui._get_duration = MagicMock(return_value=10.0)
         gui._preview_time_position = MagicMock(return_value=1.0)
@@ -295,6 +299,156 @@ class TestDisplayFramesReadsLutExportVar(unittest.TestCase):
         del gui.lut_export_var
         gui.display_frames('v.mp4')
         self.assertTrue(mock_extract.call_args.args[-1])
+
+
+class TestPreviewResolution(unittest.TestCase):
+    def _gui(self):
+        gui = _FakeGui()
+        gui.resolution_target = ResolutionTarget(720)
+        gui._cached_props = {'width': 1920, 'height': 1080}
+        gui._preview_cache_original = {}
+        gui._preview_cache_converted = {}
+        gui._preview_generation = 3
+        gui._preview_file_generation = 2
+        gui.converted_image_label = MagicMock()
+        gui.original_image_label = MagicMock()
+        return gui
+
+    @patch('preview.extract_frame', return_value=MagicMock())
+    @patch('preview.extract_frame_with_conversion')
+    def test_target_changes_only_converted_cache_and_extraction(self, converted, original):
+        gui = self._gui()
+        converted.side_effect = [MagicMock(), MagicMock()]
+        gui._extract_preview_images('v.mp4', 1.0, 'mobius')
+        gui.resolution_target = ResolutionTarget(480)
+        gui._extract_preview_images('v.mp4', 1.0, 'mobius')
+        gui._extract_preview_images('v.mp4', 1.0, 'mobius')
+        original.assert_called_once()
+        self.assertEqual(converted.call_count, 2)
+        self.assertEqual([(c.kwargs.get('output_width'), c.kwargs.get('output_height'))
+                          for c in converted.call_args_list], [(1280, 720), (852, 480)])
+
+    @patch('preview.get_video_properties', return_value={'width': 1080, 'height': 1920})
+    @patch('preview.extract_frame', return_value=MagicMock())
+    @patch('preview.extract_frame_with_gpu_conversion', return_value=MagicMock())
+    def test_gpu_target_uses_probed_portrait_dimensions(self, converted, original, probe):
+        gui = self._gui()
+        gui._cached_props = None
+        gui.resolution_target = ResolutionTarget(2160)
+        gui._extract_preview_images('v.mp4', 1.0, 'bt.2390')
+        self.assertEqual(converted.call_args.kwargs.get('output_width'), 2160)
+        self.assertEqual(converted.call_args.kwargs.get('output_height'), 3840)
+        probe.assert_called_once_with('v.mp4')
+
+    def test_reset_closes_converted_only_and_invalidates_work_and_display(self):
+        gui = self._gui()
+        original, converted, pane = MagicMock(), MagicMock(), MagicMock()
+        gui._preview_cache_original = {('v.mp4', 1.0): original}
+        gui._preview_cache_converted = {('old',): converted}
+        gui.original_image = original
+        gui.converted_image_base = converted
+        gui._converted_preview_base = pane
+        gui._last_displayed_preview_key = ('old',)
+        gui._duration_cache = ('v.mp4', None, 10.0)
+        future, process = MagicMock(), MagicMock()
+        gui._preview_futures = {2: {future}}
+        gui._preview_processes = {2: {process}}
+        with patch('preview.clear_hdr_metadata_cache') as metadata_reset:
+            gui._reset_converted_preview_cache()
+        self.assertEqual(gui._preview_cache_original, {('v.mp4', 1.0): original})
+        self.assertEqual(gui._preview_cache_converted, {})
+        self.assertIs(gui.original_image, original)
+        self.assertEqual(gui._duration_cache, ('v.mp4', None, 10.0))
+        self.assertEqual(gui._cached_props, {'width': 1920, 'height': 1080})
+        original.close.assert_not_called()
+        gui.original_image_label.config.assert_not_called()
+        metadata_reset.assert_not_called()
+        converted.close.assert_called_once_with()
+        pane.close.assert_called_once_with()
+        self.assertIsNone(gui.converted_image_base)
+        self.assertIsNone(gui._converted_preview_base)
+        self.assertIsNone(gui._last_displayed_preview_key)
+        self.assertEqual(gui._preview_generation, 4)
+        self.assertEqual(gui._preview_file_generation, 3)
+        future.cancel.assert_called_once_with()
+        process.terminate.assert_called_once_with()
+        gui.converted_image_label.config.assert_called_once_with(
+            image='', text='Rendering preview...')
+        self.assertIsNone(gui.converted_image_label.image)
+
+    @patch('preview.extract_frame', return_value=MagicMock())
+    def test_late_visible_extraction_cannot_restore_converted_cache(self, original):
+        gui = self._gui()
+        late = MagicMock()
+        def finish_after_reset(*args, **kwargs):
+            gui._reset_converted_preview_cache()
+            return late
+        with patch('preview.extract_frame_with_conversion', side_effect=finish_after_reset):
+            gui._extract_preview_images('v.mp4', 1.0, 'mobius')
+        self.assertFalse(gui._preview_cache_converted)
+        late.close.assert_called_once_with()
+        self.assertIs(gui._preview_cache_original[('v.mp4', 1.0)], original.return_value)
+
+    def test_late_prewarm_images_are_closed_after_reset(self):
+        for function, tonemapper in [('extract_frames_with_conversion_batch', 'mobius'),
+                                     ('extract_frames_with_gpu_conversion_batch', 'bt.2390')]:
+            with self.subTest(tonemapper=tonemapper):
+                gui = self._gui()
+                late = [MagicMock(), MagicMock()]
+                def finish_after_reset(*args, **kwargs):
+                    gui._reset_converted_preview_cache()
+                    return late
+                with patch('preview.' + function, side_effect=finish_after_reset) as batch:
+                    gui._prewarm_batch_converted('v.mp4', [1.0, 2.0], tonemapper, 3)
+                self.assertFalse(gui._preview_cache_converted)
+                for image in late:
+                    image.close.assert_called_once_with()
+                self.assertEqual(batch.call_args.kwargs.get('output_width'), 1280)
+                self.assertEqual(batch.call_args.kwargs.get('output_height'), 720)
+
+    @patch('preview.extract_frames_batch')
+    @patch('preview.extract_frames_with_conversion_batch', return_value=[])
+    def test_target_prewarm_does_not_reextract_cached_originals(self, converted, original):
+        gui = self._gui()
+        gui.current_frame_index = 1
+        gui.total_frames = 2
+        gui._preview_cache_original = {('v.mp4', 2.0): MagicMock()}
+        gui._prewarm_other_frames('v.mp4', 3.0, 'mobius', 3)
+        original.assert_not_called()
+        converted.assert_called_once()
+
+    @patch('preview.extract_frame', return_value=MagicMock())
+    @patch('preview.extract_frame_with_conversion', return_value=MagicMock())
+    def test_cache_ready_check_includes_target(self, converted, original):
+        gui = self._gui()
+        gui._duration_cache = ('v.mp4', None, 10.0)
+        gui._file_identity = MagicMock(return_value=None)
+        gui._preview_time_position = MagicMock(return_value=1.0)
+        gui.tonemap_var = MagicMock()
+        gui.tonemap_var.get.return_value = 'Mobius'
+        gui._extract_preview_images('v.mp4', 1.0, 'mobius')
+        self.assertTrue(gui._preview_in_cache('v.mp4'))
+        gui.resolution_target = ResolutionTarget(480)
+        self.assertFalse(gui._preview_in_cache('v.mp4'))
+
+    def test_reset_suppresses_already_queued_render_and_error(self):
+        for fail in (False, True):
+            with self.subTest(fail=fail):
+                gui = TestDisplayFramesReadsLutExportVar()._gui(True, 'mobius')
+                callbacks = []
+                gui._schedule_on_main = callbacks.append
+                gui.converted_image_label = MagicMock()
+                gui.handle_preview_error = MagicMock()
+                gui._hide_preview_loading = MagicMock()
+                gui._render_preview_images = _HDRPreviewMixin._render_preview_images.__get__(gui)
+                with patch.object(gui, '_extract_preview_images', return_value=(MagicMock(), MagicMock()),
+                                  side_effect=ValueError('old failure') if fail else None):
+                    gui.display_frames('v.mp4')
+                self.assertEqual(len(callbacks), 1)
+                gui._reset_converted_preview_cache()
+                callbacks[0]()
+                gui.handle_preview_error.assert_not_called()
+                gui._hide_preview_loading.assert_not_called()
 
 
 class TestEffectiveLutEnabled(unittest.TestCase):

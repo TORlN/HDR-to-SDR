@@ -24,6 +24,7 @@ The [latest release](https://github.com/TORlN/HDR-to-SDR/releases) is one freemi
 - **Select Input Video Files**: Browse for video files (`.mp4`, `.mkv`, `.mov`, `.avi`, `.webm`, `.m4v`), or use the "All files" filter for anything else FFmpeg can read.
 - **Drag and Drop**: Drop a single file to load and preview it.
 - **Live Frame Preview**: See the original (HDR) frame next to the converted (SDR) result side by side. Five evenly-spaced frame buttons let you scrub through the video, and the previews scale smoothly as you resize the window.
+- **Output Resolution**: Choose standard downscaling presets below the source resolution, through 480p, ordered greatest to smallest. Source resolution is the default for each video. The original preview remains the source reference while the converted preview and automatic filename update for the selected preset. Source-resolution files keep the `_sdr` name; resized files add the selected preset.
 - **Adjust Gamma Value**: Drag a slider (or type a value) to fine-tune the gamma of the output; the preview updates instantly.
 - **Tonemappers**: Pick between Reinhard, Mobius, Hable, BT.2390, and Spline. BT.2390 and Spline are GPU-only (libplacebo) and shown greyed out until GPU tonemapping is active.
 - **Video Info Strip**: After a file loads, a one-line summary shows resolution, frame rate, codec, HDR/SDR, audio codec, and the probed source bitrate (estimated from the container total when a source, e.g. MKV, doesn't expose a per-stream bitrate). Dolby Vision sources are detected automatically and flagged in this strip.
@@ -40,11 +41,12 @@ The [latest release](https://github.com/TORlN/HDR-to-SDR/releases) is one freemi
 
 All free features, plus:
 
+- **Output Resolution**: Upscale or downscale with presets through 8K, ordered greatest to smallest, or enter one custom short-edge size. Aspect ratio is preserved, final dimensions are normalized to even pixel counts, and resizing uses standard Lanczos filtering rather than AI enhancement.
 - **Quality Control**: A Quality Mode dropdown switches between **Constant Quality** (a CRF 17–28 on CPU / CQ 15–30 on GPU slider that lets the encoder auto-vary bitrate per scene) and **Target Bitrate** (you set the average output bitrate directly, up to the source's own bitrate).
 - **Output Container**: Explicitly choose the output container (MP4 / MKV / MOV); it defaults to match the input. Audio and subtitles are stream-copied when the container allows, and transcoded or dropped only when it can't hold them (e.g. TrueHD audio or PGS subtitles into MP4).
 - **Custom Frame Seek**: Jump the preview to any exact timestamp (`HH:MM:SS`, `MM:SS`, or plain seconds) in addition to the five frame buttons.
-- **Batch Conversion Queue**: Add multiple files (via "Add Files" or by dropping several at once) and convert them sequentially. The queue shows a per-file status (pending / converting / done / failed), lets you click an entry to preview it, remove or clear entries, and reports a summary when it finishes. Each item remembers its own settings (quality mode, quality/bitrate value, bit depth) and restores them when you reselect it, and the list marks any item whose settings you've customized away from the shared defaults.
-- **Apply to All**: Copy the currently displayed settings onto every item in the batch queue in one click.
+- **Batch Conversion Queue**: Add multiple files (via "Add Files" or by dropping several at once) and convert them sequentially. The queue shows a per-file status (pending / converting / done / failed), lets you click an entry to preview it, remove or clear entries, and reports a summary when it finishes. Each item remembers its own settings, output resolution, and automatic or manual output path when you reselect it, and the list marks any item whose settings differ from the current controls.
+- **Apply to All**: Copy the currently displayed settings onto every item in the batch queue in one click while preserving each item's output resolution.
 - **12-Bit Output**: Encode the SDR output at 12-bit color depth (CPU only) for the widest gradient headroom.
 - **Dolby Vision Support (Full Audio)**: The source audio track is preserved (stream-copied or transcoded to fit the container) instead of being downmixed to stereo.
 

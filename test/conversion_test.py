@@ -15,6 +15,7 @@ from PIL import Image
 from src.utils import FFMPEG_EXECUTABLE  # Import FFMPEG_EXECUTABLE
 from dataclasses import FrozenInstanceError, replace
 from src.conversion import ConversionRequest, ConversionRun
+from src.resolution import ResolutionTarget
 from conversion_view import Notice   # bare: same class src.conversion builds
 from _recording_view import RecordingConversionView
 
@@ -75,17 +76,22 @@ class TestConversionRequest(unittest.TestCase):
         with self.assertRaises(FrozenInstanceError):
             r.use_gpu = True  # type: ignore[misc]
 
+    def test_request_defaults_to_source_resolution(self):
+        self.assertIsNone(_req().resolution)
+
     def test_replace_changes_only_the_named_field(self):
         """The GPU->CPU retry derives its request this way; any field it
         silently dropped would re-encode with the wrong settings."""
+        target = ResolutionTarget(2160)
         r = _req(use_gpu=True, quality=30000, quality_mode='bitrate',
                  bit_depth=10, licensed=True, lut_enabled=False,
-                 tonemapper='hable', open_after_conversion=True)
+                 tonemapper='hable', open_after_conversion=True,
+                 resolution=target)
         cpu = replace(r, use_gpu=False)
         self.assertIs(cpu.use_gpu, False)
         for field in ('input_path', 'output_path', 'gamma', 'tonemapper',
                       'quality', 'quality_mode', 'bit_depth', 'licensed',
-                      'lut_enabled', 'open_after_conversion'):
+                      'lut_enabled', 'resolution', 'open_after_conversion'):
             self.assertEqual(getattr(cpu, field), getattr(r, field),
                              msg=f'replace() dropped {field}')
 
@@ -469,6 +475,64 @@ class TestConversionManager(unittest.TestCase):
 
         manager._monitor_done.set()
         self.assertTrue(manager.ready_for_shutdown())
+
+    @patch('src.conversion.tempfile.mkstemp')
+    @patch('src.conversion.get_video_properties',
+           return_value=dict(_PROPS, duration=120.0))
+    def test_community_upscale_rejects_before_tempfile_or_ffmpeg(
+            self, _mock_properties, mock_mkstemp):
+        manager = ConversionManager()
+        manager.start_ffmpeg_process = MagicMock()
+        completed = MagicMock()
+        view = _view(on_complete=completed)
+
+        started = manager.start(
+            _req(resolution=ResolutionTarget(2160)), view)
+
+        self.assertFalse(started)
+        self.assertIn('require Pro', view.notices[-1].body)
+        completed.assert_called_once_with(
+            False, 'Custom resolution and upscaling require Pro.')
+        mock_mkstemp.assert_not_called()
+        manager.start_ffmpeg_process.assert_not_called()
+        self.assertIsNone(manager.process)
+
+    @patch('src.conversion.threading.Thread')
+    @patch('src.conversion.os.close')
+    @patch('src.conversion.tempfile.mkstemp',
+           return_value=(42, '.mock-output.mkv'))
+    @patch('src.conversion.get_video_properties',
+           return_value=dict(_PROPS, duration=120.0))
+    def test_community_preset_downscale_is_accepted(
+            self, _mock_properties, _mock_mkstemp, _mock_close,
+            _mock_thread):
+        manager = ConversionManager()
+        manager.construct_ffmpeg_command = MagicMock(return_value=['ffmpeg'])
+        manager.start_ffmpeg_process = MagicMock(return_value=MagicMock())
+        target = ResolutionTarget(720)
+
+        self.assertTrue(manager.start(_req(resolution=target), _view()))
+        self.assertIs(manager._run.request.resolution, target)
+
+    @patch('src.conversion.tempfile.mkstemp')
+    @patch('src.conversion.get_video_properties',
+           return_value=dict(_PROPS, duration=120.0))
+    def test_custom_target_requires_pro_even_when_downscaling(
+            self, _mock_properties, mock_mkstemp):
+        manager = ConversionManager()
+        manager.start_ffmpeg_process = MagicMock()
+        completed = MagicMock()
+        view = _view(on_complete=completed)
+
+        started = manager.start(
+            _req(resolution=ResolutionTarget(900, custom=True)), view)
+
+        self.assertFalse(started)
+        completed.assert_called_once_with(
+            False, 'Custom resolution and upscaling require Pro.')
+        mock_mkstemp.assert_not_called()
+        manager.start_ffmpeg_process.assert_not_called()
+        self.assertIsNone(manager.process)
 
     def test_stale_monitor_cannot_acknowledge_a_later_conversion(self):
         """An old monitor must not mark a new run safe for update shutdown."""
@@ -1735,7 +1799,8 @@ class TestBitDepthContainerGuardrail(unittest.TestCase):
 
     @patch('src.conversion.os.close')
     @patch('src.conversion.tempfile.mkstemp', return_value=(42, '.mock-output.mp4'))
-    @patch('src.conversion.get_video_properties', return_value={'duration': 10.0})
+    @patch('src.conversion.get_video_properties',
+           return_value=dict(_PROPS, duration=10.0))
     def test_construct_ffmpeg_command_failure_reenables_ui(
             self, mock_get_props, _mock_mkstemp, _mock_close):
         """If construct_ffmpeg_command raises after the UI has already been
@@ -2497,7 +2562,7 @@ class TestDolbyVisionTierCommands(unittest.TestCase):
     def test_start_threads_quality_mode(self):
         manager = ConversionManager()
         with patch('src.conversion.get_video_properties',
-                   return_value={'duration': 10.0, 'bit_rate': 4000000}), \
+                   return_value=dict(_PROPS, duration=10.0)), \
              patch.object(manager, 'construct_ffmpeg_command',
                           return_value=['ffmpeg']) as mock_build, \
              patch.object(manager, 'start_ffmpeg_process', return_value=MagicMock()), \
@@ -2589,7 +2654,7 @@ class TestStartBuildsRequest(unittest.TestCase):
 
     def _start(self, manager, view=None, **kwargs):
         with patch('src.conversion.get_video_properties',
-                   return_value={'duration': 10.0, 'bit_rate': 4000000}), \
+                   return_value=dict(_PROPS, duration=10.0)), \
              patch.object(manager, 'construct_ffmpeg_command', return_value=['ffmpeg']), \
              patch.object(manager, 'start_ffmpeg_process', return_value=MagicMock()), \
              patch.object(manager, 'monitor_progress'), \
@@ -2601,8 +2666,10 @@ class TestStartBuildsRequest(unittest.TestCase):
 
     def test_request_captures_every_encode_setting(self):
         m = ConversionManager()
+        target = ResolutionTarget(2160)
         self._start(m, tonemapper='hable', quality=30000, quality_mode='bitrate',
-                    bit_depth=10, licensed=True, lut_enabled=False)
+                    bit_depth=10, licensed=True, lut_enabled=False,
+                    resolution=target)
         r = m._run.request
         self.assertEqual(r.input_path, os.path.abspath('in.mkv'))
         self.assertEqual(r.output_path, os.path.abspath('out.mkv'))
@@ -2614,6 +2681,7 @@ class TestStartBuildsRequest(unittest.TestCase):
         self.assertEqual(r.bit_depth, 10)
         self.assertIs(r.licensed, True)
         self.assertIs(r.lut_enabled, False)
+        self.assertIs(r.resolution, target)
 
     def test_request_stores_absolute_paths(self):
         """start abspath()s both paths before use; the request must hold the
@@ -2718,6 +2786,17 @@ class TestRetryUsesTheRequest(unittest.TestCase):
         self.assertEqual(sent.input_path, 'handed_in.mkv')
         self.assertEqual(sent.output_path, 'handed_out.mp4')
         self.assertEqual(sent.tonemapper, 'hable')
+
+    def test_gpu_fallback_preserves_resolution(self):
+        m = ConversionManager()
+        target = ResolutionTarget(2160)
+        request = _req(use_gpu=True, licensed=True, resolution=target)
+        m.start = MagicMock()
+
+        m._retry_with_cpu(request, _view())
+
+        sent = m.start.call_args.args[0]
+        self.assertIs(sent.resolution, target)
 
     def test_stale_cpu_retry_does_not_start_another_conversion(self):
         """A retry from A must not start after B has replaced A's run."""

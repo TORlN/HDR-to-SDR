@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../s
 
 import ffmpeg_command  # noqa: E402
 from conversion_view import Notice  # noqa: E402
+from resolution import ResolutionTarget  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class _Req:
     bit_depth: int = 8
     licensed: bool = False
     lut_enabled: bool = True
+    resolution: ResolutionTarget | None = None
 
 
 _PROPS = {'codec_name': 'h264'}
@@ -196,6 +198,58 @@ class TestGpuDeviceArgs(unittest.TestCase):
 
 class TestFilterArgs(unittest.TestCase):
 
+    def test_cpu_resize_appends_lanczos_after_color_conversion(self):
+        for width, height, target, expected in (
+            (1920, 1080, ResolutionTarget(720), '1280:720'),
+            (1080, 1920, ResolutionTarget(720), '720:1280'),
+            (1920, 1080, ResolutionTarget(901, custom=True), '1600:900'),
+            (1920, 1080, ResolutionTarget(2160), '3840:2160'),
+        ):
+            with self.subTest(source=(width, height), target=target):
+                filt = ffmpeg_command._filter_args(
+                    _Req(resolution=target), self._plan(), self._gpu(),
+                    {'width': width, 'height': height})
+                self.assertTrue(filt.endswith(f',scale={expected}:flags=lanczos'), msg=filt)
+                self.assertLess(filt.index('tonemap='), filt.index(',scale='))
+                self.assertLess(filt.index('lut3d='), filt.index(',scale='))
+
+    def test_gpu_resize_sets_dimensions_and_both_scalers(self):
+        for interop, lut, depth, gamma in (
+            (False, True, 8, 1.0), (True, True, 10, 2.2),
+            (True, False, 10, 1.0),
+        ):
+            with self.subTest(interop=interop, lut=lut, depth=depth, gamma=gamma):
+                filt = ffmpeg_command._filter_args(
+                    _Req(use_gpu=True, resolution=ResolutionTarget(2160),
+                         lut_enabled=lut, bit_depth=depth, gamma=gamma),
+                    self._plan(use_libplacebo=True),
+                    self._gpu(use_cuda_interop=interop),
+                    {'width': 1920, 'height': 1080})
+                self.assertIn('libplacebo=w=3840:h=2160:upscaler=ewa_lanczos:downscaler=ewa_lanczos:', filt)
+                self.assertNotIn(',scale=', filt)
+                self.assertEqual('lut3d=' in filt, lut)
+                if interop:
+                    self.assertTrue(filt.startswith('hwmap=derive_device=vulkan,'), msg=filt)
+                if interop and not lut:
+                    self.assertTrue(filt.endswith('hwmap=reverse=1:derive_device=cuda'), msg=filt)
+                if depth == 10 and lut:
+                    self.assertIn('format=rgba64le', filt)
+                    self.assertTrue(filt.endswith('format=p010le'), msg=filt)
+
+    def test_custom_target_normalized_to_source_keeps_default_filter(self):
+        for gpu in (False, True):
+            with self.subTest(gpu=gpu):
+                plan = self._plan(use_libplacebo=gpu)
+                baseline = ffmpeg_command._filter_args(
+                    _Req(use_gpu=gpu), plan, self._gpu(),
+                    {'width': 1920, 'height': 1080})
+                filt = ffmpeg_command._filter_args(
+                    _Req(use_gpu=gpu, resolution=ResolutionTarget(1081, custom=True)),
+                    plan, self._gpu(), {'width': 1920, 'height': 1080})
+                self.assertEqual(filt, baseline)
+                self.assertNotIn('scaler=', filt)
+                self.assertNotIn(',scale=', filt)
+
     def _plan(self, **overrides) -> ffmpeg_command.TonemapPlan:
         base = dict(use_gpu=False, dovi_needs_rpu=False, use_libplacebo=False, notices=[])
         base.update(overrides)
@@ -207,39 +261,39 @@ class TestFilterArgs(unittest.TestCase):
         return ffmpeg_command.GpuPlan(**base)
 
     def test_cpu_path_uses_zscale_chain(self):
-        filt = ffmpeg_command._filter_args(_Req(), self._plan(), self._gpu())
+        filt = ffmpeg_command._filter_args(_Req(), self._plan(), self._gpu(), _PROPS)
         self.assertIn('zscale=t=linear', filt, msg=filt)
         self.assertIn('tonemap=reinhard', filt, msg=filt)
 
     def test_libplacebo_path_uses_libplacebo_chain(self):
         filt = ffmpeg_command._filter_args(
-            _Req(use_gpu=True), self._plan(use_libplacebo=True), self._gpu())
+            _Req(use_gpu=True), self._plan(use_libplacebo=True), self._gpu(), _PROPS)
         self.assertIn('libplacebo=', filt, msg=filt)
         self.assertNotIn('zscale=t=linear', filt, msg=filt)
 
     def test_libplacebo_path_forwards_cuda_input_from_gpu_plan(self):
         filt = ffmpeg_command._filter_args(
             _Req(use_gpu=True), self._plan(use_libplacebo=True),
-            self._gpu(use_cuda_interop=True))
+            self._gpu(use_cuda_interop=True), _PROPS)
         self.assertIn('hwmap=derive_device=vulkan', filt, msg=filt)
 
     def test_ten_bit_libplacebo_path_keeps_a_ten_bit_filter_output(self):
         filt = ffmpeg_command._filter_args(
             _Req(use_gpu=True, bit_depth=10), self._plan(use_libplacebo=True),
-            self._gpu())
+            self._gpu(), _PROPS)
         self.assertIn('format=p010le', filt, msg=filt)
         self.assertNotIn('hwdownload,format=rgba,lut3d=', filt, msg=filt)
 
     def test_gpu_only_tonemapper_on_cpu_path_raises(self):
         with self.assertRaises(ValueError) as ctx:
             ffmpeg_command._filter_args(
-                _Req(tonemapper='bt.2390'), self._plan(use_libplacebo=False), self._gpu())
+                _Req(tonemapper='bt.2390'), self._plan(use_libplacebo=False), self._gpu(), _PROPS)
         self.assertIn('bt.2390 requires GPU tonemapping', str(ctx.exception))
 
     def test_gpu_only_tonemapper_on_libplacebo_path_does_not_raise(self):
         filt = ffmpeg_command._filter_args(
             _Req(use_gpu=True, tonemapper='bt.2390'),
-            self._plan(use_libplacebo=True), self._gpu())
+            self._plan(use_libplacebo=True), self._gpu(), _PROPS)
         self.assertIn('tonemapping=bt.2390', filt, msg=filt)
 
 

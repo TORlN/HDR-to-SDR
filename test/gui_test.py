@@ -206,7 +206,7 @@ class TestHDRConverterGUI(TestCase):
         # Verify PhotoImage creation and label updates
         mock_photo_image.assert_has_calls([call(mock_image), call(mock_image)])
         self.gui.original_image_label.config.assert_called_with(image=mock_photo)
-        self.gui.converted_image_label.config.assert_called_with(image=mock_photo)
+        self.gui.converted_image_label.config.assert_called_with(image=mock_photo, text='')
 
     @patch('src.preview.ImageTk.PhotoImage')
     def test_render_preview_images_correct_size_when_frame_collapsed(self, mock_photo_image):

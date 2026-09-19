@@ -40,7 +40,7 @@ _ALLOWED: "dict[str, tuple[frozenset[str], bool]]" = {
     'dark_theme':         (frozenset(), True),
     'dialog_theme':       (frozenset(), True),
     'tk_conversion_view': (frozenset({'conversion_view'}), True),
-    'preview':            (frozenset({'utils'}), True),
+    'preview':            (frozenset({'utils', 'resolution'}), True),
     'dialogs':            (frozenset({'dialog_theme', 'licensing', 'updater'}), True),
     'gui':                (frozenset({'dark_theme', 'conversion', 'tk_conversion_view',
                                       'utils', 'settings', 'dialogs', 'preview',

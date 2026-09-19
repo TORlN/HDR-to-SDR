@@ -276,6 +276,18 @@ class TestRealHdr10TenBit(unittest.TestCase):
     """Genuine HDR10 (bt2020/smpte2084, properly PQ-mastered pixel data) at
     the free-tier default 10-bit depth, run through the real tonemap chain."""
 
+    def test_resized_cpu_preview_is_emitted_at_pane_size(self):
+        for target in ((852, 480), (2560, 1440)):
+            with self.subTest(target=target):
+                with extract_frame_with_conversion(
+                    HDR10_10BIT_VIDEO, gamma=1.0, tonemapper='mobius', time_position=0.5,
+                    width=320, height=180, output_width=target[0], output_height=target[1],
+                ) as image:
+                    self.assertLessEqual(image.width, 320)
+                    self.assertLessEqual(image.height, 180)
+                    self.assertGreater(image.width, 0)
+                    self.assertGreater(image.height, 0)
+
     def test_cpu_preset_downscale_outputs_expected_dimensions(self):
         props = get_video_properties(HDR10_10BIT_VIDEO)
         with tempfile.TemporaryDirectory(prefix='hdr_smoke_downscale_') as tmpdir:
@@ -455,10 +467,18 @@ class TestRealGpuOnlyTonemappers(unittest.TestCase):
 
     def test_gpu_preview_extraction_completes(self):
         from src.utils import extract_frame_with_gpu_conversion
-        img = extract_frame_with_gpu_conversion(
-            HDR10_10BIT_VIDEO, gamma=1.0, tonemapper='bt.2390', time_position=0.5)
-        self.assertGreater(img.width, 0)
-        self.assertGreater(img.height, 0)
+        for target in (None, (852, 480), (3840, 2160)):
+            with self.subTest(target=target):
+                output_size = {} if target is None else {
+                    'output_width': target[0], 'output_height': target[1]}
+                with extract_frame_with_gpu_conversion(
+                    HDR10_10BIT_VIDEO, gamma=1.0, tonemapper='bt.2390', time_position=0.5,
+                    width=320, height=180, **output_size,
+                ) as image:
+                    self.assertLessEqual(image.width, 320)
+                    self.assertLessEqual(image.height, 180)
+                    self.assertGreater(image.width, 0)
+                    self.assertGreater(image.height, 0)
 
 
 @unittest.skipUnless(_LIBPLACEBO_OK, "Vulkan/libplacebo not available on this machine")

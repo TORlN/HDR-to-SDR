@@ -22,7 +22,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 
 from dialogs import _LicenseDialog, _UpdateDialog
 from preview import DEFAULT_MIN_SIZE, _PREVIEW_POOL_WORKERS, _HDRPreviewMixin
-from resolution import (PRESETS, ResolutionTarget, output_suffix,
+from resolution import (PRESETS, ResolutionTarget, output_dimensions, output_suffix,
                         preset_for_short_edge, validate_target)
 # Imported as a module object, not `from pro.batch import _BatchMixin` --
 # a `from`-import of an unresolved module makes pyright bind the name to
@@ -193,6 +193,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.format_var = tk.StringVar(value=_s['filetype'])
         self.resolution_target: ResolutionTarget | None = None
         self.resolution_display_var = tk.StringVar(value='Loading resolution...')
+        self.custom_resolution_var = tk.StringVar()
+        self.custom_resolution_result_var = tk.StringVar()
+        self.custom_resolution_error_var = tk.StringVar()
         self._output_path_is_auto = True
         # Not persisted -- per-source only. Queued files keep their own choice
         # via settings['bit_depth_choice'], restored on (re)load.
@@ -365,6 +368,23 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._refresh_info_label_text()
 
         self._rebuild_interactable_elements()
+        target = getattr(self, 'resolution_target', None)
+        props = getattr(self, '_cached_props', None)
+        if not licensed and target is not None:
+            try:
+                if props:
+                    validate_target(
+                        int(props['width']), int(props['height']), target,
+                        licensed=False)
+                else:
+                    raise ValueError
+            except ValueError:
+                if props:
+                    self._select_resolution_target(None)
+                else:
+                    self.resolution_target = None
+                    self.custom_resolution_frame.grid_remove()
+        self._rebuild_resolution_menu()
         self._apply_lut_export_availability()
 
         if self._conversion_controls_disabled:
@@ -391,6 +411,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.custom_time_entry, self.custom_seek_button,
             self.add_files_button, self.clear_batch_button, self.remove_batch_button,
             self.bit_depth_12_radio, self.apply_settings_button,
+            self.custom_resolution_entry,
         ]
         elements = free + premium if self._licensed else free
         self.interactable_elements[:] = elements
@@ -569,6 +590,29 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
 
         self.gpu_status_label = ttk.Label(self.resolution_frame, text='')
         self.gpu_status_label.grid(row=0, column=1, sticky=tk.W, padx=(10, 0))
+
+        self.custom_resolution_frame = ttk.Frame(self.resolution_frame)
+        self.custom_resolution_frame.grid(
+            row=1, column=0, columnspan=2, sticky=tk.W, pady=(5, 0))
+        self.custom_resolution_label = ttk.Label(
+            self.custom_resolution_frame, text='Custom short edge (px)')
+        self.custom_resolution_label.grid(row=0, column=0, sticky=tk.W)
+        self.custom_resolution_entry = ttk.Entry(
+            self.custom_resolution_frame,
+            textvariable=self.custom_resolution_var, width=8)
+        self.custom_resolution_entry.grid(row=0, column=1, padx=(5, 0))
+        ttk.Label(
+            self.custom_resolution_frame,
+            textvariable=self.custom_resolution_result_var,
+        ).grid(row=0, column=2, padx=(8, 0))
+        ttk.Label(
+            self.custom_resolution_frame,
+            textvariable=self.custom_resolution_error_var,
+            foreground='red',
+        ).grid(row=1, column=0, columnspan=3, sticky=tk.W)
+        self.custom_resolution_entry.bind('<Return>', self._apply_custom_resolution)
+        self.custom_resolution_entry.bind('<FocusOut>', self._apply_custom_resolution)
+        self.custom_resolution_frame.grid_remove()
 
         self.quality_mode_frame = ttk.Frame(self.control_frame)
         self.quality_mode_frame.grid(row=5, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))
@@ -792,6 +836,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.custom_time_entry, self.custom_seek_button,
             self.add_files_button, self.clear_batch_button, self.remove_batch_button,
             self.bit_depth_10_radio, self.bit_depth_12_radio, self.apply_settings_button,
+            self.custom_resolution_entry,
         ]
 
         self._detect_gpu_acceleration()
@@ -870,6 +915,10 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.resolution_menu.delete(0, 'end')
         if hasattr(self, 'resolution_menubutton'):
             self.resolution_menubutton.config(state='disabled')
+        if hasattr(self, 'custom_resolution_frame'):
+            self.custom_resolution_frame.grid_remove()
+            self.custom_resolution_result_var.set('')
+            self.custom_resolution_error_var.set('')
         self._output_path_is_auto = True
         self.original_image = None
         self.converted_image_base = None
@@ -909,6 +958,10 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.resolution_menu.delete(0, 'end')
         if hasattr(self, 'resolution_menubutton'):
             self.resolution_menubutton.config(state='disabled')
+        if hasattr(self, 'custom_resolution_frame'):
+            self.custom_resolution_frame.grid_remove()
+            self.custom_resolution_result_var.set('')
+            self.custom_resolution_error_var.set('')
         self._output_path_is_auto = True
         self.original_image = None
         self.converted_image_base = None
@@ -979,7 +1032,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._write_back_current_settings()
 
     def _rebuild_resolution_menu(self) -> None:
-        """Show source and lower Community presets from greatest to least."""
+        """Show allowed resolutions greatest-first and disable the selection."""
         if not hasattr(self, 'resolution_menu'):
             return
         self.resolution_menu.delete(0, 'end')
@@ -994,38 +1047,60 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         source_short = min(width, height)
         source_preset = preset_for_short_edge(source_short)
         source_label = source_preset.label if source_preset else f'{width} x {height}'
-        self.resolution_menu.add_command(
-            label=f'{source_label} (Current)',
-            command=lambda: self._select_resolution_target(None),
-            state='disabled' if self.resolution_target is None else 'normal',
+        presets = (
+            list(PRESETS) if self._licensed
+            else [preset for preset in PRESETS if preset.short_edge < source_short]
         )
-        for preset in PRESETS:
-            if preset.short_edge < source_short:
-                self.resolution_menu.add_command(
-                    label=preset.label,
-                    command=lambda target=ResolutionTarget(preset.short_edge):
-                        self._select_resolution_target(target),
-                )
+        rows = [
+            (preset.short_edge, preset.label,
+             None if preset.short_edge == source_short
+             else ResolutionTarget(preset.short_edge))
+            for preset in presets
+        ]
+        if source_preset is None or source_preset not in presets:
+            rows.append((source_short, source_label, None))
+        for _short_edge, label, target in sorted(rows, reverse=True):
+            self.resolution_menu.add_command(
+                label=label,
+                command=lambda selected=target:
+                    self._select_resolution_target(selected),
+                state='disabled' if target == self.resolution_target else 'normal',
+            )
+        if self._licensed:
+            self.resolution_menu.add_command(
+                label='Custom...', command=self._choose_custom_resolution,
+                state=('disabled'
+                       if self.resolution_target is not None
+                       and self.resolution_target.custom else 'normal'),
+            )
 
         if self.resolution_target is None:
             self.resolution_display_var.set(source_label)
         else:
             selected = preset_for_short_edge(self.resolution_target.short_edge)
-            self.resolution_display_var.set(
-                selected.label if selected else str(self.resolution_target.short_edge))
+            if self.resolution_target.custom:
+                dimensions = output_dimensions(width, height, self.resolution_target)
+                self.resolution_display_var.set(
+                    f'{dimensions[0]} x {dimensions[1]}' if dimensions else source_label)
+            else:
+                self.resolution_display_var.set(
+                    selected.label if selected else str(self.resolution_target.short_edge))
         state = 'disabled' if self._conversion_controls_disabled else 'normal'
         self.resolution_menubutton.config(state=state)
 
     def _select_resolution_target(
         self, target: ResolutionTarget | None,
     ) -> None:
-        """Select a Community resolution and refresh only the converted preview."""
+        """Select an allowed resolution and refresh only the converted preview."""
         props = getattr(self, '_cached_props', None)
         if not props:
             return
         validate_target(
-            int(props['width']), int(props['height']), target, licensed=False)
+            int(props['width']), int(props['height']), target,
+            licensed=self._licensed)
         self.resolution_target = target
+        if target is None or not target.custom:
+            self.custom_resolution_frame.grid_remove()
         self._rebuild_resolution_menu()
         if self._output_path_is_auto:
             self.output_path_var.set(self._default_output_path(
@@ -1033,6 +1108,36 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._reset_converted_preview_cache()
         self._show_preview_loading()
         self.update_frame_preview()
+
+    def _choose_custom_resolution(self) -> None:
+        """Reveal the single Pro custom short-edge field."""
+        if not self._licensed:
+            return
+        self.custom_resolution_error_var.set('')
+        self.custom_resolution_frame.grid()
+        self.custom_resolution_entry.focus_set()
+
+    def _apply_custom_resolution(self, event: object = None) -> None:
+        """Apply a positive custom short edge after Return or focus loss."""
+        try:
+            short_edge = int(self.custom_resolution_var.get().strip(), 10)
+            if short_edge <= 0:
+                raise ValueError
+        except ValueError:
+            self.custom_resolution_error_var.set(
+                'Enter a positive whole number.')
+            return
+
+        props = getattr(self, '_cached_props', None)
+        if not props or not self._licensed:
+            return
+        target = ResolutionTarget(short_edge, custom=True)
+        self._select_resolution_target(target)
+        dimensions = output_dimensions(
+            int(props['width']), int(props['height']), target)
+        self.custom_resolution_error_var.set('')
+        self.custom_resolution_result_var.set(
+            f'{dimensions[0]} x {dimensions[1]}' if dimensions else 'Source')
 
     # ── Output Color Depth ──────────────────────────────────────────────────────
 

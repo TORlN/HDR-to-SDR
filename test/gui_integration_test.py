@@ -25,7 +25,7 @@ from tkinterdnd2 import TkinterDnD
 
 from src.gui import HDRConverterGUI, DEFAULT_MIN_SIZE
 from src.conversion import conversion_manager
-from src.resolution import ResolutionTarget
+from resolution import ResolutionTarget
 from src.tk_conversion_view import TkConversionView
 from src.utils import TONEMAP
 from src.settings import DEFAULTS
@@ -352,7 +352,7 @@ class TestConstruction(_GuiTestBase):
             self.gui.add_files_button, self.gui.clear_batch_button,
             self.gui.remove_batch_button,
             self.gui.bit_depth_10_radio, self.gui.bit_depth_12_radio,
-            self.gui.apply_settings_button,
+            self.gui.apply_settings_button, self.gui.custom_resolution_entry,
         }
         self.assertEqual(set(self.gui.interactable_elements), expected)
 
@@ -899,6 +899,12 @@ class TestUserActions(_GuiTestBase):
             for index in range(end + 1)
         ]
 
+    def _resolution_states(self):
+        return {
+            label: self.gui.resolution_menu.entrycget(index, 'state')
+            for index, label in enumerate(self._resolution_labels())
+        }
+
     def _apply_resolution_metadata(self, width=1920, height=1080):
         self.gui.input_path_var.set('movie.mp4')
         generation = self.gui._metadata_generation
@@ -912,28 +918,134 @@ class TestUserActions(_GuiTestBase):
         self._apply_resolution_metadata(width=3840, height=2160)
         self.assertEqual(
             self._resolution_labels(),
-            ['4K (Current)', '1440p', '1080p', '720p', '480p'],
+            ['4K', '1440p', '1080p', '720p', '480p'],
         )
         self.assertNotIn('8K', self._resolution_labels())
         self.assertNotIn('Custom...', self._resolution_labels())
 
     def test_source_below_480_has_only_source(self):
+        self.gui._licensed = False
         self._apply_resolution_metadata(width=640, height=360)
-        self.assertEqual(self._resolution_labels(), ['640 x 360 (Current)'])
+        self.assertEqual(self._resolution_labels(), ['640 x 360'])
 
     def test_source_row_reenables_after_downscale_and_disables_on_return(self):
+        self.gui._licensed = False
         self._apply_resolution_metadata()
         self.assertEqual(self.gui.resolution_menu.entrycget(0, 'state'), 'disabled')
         with patch.object(self.gui, '_reset_converted_preview_cache'), \
                 patch.object(self.gui, '_show_preview_loading'), \
                 patch.object(self.gui, 'update_frame_preview'):
             self.gui._select_resolution_target(ResolutionTarget(720))
-        self.assertEqual(self.gui.resolution_menu.entrycget(0, 'state'), 'normal')
+        self.assertEqual(self._resolution_states()['1080p'], 'normal')
+        self.assertEqual(self._resolution_states()['720p'], 'disabled')
         with patch.object(self.gui, '_reset_converted_preview_cache'), \
                 patch.object(self.gui, '_show_preview_loading'), \
                 patch.object(self.gui, 'update_frame_preview'):
             self.gui._select_resolution_target(None)
         self.assertEqual(self.gui.resolution_menu.entrycget(0, 'state'), 'disabled')
+
+    def test_pro_menu_is_descending_with_custom_last(self):
+        self.gui._licensed = True
+        self._apply_resolution_metadata()
+        self.assertEqual(
+            self._resolution_labels(),
+            ['8K', '4K', '1440p', '1080p', '720p', '480p', 'Custom...'],
+        )
+        self.assertEqual(self._resolution_states()['1080p'], 'disabled')
+
+        self._apply_resolution_metadata(width=3840, height=2160)
+        self.assertEqual(
+            self._resolution_labels(),
+            ['8K', '4K', '1440p', '1080p', '720p', '480p', 'Custom...'],
+        )
+        self.assertEqual(self._resolution_states()['4K'], 'disabled')
+
+    def test_nonstandard_source_is_inserted_in_descending_order(self):
+        self.gui._licensed = True
+        self._apply_resolution_metadata(width=1920, height=800)
+        self.assertEqual(
+            self._resolution_labels(),
+            ['8K', '4K', '1440p', '1080p', '1920 x 800',
+             '720p', '480p', 'Custom...'],
+        )
+        self.assertEqual(self._resolution_states()['1920 x 800'], 'disabled')
+
+    def test_custom_control_is_one_short_edge_field_applied_on_commit_events(self):
+        self.gui._licensed = True
+        self._apply_resolution_metadata()
+        self.gui._choose_custom_resolution()
+        self.assertEqual(self.gui.custom_resolution_frame.winfo_manager(), 'grid')
+        self.assertEqual(
+            self.gui.custom_resolution_label.cget('text'),
+            'Custom short edge (px)',
+        )
+        self.assertTrue(self.gui.custom_resolution_entry.bind('<Return>'))
+        self.assertTrue(self.gui.custom_resolution_entry.bind('<FocusOut>'))
+        self.assertFalse(self.gui.custom_resolution_entry.bind('<KeyRelease>'))
+
+    def test_custom_resolution_normalizes_dimensions_and_filename(self):
+        self.gui._licensed = True
+        self.gui._load_input_file('movie.mp4')
+        self._apply_resolution_metadata()
+        self.gui._choose_custom_resolution()
+        self.gui.custom_resolution_var.set('901')
+        with patch.object(self.gui, '_reset_converted_preview_cache'), \
+                patch.object(self.gui, '_show_preview_loading'), \
+                patch.object(self.gui, 'update_frame_preview'):
+            self.gui._apply_custom_resolution()
+        self.assertEqual(self.gui.resolution_target.short_edge, 901)
+        self.assertTrue(self.gui.resolution_target.custom)
+        self.assertEqual(self.gui.custom_resolution_result_var.get(), '1600 x 900')
+        self.assertEqual(self.gui.output_path_var.get(), 'movie_sdr_1600x900.mp4')
+        self.assertEqual(self._resolution_states()['Custom...'], 'disabled')
+
+    def test_pro_preset_upscale_updates_filename_and_disables_selected_row(self):
+        self.gui._licensed = True
+        self.gui._load_input_file('movie.mp4')
+        self._apply_resolution_metadata()
+        self.gui._choose_custom_resolution()
+        with patch.object(self.gui, '_reset_converted_preview_cache') as reset, \
+                patch.object(self.gui, '_show_preview_loading'), \
+                patch.object(self.gui, 'update_frame_preview'):
+            self.gui._select_resolution_target(ResolutionTarget(2160))
+        self.assertEqual(self.gui.output_path_var.get(), 'movie_sdr_4k.mp4')
+        self.assertEqual(self._resolution_states()['4K'], 'disabled')
+        self.assertEqual(self.gui.custom_resolution_frame.winfo_manager(), '')
+        reset.assert_called_once_with()
+
+    def test_invalid_custom_resolution_preserves_last_valid_selection(self):
+        self.gui._licensed = True
+        self._apply_resolution_metadata()
+        self.gui.resolution_target = ResolutionTarget(720)
+        for value in ('', 'pixels', '0', '-1'):
+            with self.subTest(value=value):
+                self.gui.custom_resolution_var.set(value)
+                with patch.object(self.gui, '_reset_converted_preview_cache') as reset, \
+                        patch.object(self.gui, 'update_frame_preview') as refresh:
+                    self.gui._apply_custom_resolution()
+                self.assertEqual(
+                    self.gui.custom_resolution_error_var.get(),
+                    'Enter a positive whole number.',
+                )
+                self.assertEqual(self.gui.resolution_target, ResolutionTarget(720))
+                reset.assert_not_called()
+                refresh.assert_not_called()
+
+    def test_license_loss_resets_pro_target_but_preserves_manual_path(self):
+        self.gui._licensed = True
+        self.gui._load_input_file('movie.mp4')
+        self._apply_resolution_metadata()
+        self.gui.resolution_target = ResolutionTarget(2160)
+        self.gui.output_path_var.set('C:/deliveries/client-cut.mkv')
+        self.gui._on_output_path_change()
+        with patch.object(self.gui, '_reset_converted_preview_cache'), \
+                patch.object(self.gui, '_show_preview_loading'), \
+                patch.object(self.gui, 'update_frame_preview'):
+            self.gui._apply_license_state(False)
+        self.assertIsNone(self.gui.resolution_target)
+        self.assertEqual(self.gui.custom_resolution_frame.winfo_manager(), '')
+        self.assertNotIn('8K', self._resolution_labels())
+        self.assertEqual(self.gui.output_path_var.get(), 'C:/deliveries/client-cut.mp4')
 
     def test_resolution_selection_updates_only_automatic_path_and_converted_preview(self):
         self.gui._load_input_file('movie.mp4')
@@ -963,11 +1075,14 @@ class TestUserActions(_GuiTestBase):
         self.assertEqual(self.gui.output_path_var.get(), 'C:/deliveries/client-cut.mkv')
 
     def test_loading_another_file_resets_resolution_to_source(self):
+        self.gui._licensed = True
         self.gui.resolution_target = ResolutionTarget(720)
+        self.gui.custom_resolution_frame.grid()
         with patch.object(self.gui, 'update_frame_preview'):
             self.gui._load_input_file('next.mp4')
         self.assertIsNone(self.gui.resolution_target)
         self.assertEqual(self.gui.resolution_display_var.get(), 'Loading resolution...')
+        self.assertEqual(self.gui.custom_resolution_frame.winfo_manager(), '')
 
     @patch('src.gui.filedialog.askopenfilename')
     def test_select_file_sets_paths_and_triggers_preview(self, mock_dialog):
@@ -1271,7 +1386,7 @@ class TestUnlicensedState(_LicensingBase):
             self.gui.format_combobox, self.gui.custom_time_entry,
             self.gui.custom_seek_button, self.gui.add_files_button,
             self.gui.clear_batch_button, self.gui.remove_batch_button,
-            self.gui.bit_depth_12_radio,
+            self.gui.bit_depth_12_radio, self.gui.custom_resolution_entry,
         ]
         for widget in premium:
             self.assertNotIn(widget, self.gui.interactable_elements,
@@ -1337,6 +1452,7 @@ class TestLicensedState(_LicensingBase):
             self.gui.custom_seek_button, self.gui.add_files_button,
             self.gui.clear_batch_button, self.gui.remove_batch_button,
             self.gui.bit_depth_10_radio, self.gui.bit_depth_12_radio,
+            self.gui.custom_resolution_entry,
         ]
         for widget in premium:
             self.assertIn(widget, self.gui.interactable_elements,

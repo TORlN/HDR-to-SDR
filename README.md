@@ -41,6 +41,7 @@ The [latest release](https://github.com/TORlN/HDR-to-SDR/releases) is one freemi
 
 All free features, plus:
 
+- **Output Resolution**: Upscale or downscale with presets through 8K, or enter one custom short-edge size. Aspect ratio is preserved, final dimensions are normalized to even pixel counts, and resizing uses standard Lanczos filtering rather than AI enhancement.
 - **Quality Control**: A Quality Mode dropdown switches between **Constant Quality** (a CRF 17–28 on CPU / CQ 15–30 on GPU slider that lets the encoder auto-vary bitrate per scene) and **Target Bitrate** (you set the average output bitrate directly, up to the source's own bitrate).
 - **Output Container**: Explicitly choose the output container (MP4 / MKV / MOV); it defaults to match the input. Audio and subtitles are stream-copied when the container allows, and transcoded or dropped only when it can't hold them (e.g. TrueHD audio or PGS subtitles into MP4).
 - **Custom Frame Seek**: Jump the preview to any exact timestamp (`HH:MM:SS`, `MM:SS`, or plain seconds) in addition to the five frame buttons.

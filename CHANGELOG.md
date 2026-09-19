@@ -5,4 +5,4 @@ this header and an empty `Unreleased` section after each new version is pushed.
 
 ## Unreleased
 
-- Added output-resolution controls: Community preset downscaling through 480p, plus Pro preset upscaling through 8K and custom short-edge sizes, with resolution-aware previews and filenames.
+- Added output-resolution controls: Community preset downscaling through 480p, plus Pro preset upscaling through 8K and custom short-edge sizes, with resolution-aware previews and filenames. Each Pro batch item retains its own target, and Apply to All leaves those targets unchanged.

@@ -927,6 +927,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._restoring_batch_item_settings = True
         try:
             item = self._batch_item_for_current_input()
+            if item is not None:
+                self._output_path_is_auto = item.get('output_is_auto', True)
             # A queued item's own edited output path wins over the auto default.
             if item is not None and item.get('output'):
                 self.output_path_var.set(item['output'])
@@ -1105,6 +1107,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         if self._output_path_is_auto:
             self.output_path_var.set(self._default_output_path(
                 self.input_path_var.get(), self.format_var.get(), target))
+        self._write_back_current_settings()
         self._reset_converted_preview_cache()
         self._show_preview_loading()
         self.update_frame_preview()
@@ -1195,6 +1198,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             'bit_depth_choice': self.bit_depth_var.get(),
             'bitrate_customized': getattr(self, '_bitrate_customized_for_current_item', False),
             'lut_enabled': self.lut_export_var.get(),
+            'resolution_target': getattr(self, 'resolution_target', None),
         }
 
     def _restore_settings_dict(self, settings: dict) -> None:  # type: ignore[type-arg]
@@ -1207,6 +1211,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         already_restoring = getattr(self, '_restoring_batch_item_settings', False)
         self._restoring_batch_item_settings = True
         try:
+            self.resolution_target = settings.get('resolution_target')
             self.gamma_var.set(settings.get('gamma', self.gamma_var.get()))
             self.tonemap_var.set(settings.get('tonemapper', self.tonemap_var.get()))
             self.lut_export_var.set(settings.get('lut_enabled', self.lut_export_var.get()))
@@ -1228,8 +1233,27 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 self._apply_tonemap_choices()
             if hasattr(self, 'lut_export_checkbutton'):
                 self._apply_lut_export_availability()
+            if getattr(self, '_cached_props', None):
+                self._apply_restored_resolution_target()
         finally:
             self._restoring_batch_item_settings = already_restoring
+
+    def _apply_restored_resolution_target(self) -> None:
+        """Apply a stored batch target once its source metadata is ready."""
+        props = getattr(self, '_cached_props', None)
+        if not props:
+            return
+        target = getattr(self, 'resolution_target', None)
+        if target is None:
+            self._rebuild_resolution_menu()
+            return
+        try:
+            validate_target(
+                int(props['width']), int(props['height']), target,
+                licensed=self._licensed)
+        except ValueError:
+            target = None
+        self._select_resolution_target(target)
 
     def _write_back_current_settings(self, debounce_listbox: bool = False) -> None:
         """Persist the live controls onto whichever queue item is loaded,
@@ -1247,8 +1271,33 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             return
         item = self._batch_item_for_current_input()
         if item is not None:
-            item['settings'] = self._current_settings_dict()
+            settings = self._current_settings_dict()
+            stored_target = (item.get('settings') or {}).get('resolution_target')
+            preserve_pro_target = (
+                not self._licensed
+                and settings.get('resolution_target') is None
+                and stored_target is not None
+            )
+            props = getattr(self, '_cached_props', None)
+            if preserve_pro_target and props:
+                try:
+                    validate_target(
+                        int(props['width']), int(props['height']), stored_target,
+                        licensed=False)
+                except ValueError:
+                    try:
+                        validate_target(
+                            int(props['width']), int(props['height']), stored_target,
+                            licensed=True)
+                    except ValueError:
+                        preserve_pro_target = False
+                else:
+                    preserve_pro_target = False
+            if preserve_pro_target:
+                settings['resolution_target'] = stored_target
+            item['settings'] = settings
             item['output'] = self.output_path_var.get()
+            item['output_is_auto'] = getattr(self, '_output_path_is_auto', True)
             if debounce_listbox:
                 self._schedule_batch_list_refresh()
             else:
@@ -1290,14 +1339,14 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         marker's meaning) discoverable from the queue panel itself."""
         return (
             "Each queued file remembers its own settings (gamma, quality, "
-            "tonemapper, bit depth, Accurate GPU Color).\n\n"
+            "tonemapper, bit depth, resolution, Accurate GPU Color).\n\n"
             "Selecting a queued file loads its own settings into the controls "
             "above; changing a control while a file is selected edits that "
             "file's settings only.\n\n"
             "A \"*\" next to a queued file means its settings differ from what "
             "the controls currently show.\n\n"
             "\"Apply to All\" copies the currently-displayed settings onto "
-            "every other queued file."
+            "every other queued file, except resolution."
         )
 
     def _quality_mode_tooltip_text(self) -> str:
@@ -1612,11 +1661,17 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._cached_props = props
         self._cached_maxcll = maxcll
         self._metadata_pending = None
-        self._rebuild_resolution_menu()
+        already_restoring = getattr(self, '_restoring_batch_item_settings', False)
+        self._restoring_batch_item_settings = True
+        try:
+            self._apply_restored_resolution_target()
+        finally:
+            self._restoring_batch_item_settings = already_restoring
         self._bitrate_needs_reseed = True  # reseed to 50% of this file, not a stale value
         if hasattr(self, 'quality_slider'):
             self._apply_quality_mode()
         self._refresh_info_label_text()
+        self._write_back_current_settings()
         on_complete = getattr(self, '_on_metadata_probe_complete', None)
         if on_complete is not None:
             on_complete(file_path)

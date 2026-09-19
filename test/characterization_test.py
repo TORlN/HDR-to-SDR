@@ -30,6 +30,7 @@ from src.utils import (
 )
 from src.gui import HDRConverterGUI, DEFAULT_MIN_SIZE
 from src.preview import PREVIEW_SIZE
+from resolution import ResolutionTarget
 
 
 def _bare_gui():
@@ -997,7 +998,7 @@ class TestGuiInteractions(unittest.TestCase):
 
         gui.lut_export_checkbutton.config.assert_called_once_with(state='normal')
 
-    def test_current_settings_dict_excludes_gpu_accel(self):
+    def test_current_settings_dict_includes_resolution_and_excludes_gpu_accel(self):
         gui = _bare_gui()
         gui.gamma_var = MagicMock(get=MagicMock(return_value=1.0))
         gui.quality_mode_var = MagicMock(get=MagicMock(return_value='Constant Quality'))
@@ -1008,9 +1009,11 @@ class TestGuiInteractions(unittest.TestCase):
         gui.gpu_accel_var = MagicMock()
         gui.bit_depth_var = MagicMock(get=MagicMock(return_value='10-bit'))
         gui.lut_export_var = MagicMock(get=MagicMock(return_value=True))
+        gui.resolution_target = ResolutionTarget(720)
 
         result = gui._current_settings_dict()
 
+        self.assertEqual(result['resolution_target'], ResolutionTarget(720))
         self.assertNotIn('gpu_accel', result)
 
     def test_restore_settings_dict_does_not_set_gpu_accel_var(self):
@@ -1023,10 +1026,16 @@ class TestGuiInteractions(unittest.TestCase):
         gui.quality_var = MagicMock()
         gui.bitrate_var = MagicMock()
         gui._bitrate_ceiling_kbps = MagicMock(return_value=40000)
+        gui.resolution_target = None
 
-        gui._restore_settings_dict({'gamma': 2.0, 'gpu_accel': True})
+        gui._restore_settings_dict({
+            'gamma': 2.0,
+            'gpu_accel': True,
+            'resolution_target': ResolutionTarget(720),
+        })
 
         gui.gpu_accel_var.set.assert_not_called()
+        self.assertEqual(gui.resolution_target, ResolutionTarget(720))
 
     def test_handle_file_drop_sets_paths_and_refreshes(self):
         gui = _bare_gui()
@@ -2486,6 +2495,14 @@ class TestBatchListRefreshDebounce(unittest.TestCase):
         gui._refresh_batch_list.assert_called_once()
         gui.root.after.assert_not_called()
 
+    def test_writeback_persists_output_path_ownership(self):
+        gui = self._gui()
+        gui._output_path_is_auto = False
+
+        gui._write_back_current_settings()
+
+        self.assertFalse(gui._item['output_is_auto'])
+
     def test_debounced_call_writes_settings_immediately_but_defers_refresh(self):
         gui = self._gui()
         gui.root.after.return_value = 'job1'
@@ -2677,10 +2694,12 @@ class TestGuiLifecycle(unittest.TestCase):
             m = MagicMock(); m.get.return_value = val
             setattr(gui, name, m)
         gui._save_current_settings()
-        self.assertEqual(mock_save.call_args[0][0]['quality'], 21)
-        self.assertEqual(mock_save.call_args[0][0]['filetype'], 'MKV')
-        self.assertEqual(mock_save.call_args[0][0]['quality_mode'], 'cq')
-        self.assertEqual(mock_save.call_args[0][0]['quality_bitrate_kbps'], 15000)
+        persisted = mock_save.call_args.args[0]
+        self.assertEqual(persisted['quality'], 21)
+        self.assertEqual(persisted['filetype'], 'MKV')
+        self.assertEqual(persisted['quality_mode'], 'cq')
+        self.assertEqual(persisted['quality_bitrate_kbps'], 15000)
+        self.assertNotIn('resolution_target', persisted)
 
     @patch('src.gui.save_settings')
     def test_save_current_settings_recovers_invalid_gamma(self, mock_save):

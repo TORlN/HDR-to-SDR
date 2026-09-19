@@ -209,7 +209,6 @@ class TestFreeEditionGui(unittest.TestCase):
             app = gui.HDRConverterGUI(root, licensed=False)
         self.assertNotIn(app.quality_slider, app.interactable_elements)
         self.assertNotIn(app.quality_entry, app.interactable_elements)
-        self.assertNotIn(app.custom_resolution_entry, app.interactable_elements)
         self.assertIn(app.browse_button, app.interactable_elements)
 
     @unittest.skipUnless(_TK_OK, _SKIP)

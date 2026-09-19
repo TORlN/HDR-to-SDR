@@ -352,7 +352,7 @@ class TestConstruction(_GuiTestBase):
             self.gui.add_files_button, self.gui.clear_batch_button,
             self.gui.remove_batch_button,
             self.gui.bit_depth_10_radio, self.gui.bit_depth_12_radio,
-            self.gui.apply_settings_button, self.gui.custom_resolution_entry,
+            self.gui.apply_settings_button,
         }
         self.assertEqual(set(self.gui.interactable_elements), expected)
 
@@ -988,66 +988,121 @@ class TestUserActions(_GuiTestBase):
         )
         self.assertEqual(self._resolution_states()['1920 x 800'], 'disabled')
 
-    def test_custom_control_is_one_short_edge_field_applied_on_commit_events(self):
+    def test_custom_resolution_opens_dialog_without_expanding_control_row(self):
         self.gui._licensed = True
         self._apply_resolution_metadata()
         self.gui._choose_custom_resolution()
-        self.assertEqual(self.gui.custom_resolution_frame.winfo_manager(), 'grid')
-        self.assertEqual(
-            self.gui.custom_resolution_label.cget('text'),
-            'Custom short edge (px)',
-        )
-        self.assertTrue(self.gui.custom_resolution_entry.bind('<Return>'))
-        self.assertTrue(self.gui.custom_resolution_entry.bind('<FocusOut>'))
-        self.assertFalse(self.gui.custom_resolution_entry.bind('<KeyRelease>'))
+        dialogs = [widget for widget in self.gui.root.winfo_children()
+                   if isinstance(widget, tk.Toplevel)]
+        self.assertEqual(len(dialogs), 1)
+        self.assertEqual(dialogs[0].title(), 'Custom Resolution')
+        labels = [widget.cget('text') for widget in dialogs[0].winfo_children()
+                  if isinstance(widget, tk.Label)]
+        self.assertIn('Width', labels)
+        self.assertIn('×', labels)
+        self.assertIn('Height', labels)
+        self.assertEqual(str(dialogs[0].width_entry.cget('state')), 'normal')
+        self.assertEqual(str(dialogs[0].height_entry.cget('state')), 'readonly')
+        self.assertEqual(self.gui.resolution_frame.grid_slaves(row=1), [])
+        dialogs[0].destroy()
+
+    def test_custom_resolution_dialog_locks_aspect_ratio_from_either_field(self):
+        self.gui._licensed = True
+        self._apply_resolution_metadata()
+        self.gui._choose_custom_resolution()
+        dialogs = [widget for widget in self.gui.root.winfo_children()
+                   if isinstance(widget, tk.Toplevel)]
+        self.assertEqual(len(dialogs), 1)
+        dialog = dialogs[0]
+        dialog.width_var.set('1600')
+        self.assertEqual(dialog.height_var.get(), '900')
+        dialog.height_entry.event_generate('<Button-1>')
+        self.gui.root.update()
+        self.assertEqual(str(dialog.width_entry.cget('state')), 'readonly')
+        self.assertEqual(str(dialog.height_entry.cget('state')), 'normal')
+        dialog.height_var.set('720')
+        self.assertEqual(dialog.width_var.get(), '1280')
+        dialog.height_var.set('')
+        self.assertEqual(dialog.width_var.get(), '')
+        dialog.destroy()
+
+    def test_custom_resolution_dialog_reopens_with_active_custom_dimensions(self):
+        self.gui._licensed = True
+        self._apply_resolution_metadata()
+        self.gui.resolution_target = ResolutionTarget(900, custom=True)
+        self.gui._choose_custom_resolution()
+        dialogs = [widget for widget in self.gui.root.winfo_children()
+                   if isinstance(widget, tk.Toplevel)]
+        self.assertEqual(len(dialogs), 1)
+        self.assertEqual(dialogs[0].width_var.get(), '1600')
+        self.assertEqual(dialogs[0].height_var.get(), '900')
+        dialogs[0].destroy()
 
     def test_custom_resolution_normalizes_dimensions_and_filename(self):
         self.gui._licensed = True
         self.gui._load_input_file('movie.mp4')
         self._apply_resolution_metadata()
         self.gui._choose_custom_resolution()
-        self.gui.custom_resolution_var.set('901')
+        dialogs = [widget for widget in self.gui.root.winfo_children()
+                   if isinstance(widget, tk.Toplevel)]
+        self.assertEqual(len(dialogs), 1)
+        dialog = dialogs[0]
+        dialog.width_var.set('1600')
         with patch.object(self.gui, '_reset_converted_preview_cache'), \
                 patch.object(self.gui, '_show_preview_loading'), \
                 patch.object(self.gui, 'update_frame_preview'):
-            self.gui._apply_custom_resolution()
-        self.assertEqual(self.gui.resolution_target.short_edge, 901)
+            dialog.apply_button.invoke()
+        self.assertEqual(self.gui.resolution_target.short_edge, 900)
         self.assertTrue(self.gui.resolution_target.custom)
-        self.assertEqual(self.gui.custom_resolution_result_var.get(), '1600 x 900')
         self.assertEqual(self.gui.output_path_var.get(), 'movie_sdr_1600x900.mp4')
-        self.assertEqual(self._resolution_states()['Custom...'], 'disabled')
+        self.assertEqual(self._resolution_states()['Custom...'], 'normal')
 
     def test_pro_preset_upscale_updates_filename_and_disables_selected_row(self):
         self.gui._licensed = True
         self.gui._load_input_file('movie.mp4')
         self._apply_resolution_metadata()
-        self.gui._choose_custom_resolution()
         with patch.object(self.gui, '_reset_converted_preview_cache') as reset, \
                 patch.object(self.gui, '_show_preview_loading'), \
                 patch.object(self.gui, 'update_frame_preview'):
             self.gui._select_resolution_target(ResolutionTarget(2160))
         self.assertEqual(self.gui.output_path_var.get(), 'movie_sdr_4k.mp4')
         self.assertEqual(self._resolution_states()['4K'], 'disabled')
-        self.assertEqual(self.gui.custom_resolution_frame.winfo_manager(), '')
         reset.assert_called_once_with()
 
     def test_invalid_custom_resolution_preserves_last_valid_selection(self):
         self.gui._licensed = True
         self._apply_resolution_metadata()
         self.gui.resolution_target = ResolutionTarget(720)
+        self.gui._choose_custom_resolution()
+        dialogs = [widget for widget in self.gui.root.winfo_children()
+                   if isinstance(widget, tk.Toplevel)]
+        self.assertEqual(len(dialogs), 1)
+        dialog = dialogs[0]
         for value in ('', 'pixels', '0', '-1'):
             with self.subTest(value=value):
-                self.gui.custom_resolution_var.set(value)
+                dialog.width_var.set(value)
                 with patch.object(self.gui, '_reset_converted_preview_cache') as reset, \
                         patch.object(self.gui, 'update_frame_preview') as refresh:
-                    self.gui._apply_custom_resolution()
+                    dialog.apply_button.invoke()
                 self.assertEqual(
-                    self.gui.custom_resolution_error_var.get(),
+                    dialog.error_var.get(),
                     'Enter a positive whole number.',
                 )
                 self.assertEqual(self.gui.resolution_target, ResolutionTarget(720))
                 reset.assert_not_called()
                 refresh.assert_not_called()
+        dialog.destroy()
+
+    def test_closing_custom_resolution_dialog_preserves_current_target(self):
+        self.gui._licensed = True
+        self._apply_resolution_metadata()
+        self.gui.resolution_target = ResolutionTarget(720)
+        self.gui._choose_custom_resolution()
+        dialogs = [widget for widget in self.gui.root.winfo_children()
+                   if isinstance(widget, tk.Toplevel)]
+        self.assertEqual(len(dialogs), 1)
+        dialogs[0].destroy()
+        self.assertEqual(self.gui.resolution_target, ResolutionTarget(720))
 
     def test_license_loss_resets_pro_target_but_preserves_manual_path(self):
         self.gui._licensed = True
@@ -1061,7 +1116,6 @@ class TestUserActions(_GuiTestBase):
                 patch.object(self.gui, 'update_frame_preview'):
             self.gui._apply_license_state(False)
         self.assertIsNone(self.gui.resolution_target)
-        self.assertEqual(self.gui.custom_resolution_frame.winfo_manager(), '')
         self.assertNotIn('8K', self._resolution_labels())
         self.assertEqual(self.gui.output_path_var.get(), 'C:/deliveries/client-cut.mp4')
 
@@ -1095,12 +1149,10 @@ class TestUserActions(_GuiTestBase):
     def test_loading_another_file_resets_resolution_to_source(self):
         self.gui._licensed = True
         self.gui.resolution_target = ResolutionTarget(720)
-        self.gui.custom_resolution_frame.grid()
         with patch.object(self.gui, 'update_frame_preview'):
             self.gui._load_input_file('next.mp4')
         self.assertIsNone(self.gui.resolution_target)
         self.assertEqual(self.gui.resolution_display_var.get(), 'Loading resolution...')
-        self.assertEqual(self.gui.custom_resolution_frame.winfo_manager(), '')
 
     @patch('src.gui.filedialog.askopenfilename')
     def test_select_file_sets_paths_and_triggers_preview(self, mock_dialog):
@@ -1404,7 +1456,7 @@ class TestUnlicensedState(_LicensingBase):
             self.gui.format_combobox, self.gui.custom_time_entry,
             self.gui.custom_seek_button, self.gui.add_files_button,
             self.gui.clear_batch_button, self.gui.remove_batch_button,
-            self.gui.bit_depth_12_radio, self.gui.custom_resolution_entry,
+            self.gui.bit_depth_12_radio,
         ]
         for widget in premium:
             self.assertNotIn(widget, self.gui.interactable_elements,
@@ -1470,7 +1522,6 @@ class TestLicensedState(_LicensingBase):
             self.gui.custom_seek_button, self.gui.add_files_button,
             self.gui.clear_batch_button, self.gui.remove_batch_button,
             self.gui.bit_depth_10_radio, self.gui.bit_depth_12_radio,
-            self.gui.custom_resolution_entry,
         ]
         for widget in premium:
             self.assertIn(widget, self.gui.interactable_elements,

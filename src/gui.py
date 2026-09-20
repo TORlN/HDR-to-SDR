@@ -1033,7 +1033,6 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
                 label=label,
                 command=lambda selected=target:
                     self._select_resolution_target(selected),
-                state='disabled' if target == self.resolution_target else 'normal',
             )
         if self._licensed:
             self.resolution_menu.add_command(
@@ -1061,6 +1060,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         """Select an allowed resolution and refresh only the converted preview."""
         props = getattr(self, '_cached_props', None)
         if not props:
+            return
+        if target == self.resolution_target:
             return
         validate_target(
             int(props['width']), int(props['height']), target,

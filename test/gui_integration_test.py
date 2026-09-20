@@ -946,21 +946,21 @@ class TestUserActions(_GuiTestBase):
         self._apply_resolution_metadata(width=640, height=360)
         self.assertEqual(self._resolution_labels(), ['640 x 360'])
 
-    def test_source_row_reenables_after_downscale_and_disables_on_return(self):
+    def test_resolution_rows_remain_enabled_after_selection(self):
         self.gui._licensed = False
         self._apply_resolution_metadata()
-        self.assertEqual(self.gui.resolution_menu.entrycget(0, 'state'), 'disabled')
+        self.assertEqual(self.gui.resolution_menu.entrycget(0, 'state'), 'normal')
         with patch.object(self.gui, '_reset_converted_preview_cache'), \
                 patch.object(self.gui, '_show_preview_loading'), \
                 patch.object(self.gui, 'update_frame_preview'):
             self.gui._select_resolution_target(ResolutionTarget(720))
         self.assertEqual(self._resolution_states()['1080p'], 'normal')
-        self.assertEqual(self._resolution_states()['720p'], 'disabled')
+        self.assertEqual(self._resolution_states()['720p'], 'normal')
         with patch.object(self.gui, '_reset_converted_preview_cache'), \
                 patch.object(self.gui, '_show_preview_loading'), \
                 patch.object(self.gui, 'update_frame_preview'):
             self.gui._select_resolution_target(None)
-        self.assertEqual(self.gui.resolution_menu.entrycget(0, 'state'), 'disabled')
+        self.assertEqual(self.gui.resolution_menu.entrycget(0, 'state'), 'normal')
 
     def test_pro_menu_is_descending_with_custom_last(self):
         self.gui._licensed = True
@@ -969,14 +969,14 @@ class TestUserActions(_GuiTestBase):
             self._resolution_labels(),
             ['8K', '4K', '1440p', '1080p', '720p', '480p', 'Custom...'],
         )
-        self.assertEqual(self._resolution_states()['1080p'], 'disabled')
+        self.assertEqual(self._resolution_states()['1080p'], 'normal')
 
         self._apply_resolution_metadata(width=3840, height=2160)
         self.assertEqual(
             self._resolution_labels(),
             ['8K', '4K', '1440p', '1080p', '720p', '480p', 'Custom...'],
         )
-        self.assertEqual(self._resolution_states()['4K'], 'disabled')
+        self.assertEqual(self._resolution_states()['4K'], 'normal')
 
     def test_nonstandard_source_is_inserted_in_descending_order(self):
         self.gui._licensed = True
@@ -986,7 +986,19 @@ class TestUserActions(_GuiTestBase):
             ['8K', '4K', '1440p', '1080p', '1920 x 800',
              '720p', '480p', 'Custom...'],
         )
-        self.assertEqual(self._resolution_states()['1920 x 800'], 'disabled')
+        self.assertEqual(self._resolution_states()['1920 x 800'], 'normal')
+
+    def test_reselecting_active_resolution_does_not_refresh_preview(self):
+        self.gui._licensed = True
+        self._apply_resolution_metadata()
+        self.gui.resolution_target = ResolutionTarget(720)
+        with patch.object(self.gui, '_reset_converted_preview_cache') as reset, \
+                patch.object(self.gui, '_show_preview_loading') as loading, \
+                patch.object(self.gui, 'update_frame_preview') as refresh:
+            self.gui._select_resolution_target(ResolutionTarget(720))
+        reset.assert_not_called()
+        loading.assert_not_called()
+        refresh.assert_not_called()
 
     def test_custom_resolution_opens_dialog_without_expanding_control_row(self):
         self.gui._licensed = True
@@ -1066,7 +1078,7 @@ class TestUserActions(_GuiTestBase):
                 patch.object(self.gui, 'update_frame_preview'):
             self.gui._select_resolution_target(ResolutionTarget(2160))
         self.assertEqual(self.gui.output_path_var.get(), 'movie_sdr_4k.mp4')
-        self.assertEqual(self._resolution_states()['4K'], 'disabled')
+        self.assertEqual(self._resolution_states()['4K'], 'normal')
         reset.assert_called_once_with()
 
     def test_invalid_custom_resolution_preserves_last_valid_selection(self):

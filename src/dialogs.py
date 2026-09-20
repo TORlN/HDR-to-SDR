@@ -161,6 +161,10 @@ class _CustomResolutionDialog(tk.Toplevel):
             paired_var.set(paired_value)
             self._syncing = False
 
+    def _show_error(self, message: str) -> None:
+        self.error_var.set(message)
+        _center_over_master(self, self.master, min_w=300, min_h=165)
+
     def _apply(self, event: object = None) -> str:
         value = self.width_var.get() if self._width_authoritative else self.height_var.get()
         try:
@@ -168,13 +172,13 @@ class _CustomResolutionDialog(tk.Toplevel):
             if dimension <= 0:
                 raise ValueError
         except ValueError:
-            self.error_var.set('Enter a positive whole number.')
+            self._show_error('Enter a positive whole number.')
             return 'break'
 
         try:
             self._apply_callback(dimension, self._width_authoritative)
         except ValueError as exc:
-            self.error_var.set(str(exc))
+            self._show_error(str(exc))
             return 'break'
         self.destroy()
         return 'break'

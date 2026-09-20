@@ -1127,18 +1127,22 @@ class TestUserActions(_GuiTestBase):
         dialog.destroy()
 
     def test_custom_resolution_below_480p_preserves_last_valid_selection(self):
+        import dialogs
         self.gui._licensed = True
         self._apply_resolution_metadata()
         self.gui.resolution_target = ResolutionTarget(720)
-        self.gui._choose_custom_resolution()
-        dialogs = [widget for widget in self.gui.root.winfo_children()
-                   if isinstance(widget, tk.Toplevel)]
-        self.assertEqual(len(dialogs), 1)
-        dialog = dialogs[0]
-        dialog.width_var.set('800')
-        with patch.object(self.gui, '_reset_converted_preview_cache') as reset, \
-                patch.object(self.gui, 'update_frame_preview') as refresh:
-            dialog.apply_button.invoke()
+        with patch.object(dialogs, '_center_over_master',
+                          wraps=dialogs._center_over_master) as center:
+            self.gui._choose_custom_resolution()
+            dialogs = [widget for widget in self.gui.root.winfo_children()
+                       if isinstance(widget, tk.Toplevel)]
+            self.assertEqual(len(dialogs), 1)
+            dialog = dialogs[0]
+            dialog.width_var.set('800')
+            with patch.object(self.gui, '_reset_converted_preview_cache') as reset, \
+                    patch.object(self.gui, 'update_frame_preview') as refresh:
+                dialog.apply_button.invoke()
+            self.assertEqual(center.call_count, 2)
         self.assertEqual(dialog.error_var.get(), 'Custom resolution must be at least 480p.')
         self.assertEqual(self.gui.resolution_target, ResolutionTarget(720))
         reset.assert_not_called()

@@ -25,8 +25,10 @@ def _center_over_master(win: tk.Toplevel, master: tk.Misc, min_w: int, min_h: in
     win.update_idletasks()
     w = max(win.winfo_reqwidth() + 40, min_w)
     h = max(win.winfo_reqheight() + 20, min_h)
-    px = master.winfo_rootx() + (master.winfo_width() - w) // 2
-    py = master.winfo_rooty() + (master.winfo_height() - h) // 2
+    frame_x = win.winfo_rootx() - win.winfo_x()
+    frame_y = win.winfo_rooty() - win.winfo_y()
+    px = master.winfo_rootx() + (master.winfo_width() - w) // 2 - frame_x
+    py = master.winfo_rooty() + (master.winfo_height() - h) // 2 - frame_y
     win.geometry(f'{w}x{h}+{px}+{py}')
     win.grab_set()
     win.focus_set()

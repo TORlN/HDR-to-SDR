@@ -1867,6 +1867,10 @@ class TestCenterOverMaster(unittest.TestCase):
         win = MagicMock()
         win.winfo_reqwidth.return_value = 300
         win.winfo_reqheight.return_value = 100
+        win.winfo_x.return_value = 272
+        win.winfo_y.return_value = 254
+        win.winfo_rootx.return_value = 280
+        win.winfo_rooty.return_value = 285
         master = MagicMock()
         master.winfo_rootx.return_value = 50
         master.winfo_rooty.return_value = 60
@@ -1883,7 +1887,7 @@ class TestCenterOverMaster(unittest.TestCase):
 
         win.update_idletasks.assert_called_once()
         master.update_idletasks.assert_called_once()
-        win.geometry.assert_called_once_with('340x150+280+285')
+        win.geometry.assert_called_once_with('340x150+272+254')
         win.grab_set.assert_called_once()
         win.focus_set.assert_called_once()
 
@@ -1892,6 +1896,10 @@ class TestCenterOverMaster(unittest.TestCase):
         win = MagicMock()
         win.winfo_reqwidth.return_value = 10
         win.winfo_reqheight.return_value = 10
+        win.winfo_x.return_value = 0
+        win.winfo_y.return_value = 0
+        win.winfo_rootx.return_value = 0
+        win.winfo_rooty.return_value = 0
         master = MagicMock()
         master.winfo_rootx.return_value = 0
         master.winfo_rooty.return_value = 0

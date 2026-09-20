@@ -592,6 +592,17 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.resolution_frame, textvariable=self.resolution_display_var,
             menu=self.resolution_menu, state='disabled')
         self.resolution_menubutton.grid(row=0, column=0)
+        self.resolution_info_button = ttk.Label(
+            self.resolution_frame, text='ⓘ', cursor='hand2')
+        self.resolution_info_button.grid(row=0, column=1, padx=(5, 0))
+        tooltip_text_resolution = (
+            'Community (Free): Choose preset resolutions at or below the source '
+            'resolution, down to 480p.\n\n'
+            'Pro: Includes Community presets, plus preset upscaling through 8K '
+            'and a custom resolution. Resizing is standard scaling, not AI upscaling.')
+        self.resolution_info_button.bind(
+            '<Enter>', lambda e: self.show_tooltip(e, tooltip_text_resolution))
+        self.resolution_info_button.bind('<Leave>', self.hide_tooltip)
 
         self.gpu_status_label = ttk.Label(self.control_frame, text='')
         self.gpu_status_label.grid(row=4, column=2, sticky=tk.W, padx=(5, 0), pady=(5, 0))

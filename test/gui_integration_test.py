@@ -880,6 +880,23 @@ class TestTooltip(_GuiTestBase):
         self.assertEqual(labels[0].cget('text'), "Smaller File  ◀──▶  Better Quality")
         self.gui.hide_tooltip()
 
+    def test_resolution_info_button_explains_edition_capabilities(self):
+        self.assertTrue(hasattr(self.gui, 'resolution_info_button'))
+        self.assertEqual(self.gui.resolution_info_button.cget('text'), 'ⓘ')
+
+        self.gui.resolution_info_button.event_generate('<Enter>')
+
+        labels = [w for w in self.gui.tooltip.winfo_children() if isinstance(w, ttk.Label)]
+        self.assertTrue(labels)
+        self.assertEqual(
+            labels[0].cget('text'),
+            'Community (Free): Choose preset resolutions at or below the source '\
+            'resolution, down to 480p.\n\n'
+            'Pro: Includes Community presets, plus preset upscaling through 8K '\
+            'and a custom resolution. Resizing is standard scaling, not AI upscaling.',
+        )
+        self.gui.hide_tooltip()
+
     @patch('src.gui.conversion_manager.gpu_name', return_value='NVIDIA GeForce RTX 3080')
     def test_gpu_status_label_hover_shows_detected_gpu(self, _mock_gpu_name):
         """_GuiTestBase's setUp constructs the GUI with GPU acceleration

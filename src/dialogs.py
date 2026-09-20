@@ -84,7 +84,8 @@ class _CustomResolutionDialog(tk.Toplevel):
     def __init__(self, master: tk.Misc, anchor: tk.Misc,
                  initial_dimensions: tuple[int, int] | None,
                  dimensions_for_value: Callable[[int, bool], tuple[int, int]],
-                 apply_callback: Callable[[int, bool], None]) -> None:
+                 apply_callback: Callable[[int, bool], None],
+                 screen_position: tuple[int, int] | None = None) -> None:
         super().__init__(master)
         try:
             icon_path = getattr(master, '_hdrsdr_icon_path', '')
@@ -98,6 +99,7 @@ class _CustomResolutionDialog(tk.Toplevel):
         self.minsize(*_CUSTOM_DIALOG_MIN_SIZE)
         self.protocol('WM_DELETE_WINDOW', self.destroy)
         self._anchor = anchor
+        self._screen_position = screen_position
         self._dimensions_for_value = dimensions_for_value
         self._apply_callback = apply_callback
         self._width_authoritative = True
@@ -169,8 +171,11 @@ class _CustomResolutionDialog(tk.Toplevel):
 
     def _position_beside_anchor(self) -> None:
         self.update_idletasks()
-        x = self._anchor.winfo_rootx() + self._anchor.winfo_width()
-        y = self._anchor.winfo_rooty()
+        if self._screen_position is None:
+            x = self._anchor.winfo_rootx() + self._anchor.winfo_width()
+            y = self._anchor.winfo_rooty()
+        else:
+            x, y = self._screen_position
         self.geometry(f'+{x}+{y}')
         self.grab_set()
 

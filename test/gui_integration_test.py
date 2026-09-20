@@ -1008,9 +1008,7 @@ class TestUserActions(_GuiTestBase):
     def test_custom_resolution_opens_adjacent_popover_without_reflowing_main_window(self):
         self.gui._licensed = True
         self._apply_resolution_metadata()
-        self.gui.root.deiconify()
-        self.addCleanup(self.gui.root.withdraw)
-        self.gui.root.update()
+        self.gui.root.update_idletasks()
         original_geometry = self.gui.root.winfo_geometry()
         expected_position = (
             self.gui.resolution_menubutton.winfo_rootx()
@@ -1037,6 +1035,35 @@ class TestUserActions(_GuiTestBase):
         self.assertEqual(str(dialogs[0].height_entry.cget('state')), 'readonly')
         self.assertEqual(self.gui.resolution_frame.grid_slaves(row=1), [])
         dialogs[0].destroy()
+
+    def test_custom_resolution_popover_opens_beside_active_menu_row(self):
+        self.gui._licensed = True
+        self._apply_resolution_metadata()
+        self.gui.root.update_idletasks()
+        menu = self.gui.resolution_menu
+        custom_index = menu.index('end')
+        custom_y = menu.yposition(custom_index)
+        event = tk.Event()
+        event.x = 20
+        event.y = custom_y + 2
+        event.x_root = 400
+        event.y_root = 300
+        expected_position = (
+            event.x_root + menu.winfo_reqwidth() - event.x,
+            event.y_root - 2,
+        )
+
+        self.gui._on_resolution_menu_motion(event)
+        self.gui._choose_custom_resolution()
+        self.gui.root.update()
+
+        dialog = next(widget for widget in self.gui.root.winfo_children()
+                      if isinstance(widget, tk.Toplevel))
+        self.assertEqual(
+            (dialog.winfo_x(), dialog.winfo_y()),
+            expected_position,
+        )
+        dialog.destroy()
 
     def test_custom_resolution_dialog_inherits_application_icon(self):
         self.gui._licensed = True

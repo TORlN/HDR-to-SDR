@@ -583,6 +583,11 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             foreground=FG, activebackground=ACCENT, activeforeground=FG,
             disabledforeground=DISABLED,
         )
+        self._resolution_menu_popover_position: tuple[int, int] | None = None
+        self.resolution_menu.bind(
+            '<Map>',
+            lambda _: setattr(self, '_resolution_menu_popover_position', None))
+        self.resolution_menu.bind('<Motion>', self._on_resolution_menu_motion)
         self.resolution_menubutton = ttk.Menubutton(
             self.resolution_frame, textvariable=self.resolution_display_var,
             menu=self.resolution_menu, state='disabled')
@@ -1077,6 +1082,19 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._show_preview_loading()
         self.update_frame_preview()
 
+    def _on_resolution_menu_motion(self, event: tk.Event) -> None:  # type: ignore[type-arg]
+        """Remember the Custom row's screen position before the menu closes."""
+        self._resolution_menu_popover_position = None
+        index = self.resolution_menu.index('end')
+        if (index is None
+                or self.resolution_menu.entrycget(index, 'label') != 'Custom...'
+                or event.y < self.resolution_menu.yposition(index)):
+            return
+        self._resolution_menu_popover_position = (
+            event.x_root + self.resolution_menu.winfo_reqwidth() - event.x,
+            event.y_root - event.y + self.resolution_menu.yposition(index),
+        )
+
     def _choose_custom_resolution(self) -> None:
         """Open the Pro custom-resolution dialog."""
         props = getattr(self, '_cached_props', None)
@@ -1089,9 +1107,12 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             initial_dimensions = output_dimensions(width, height, self.resolution_target)
             if initial_dimensions is None:
                 initial_dimensions = (width, height)
+        position = self._resolution_menu_popover_position
+        self._resolution_menu_popover_position = None
         dialog = _CustomResolutionDialog(
             self.root, self.resolution_menubutton, initial_dimensions,
-            self._custom_dimensions_for_value, self._apply_custom_resolution)
+            self._custom_dimensions_for_value, self._apply_custom_resolution,
+            screen_position=position)
         dialog.width_entry.focus_set()
 
     def _custom_resolution_target(

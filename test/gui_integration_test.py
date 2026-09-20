@@ -587,6 +587,9 @@ class TestDarkTheme(_GuiTestBase):
         self.assertEqual(str(self.gui.resolution_menu.cget('activeforeground')), FG)
         self.assertEqual(
             str(self.gui.resolution_menu.cget('disabledforeground')), DISABLED)
+        arrow_map = style.map('TCombobox', 'arrowcolor')
+        self.assertIn(('active', FG), arrow_map)
+        self.assertIn(('pressed', FG), arrow_map)
 
 
 class TestBatchQueueWidgets(_GuiTestBase):
@@ -890,9 +893,9 @@ class TestTooltip(_GuiTestBase):
         self.assertTrue(labels)
         self.assertEqual(
             labels[0].cget('text'),
-            'Community (Free): Choose preset resolutions at or below the source '\
+            'Free: Choose preset resolutions at or below the source '\
             'resolution, down to 480p.\n\n'
-            'Pro: Includes Community presets, plus preset upscaling through 8K '\
+            'Pro: Includes Free presets, plus preset upscaling through 8K '\
             'and a custom resolution. Resizing is standard scaling, not AI upscaling.',
         )
         self.gui.hide_tooltip()

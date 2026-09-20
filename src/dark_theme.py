@@ -83,6 +83,7 @@ def apply_dark_theme(root):
               fieldbackground=[('readonly', FIELD)],
               foreground=[('readonly', FG), ('disabled', DISABLED)],
               bordercolor=[('focus', ACCENT)],
+              arrowcolor=[('active', FG), ('pressed', FG), ('disabled', DISABLED)],
               selectbackground=[('readonly', FIELD)],
               selectforeground=[('readonly', FG)])
 

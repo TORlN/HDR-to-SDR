@@ -83,8 +83,7 @@ class _CustomResolutionDialog(tk.Toplevel):
                  apply_callback: Callable[[int, bool], None]) -> None:
         super().__init__(master)
         try:
-            master_iconbitmap = getattr(master, 'iconbitmap', None)
-            icon_path = master_iconbitmap() if callable(master_iconbitmap) else ''
+            icon_path = getattr(master, '_hdrsdr_icon_path', '')
             if icon_path:
                 self.iconbitmap(icon_path)
         except Exception:

@@ -266,6 +266,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             icon_path = os.path.join(src_dir, '..', 'logo', 'icon.ico')
         if not os.path.exists(icon_path):
             return
+        setattr(self.root, '_hdrsdr_icon_path', icon_path)
         try:
             self.root.iconbitmap(icon_path)
         except Exception:

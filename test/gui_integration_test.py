@@ -1027,10 +1027,11 @@ class TestUserActions(_GuiTestBase):
         self.gui._licensed = True
         self._apply_resolution_metadata()
         icon_path = r'C:\app\icon.ico'
-        with patch.object(self.gui.root, 'iconbitmap', return_value=icon_path) as root_icon, \
+        self.gui.root._hdrsdr_icon_path = icon_path
+        with patch.object(self.gui.root, 'iconbitmap') as root_icon, \
                 patch.object(tk.Toplevel, 'iconbitmap', autospec=True) as dialog_icon:
             self.gui._choose_custom_resolution()
-        root_icon.assert_called_once_with()
+        root_icon.assert_not_called()
         dialog_icon.assert_called_once_with(
             next(widget for widget in self.gui.root.winfo_children()
                  if isinstance(widget, tk.Toplevel)), icon_path)

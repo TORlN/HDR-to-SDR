@@ -16,7 +16,7 @@ import urllib.parse
 import urllib.request
 from typing import Callable
 
-APP_VERSION = "3.2.5"
+APP_VERSION = "3.2.6"
 _GITHUB_API = "https://api.github.com/repos/TORlN/HDR-to-SDR/releases/latest"
 _ASSET_NAME = "HDR_to_SDR_Setup.exe"
 _MAX_METADATA_BYTES = 1_048_576

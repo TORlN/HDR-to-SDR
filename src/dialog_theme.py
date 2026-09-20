@@ -21,6 +21,7 @@ _FONT_SM   = ('Segoe UI', 9)
 def _center_over_master(win: tk.Toplevel, master: tk.Misc, min_w: int, min_h: int) -> None:
     """Size *win* to fit its already-built content (plus fixed padding),
     floored at (min_w, min_h), and center it over *master*."""
+    master.update_idletasks()
     win.update_idletasks()
     w = max(win.winfo_reqwidth() + 40, min_w)
     h = max(win.winfo_reqheight() + 20, min_h)

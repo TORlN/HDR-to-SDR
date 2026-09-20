@@ -394,6 +394,10 @@ class TestConstruction(_GuiTestBase):
     def test_resolution_starts_loading_and_disabled(self):
         self.assertEqual(self.gui.resolution_display_var.get(), 'Loading resolution...')
         self.assertTrue(self.gui.resolution_menubutton.instate(['disabled']))
+        self.assertGreaterEqual(
+            int(self.gui.resolution_menubutton.cget('width')),
+            len('Loading resolution...'),
+        )
 
     def test_quality_mode_combobox_values_and_readonly(self):
         self.assertEqual(tuple(self.gui.quality_mode_combobox.cget('values')),

@@ -590,7 +590,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.resolution_menu.bind('<Motion>', self._on_resolution_menu_motion)
         self.resolution_menubutton = ttk.Combobox(
             self.resolution_frame, textvariable=self.resolution_display_var,
-            state='disabled', width=10)
+            state='disabled', width=len(self.resolution_display_var.get()))
         self.resolution_menubutton.grid(row=0, column=0)
         self.resolution_menubutton.bind('<Button-1>', self._post_resolution_menu)
         self.resolution_menubutton.bind('<Alt-Down>', self._post_resolution_menu)

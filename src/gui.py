@@ -3,7 +3,7 @@ import os
 import sys
 import tkinter as tk
 import webbrowser
-from typing import TypeVar
+from typing import Any, TypeVar
 from tkinter import filedialog, messagebox
 from tkinter import ttk
 from dark_theme import ACCENT, DISABLED, FG, FIELD, apply_dark_theme
@@ -116,6 +116,7 @@ webbrowser = webbrowser  # noqa: F811
 
 
 _Number = TypeVar('_Number', int, float)
+_CONTROL_COMBO_WIDTH = 15
 
 
 def _clamp(value: _Number, lo: _Number, hi: _Number) -> _Number:
@@ -192,7 +193,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._sync_quality_display()
         self.format_var = tk.StringVar(value=_s['filetype'])
         self.resolution_target: ResolutionTarget | None = None
-        self.resolution_display_var = tk.StringVar(value='Loading resolution...')
+        self.resolution_display_var = tk.StringVar(value='Resolution')
         self._output_path_is_auto = True
         # Not persisted -- per-source only. Queued files keep their own choice
         # via settings['bit_depth_choice'], restored on (re)load.
@@ -480,6 +481,13 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
 
     # ── Widget construction ────────────────────────────────────────────────────
 
+    def _create_control_combobox(
+        self, parent: tk.Misc, **options: Any,
+    ) -> ttk.Combobox:
+        """Create a control-row combobox with the shared visual width."""
+        options['width'] = _CONTROL_COMBO_WIDTH
+        return ttk.Combobox(parent, **options)
+
     def create_widgets(self) -> None:
         """Create and arrange the widgets in the main window."""
         self.control_frame = ttk.Frame(self.root, padding="10")
@@ -520,9 +528,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
 
         self.tonemap_frame = ttk.Frame(self.control_frame)
         self.tonemap_frame.grid(row=4, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))
-        self.tonemap_combobox = ttk.Combobox(
+        self.tonemap_combobox = self._create_control_combobox(
             self.tonemap_frame, textvariable=self.tonemap_var,
-            values=TONEMAP, state='readonly', width=15)
+            values=TONEMAP, state='readonly')
         self.tonemap_combobox.grid(row=0, column=0, padx=(0, 5))
         self.tonemap_combobox.bind('<<ComboboxSelected>>', self._on_tonemap_selected)
         info_button_tonemap = ttk.Label(self.tonemap_frame, text="ⓘ", cursor="hand2")
@@ -588,9 +596,9 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             '<Map>',
             lambda _: setattr(self, '_resolution_menu_popover_position', None))
         self.resolution_menu.bind('<Motion>', self._on_resolution_menu_motion)
-        self.resolution_menubutton = ttk.Combobox(
+        self.resolution_menubutton = self._create_control_combobox(
             self.resolution_frame, textvariable=self.resolution_display_var,
-            state='disabled', width=len(self.resolution_display_var.get()))
+            state='disabled')
         self.resolution_menubutton.grid(row=0, column=0)
         self.resolution_menubutton.bind('<Button-1>', self._post_resolution_menu)
         self.resolution_menubutton.bind('<Alt-Down>', self._post_resolution_menu)
@@ -612,9 +620,10 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
 
         self.quality_mode_frame = ttk.Frame(self.control_frame)
         self.quality_mode_frame.grid(row=5, column=1, sticky=tk.W, padx=(10, 10), pady=(5, 0))
-        self.quality_mode_combobox = ttk.Combobox(
+        self.quality_mode_combobox = self._create_control_combobox(
             self.quality_mode_frame, textvariable=self.quality_mode_var,
-            values=['Constant Quality', 'Target Bitrate'], state='readonly', width=15)
+            values=['Constant Quality', 'Target Bitrate'], state='readonly',
+        )
         self.quality_mode_combobox.grid(row=0, column=0, padx=(0, 5))
         self.quality_mode_combobox.bind('<<ComboboxSelected>>', self._on_quality_mode_selected)
         info_button_quality_mode = ttk.Label(self.quality_mode_frame, text="ⓘ", cursor="hand2")
@@ -905,7 +914,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.format_var.set(fmt)
         self.resolution_target = None
         if hasattr(self, 'resolution_display_var'):
-            self.resolution_display_var.set('Loading resolution...')
+            self.resolution_display_var.set('Resolution')
         if hasattr(self, 'resolution_menu'):
             self.resolution_menu.delete(0, 'end')
         if hasattr(self, 'resolution_menubutton'):
@@ -946,7 +955,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.output_path_var.set('')
         self.resolution_target = None
         if hasattr(self, 'resolution_display_var'):
-            self.resolution_display_var.set('Loading resolution...')
+            self.resolution_display_var.set('Resolution')
         if hasattr(self, 'resolution_menu'):
             self.resolution_menu.delete(0, 'end')
         if hasattr(self, 'resolution_menubutton'):
@@ -1027,7 +1036,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.resolution_menu.delete(0, 'end')
         props = getattr(self, '_cached_props', None)
         if not props:
-            self.resolution_display_var.set('Loading resolution...')
+            self.resolution_display_var.set('Resolution')
             self.resolution_menubutton.config(state='disabled')
             return
 

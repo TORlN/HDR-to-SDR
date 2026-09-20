@@ -391,13 +391,22 @@ class TestConstruction(_GuiTestBase):
         self.assertEqual(int(gpu_info['row']), 4)
         self.assertEqual(int(gpu_info['column']), 2)
 
-    def test_resolution_starts_loading_and_disabled(self):
-        self.assertEqual(self.gui.resolution_display_var.get(), 'Loading resolution...')
+    def test_resolution_starts_with_shared_width_and_disabled(self):
+        self.assertEqual(self.gui.resolution_display_var.get(), 'Resolution')
         self.assertTrue(self.gui.resolution_menubutton.instate(['disabled']))
-        self.assertGreaterEqual(
+        widths = {
+            int(self.gui.tonemap_combobox.cget('width')),
             int(self.gui.resolution_menubutton.cget('width')),
-            len('Loading resolution...'),
-        )
+            int(self.gui.quality_mode_combobox.cget('width')),
+        }
+        self.assertEqual(widths, {15})
+
+    def test_control_combobox_factory_keeps_future_controls_at_shared_width(self):
+        combo = self.gui._create_control_combobox(self.gui.root)
+        try:
+            self.assertEqual(int(combo.cget('width')), 15)
+        finally:
+            combo.destroy()
 
     def test_quality_mode_combobox_values_and_readonly(self):
         self.assertEqual(tuple(self.gui.quality_mode_combobox.cget('values')),
@@ -1307,7 +1316,7 @@ class TestUserActions(_GuiTestBase):
         with patch.object(self.gui, 'update_frame_preview'):
             self.gui._load_input_file('next.mp4')
         self.assertIsNone(self.gui.resolution_target)
-        self.assertEqual(self.gui.resolution_display_var.get(), 'Loading resolution...')
+        self.assertEqual(self.gui.resolution_display_var.get(), 'Resolution')
 
     @patch('src.gui.filedialog.askopenfilename')
     def test_select_file_sets_paths_and_triggers_preview(self, mock_dialog):

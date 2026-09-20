@@ -31,6 +31,9 @@ except ModuleNotFoundError as exc:
         raise
     _pro_license_dialog = None
 
+_CUSTOM_DIALOG_MIN_SIZE = (300, 165)
+
+
 if _pro_license_dialog is not None:
     _LicenseDialog = _pro_license_dialog._LicenseDialog
     activate_license = _pro_license_dialog.activate_license
@@ -129,7 +132,8 @@ class _CustomResolutionDialog(tk.Toplevel):
         self.width_entry.bind('<Return>', self._apply)
         self.height_entry.bind('<Return>', self._apply)
         self._set_authority(True)
-        _center_over_master(self, master, min_w=300, min_h=165)
+        _center_over_master(self, master, min_w=_CUSTOM_DIALOG_MIN_SIZE[0],
+                            min_h=_CUSTOM_DIALOG_MIN_SIZE[1])
 
     def _set_authority(self, width_authoritative: bool) -> None:
         self._width_authoritative = width_authoritative
@@ -163,7 +167,8 @@ class _CustomResolutionDialog(tk.Toplevel):
 
     def _show_error(self, message: str) -> None:
         self.error_var.set(message)
-        _center_over_master(self, self.master, min_w=300, min_h=165)
+        _center_over_master(self, self.master, min_w=_CUSTOM_DIALOG_MIN_SIZE[0],
+                            min_h=_CUSTOM_DIALOG_MIN_SIZE[1])
 
     def _apply(self, event: object = None) -> str:
         value = self.width_var.get() if self._width_authoritative else self.height_var.get()

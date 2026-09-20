@@ -1866,7 +1866,7 @@ class TestCenterOverMaster(unittest.TestCase):
     _LicenseDialog and _UpdateDialog's __init__ -- they used to each inline
     their own copy differing only in the floor width/height."""
 
-    def test_refreshes_master_geometry_before_centering(self):
+    def test_uses_requested_size_without_extra_padding(self):
         from src.dialogs import _center_over_master
         win = MagicMock()
         win.winfo_reqwidth.return_value = 300
@@ -1891,7 +1891,7 @@ class TestCenterOverMaster(unittest.TestCase):
 
         win.update_idletasks.assert_called_once()
         master.update_idletasks.assert_called_once()
-        win.geometry.assert_called_once_with('340x150+272+254')
+        win.geometry.assert_called_once_with('300x150+292+254')
         win.grab_set.assert_called_once()
         win.focus_set.assert_called_once()
 

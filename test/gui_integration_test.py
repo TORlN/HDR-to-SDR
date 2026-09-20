@@ -374,12 +374,17 @@ class TestConstruction(_GuiTestBase):
         self.assertEqual(int(info['row']), 5)
         self.assertEqual(int(info['column']), 1)
 
-    def test_resolution_dropdown_sits_immediately_right_of_tonemapper(self):
+    def test_tonemapper_info_precedes_resolution_dropdown(self):
         self.assertIs(self.gui.resolution_frame.master, self.gui.tonemap_frame)
         info = self.gui.resolution_frame.grid_info()
         self.assertEqual(int(info['row']), 0)
-        self.assertEqual(int(info['column']), 1)
+        self.assertEqual(int(info['column']), 2)
         self.assertEqual(self.gui.resolution_menubutton.winfo_manager(), 'grid')
+        tonemap_info = next(
+            child for child in self.gui.tonemap_frame.winfo_children()
+            if child.cget('text') == '\u24d8'
+        )
+        self.assertEqual(int(tonemap_info.grid_info()['column']), 1)
         self.assertIs(self.gui.gpu_status_label.master, self.gui.control_frame)
         gpu_info = self.gui.gpu_status_label.grid_info()
         self.assertEqual(int(gpu_info['row']), 4)

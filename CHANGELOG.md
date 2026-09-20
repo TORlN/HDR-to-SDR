@@ -5,6 +5,7 @@ this header and an empty `Unreleased` section after each new version is pushed.
 
 ## Unreleased
 
+- Corrected Tonemapper and resolution control grouping.
 - Matched the custom resolution dialog icon to the main application.
 - Removed disabled styling from the current resolution menu item.
 - Prevented unsupported custom resolutions below 480p.

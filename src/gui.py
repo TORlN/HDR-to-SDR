@@ -525,7 +525,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.tonemap_combobox.grid(row=0, column=0, padx=(0, 5))
         self.tonemap_combobox.bind('<<ComboboxSelected>>', self._on_tonemap_selected)
         info_button_tonemap = ttk.Label(self.tonemap_frame, text="ⓘ", cursor="hand2")
-        info_button_tonemap.grid(row=0, column=2)
+        info_button_tonemap.grid(row=0, column=1)
         tooltip_text_tonemap = (
             "Reinhard: Basic HDR to SDR conversion\n"
             "Mobius: Natural-looking conversion\n"
@@ -576,7 +576,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.bit_depth_frame.grid_remove()
 
         self.resolution_frame = ttk.Frame(self.tonemap_frame)
-        self.resolution_frame.grid(row=0, column=1, sticky=tk.W, padx=(0, 5))
+        self.resolution_frame.grid(row=0, column=2, sticky=tk.W, padx=(0, 5))
         self.resolution_menu = tk.Menu(
             self.resolution_frame, tearoff=False, background=FIELD,
             foreground=FG, activebackground=ACCENT, activeforeground=FG,

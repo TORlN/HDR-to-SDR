@@ -97,6 +97,7 @@ class _CustomResolutionDialog(tk.Toplevel):
         self.title('Custom Resolution')
         self.resizable(False, False)
         self.minsize(*_CUSTOM_DIALOG_MIN_SIZE)
+        self.grid_anchor('center')
         self.protocol('WM_DELETE_WINDOW', self.destroy)
         self._anchor = anchor
         self._screen_position = screen_position

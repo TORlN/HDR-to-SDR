@@ -1034,6 +1034,15 @@ class TestUserActions(_GuiTestBase):
         self.assertEqual(str(dialogs[0].width_entry.cget('state')), 'normal')
         self.assertEqual(str(dialogs[0].height_entry.cget('state')), 'readonly')
         self.assertEqual(self.gui.resolution_frame.grid_slaves(row=1), [])
+        grid_bbox = dialogs[0].grid_bbox()
+        if grid_bbox is None:
+            self.fail('Custom resolution form has no grid geometry')
+        grid_x, _, grid_width, _ = grid_bbox
+        self.assertAlmostEqual(
+            grid_x + grid_width / 2,
+            dialogs[0].winfo_width() / 2,
+            delta=1,
+        )
         dialogs[0].destroy()
 
     def test_custom_resolution_popover_opens_beside_active_menu_row(self):

@@ -132,8 +132,9 @@ class _CustomResolutionDialog(tk.Toplevel):
         self.width_entry.bind('<Return>', self._apply)
         self.height_entry.bind('<Return>', self._apply)
         self._set_authority(True)
-        _center_over_master(self, master, min_w=_CUSTOM_DIALOG_MIN_SIZE[0],
-                            min_h=_CUSTOM_DIALOG_MIN_SIZE[1])
+        self._center()
+        self._master_configure_binding = master.bind(
+            '<Configure>', self._on_master_configure, add='+')
 
     def _set_authority(self, width_authoritative: bool) -> None:
         self._width_authoritative = width_authoritative
@@ -165,10 +166,26 @@ class _CustomResolutionDialog(tk.Toplevel):
             paired_var.set(paired_value)
             self._syncing = False
 
-    def _show_error(self, message: str) -> None:
-        self.error_var.set(message)
+    def _center(self) -> None:
         _center_over_master(self, self.master, min_w=_CUSTOM_DIALOG_MIN_SIZE[0],
                             min_h=_CUSTOM_DIALOG_MIN_SIZE[1])
+
+    def _on_master_configure(self, event: tk.Event) -> None:  # type: ignore[type-arg]
+        if event.widget is self.master:
+            self._center()
+
+    def destroy(self) -> None:
+        binding = getattr(self, '_master_configure_binding', None)
+        if binding is not None:
+            try:
+                self.master.unbind('<Configure>', binding)
+            except tk.TclError:
+                pass
+        super().destroy()
+
+    def _show_error(self, message: str) -> None:
+        self.error_var.set(message)
+        self._center()
 
     def _apply(self, event: object = None) -> str:
         value = self.width_var.get() if self._width_authoritative else self.height_var.get()

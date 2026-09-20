@@ -1039,6 +1039,25 @@ class TestUserActions(_GuiTestBase):
             if isinstance(widget, tk.Toplevel):
                 widget.destroy()
 
+    def test_custom_resolution_dialog_recenters_when_main_window_reconfigures(self):
+        import dialogs
+        self.gui._licensed = True
+        self._apply_resolution_metadata()
+        with patch.object(dialogs, '_center_over_master',
+                          wraps=dialogs._center_over_master) as center:
+            self.gui._choose_custom_resolution()
+            dialog = next(widget for widget in self.gui.root.winfo_children()
+                          if isinstance(widget, tk.Toplevel))
+            initial_calls = center.call_count
+            self.gui.root.event_generate('<Configure>')
+            self.gui.root.update()
+            self.assertGreater(center.call_count, initial_calls)
+            dialog.destroy()
+            calls_after_destroy = center.call_count
+            self.gui.root.event_generate('<Configure>')
+            self.gui.root.update()
+            self.assertEqual(center.call_count, calls_after_destroy)
+
     def test_custom_resolution_dialog_locks_aspect_ratio_from_either_field(self):
         self.gui._licensed = True
         self._apply_resolution_metadata()

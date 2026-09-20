@@ -118,6 +118,14 @@ class TestResolutionCatalogAndTiers(unittest.TestCase):
             1920, 1080, ResolutionTarget(901, custom=True), licensed=True
         )
 
+    def test_pro_rejects_custom_target_below_480p(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError, 'Custom resolution must be at least 480p.'
+        ):
+            validate_target(
+                1920, 1080, ResolutionTarget(479, custom=True), licensed=True
+            )
+
     def test_non_catalog_preset_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, 'Unknown resolution preset'):
             validate_target(1920, 1080, ResolutionTarget(900), licensed=True)

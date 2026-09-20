@@ -165,7 +165,11 @@ class _CustomResolutionDialog(tk.Toplevel):
             self.error_var.set('Enter a positive whole number.')
             return 'break'
 
-        self._apply_callback(dimension, self._width_authoritative)
+        try:
+            self._apply_callback(dimension, self._width_authoritative)
+        except ValueError as exc:
+            self.error_var.set(str(exc))
+            return 'break'
         self.destroy()
         return 'break'
 

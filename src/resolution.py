@@ -88,6 +88,8 @@ def validate_target(
     if target.custom:
         if not licensed:
             raise ValueError('Custom resolution and upscaling require Pro.')
+        if target.short_edge < 480:
+            raise ValueError('Custom resolution must be at least 480p.')
         return
 
     if preset_for_short_edge(target.short_edge) is None:

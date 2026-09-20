@@ -82,6 +82,13 @@ class _CustomResolutionDialog(tk.Toplevel):
                  dimensions_for_value: Callable[[int, bool], tuple[int, int]],
                  apply_callback: Callable[[int, bool], None]) -> None:
         super().__init__(master)
+        try:
+            master_iconbitmap = getattr(master, 'iconbitmap', None)
+            icon_path = master_iconbitmap() if callable(master_iconbitmap) else ''
+            if icon_path:
+                self.iconbitmap(icon_path)
+        except Exception:
+            pass
         self.configure(bg=_BG)
         self.title('Custom Resolution')
         self.resizable(False, False)

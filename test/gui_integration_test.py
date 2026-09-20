@@ -379,6 +379,7 @@ class TestConstruction(_GuiTestBase):
         info = self.gui.resolution_frame.grid_info()
         self.assertEqual(int(info['row']), 0)
         self.assertEqual(int(info['column']), 2)
+        self.assertIsInstance(self.gui.resolution_menubutton, ttk.Combobox)
         self.assertEqual(self.gui.resolution_menubutton.winfo_manager(), 'grid')
         tonemap_info = next(
             child for child in self.gui.tonemap_frame.winfo_children()
@@ -578,9 +579,9 @@ class TestDarkTheme(_GuiTestBase):
     def test_resolution_selector_and_popup_keep_text_readable_when_active(self):
         from src.dark_theme import ACCENT, DISABLED, FG, FIELD
         style = ttk.Style(self.root)
-        self.assertEqual(str(style.lookup('TMenubutton', 'foreground')), FG)
+        self.assertEqual(str(style.lookup('TCombobox', 'foreground')), FG)
         self.assertEqual(
-            str(style.lookup('TMenubutton', 'foreground', ('active',))), FG)
+            str(style.lookup('TCombobox', 'foreground', ('active',))), FG)
         self.assertEqual(str(self.gui.resolution_menu.cget('background')), FIELD)
         self.assertEqual(str(self.gui.resolution_menu.cget('foreground')), FG)
         self.assertEqual(str(self.gui.resolution_menu.cget('activebackground')), ACCENT)
@@ -962,6 +963,23 @@ class TestUserActions(_GuiTestBase):
             'movie.mp4', generation,
             {'width': width, 'height': height, 'duration': 10.0}, None,
         )
+
+    def test_resolution_combobox_posts_existing_menu(self):
+        self.gui._licensed = True
+        self._apply_resolution_metadata()
+        self.gui.root.update_idletasks()
+        self.assertEqual(str(self.gui.resolution_menubutton.cget('state')), 'readonly')
+        self.assertTrue(hasattr(self.gui, '_post_resolution_menu'))
+
+        with patch.object(self.gui.resolution_menu, 'tk_popup') as popup:
+            result = self.gui._post_resolution_menu()
+
+        popup.assert_called_once_with(
+            self.gui.resolution_menubutton.winfo_rootx(),
+            self.gui.resolution_menubutton.winfo_rooty()
+            + self.gui.resolution_menubutton.winfo_height(),
+        )
+        self.assertEqual(result, 'break')
 
     def test_resolution_menu_is_greatest_to_least_and_community_safe(self):
         self.gui._licensed = False

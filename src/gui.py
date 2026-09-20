@@ -588,10 +588,13 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             '<Map>',
             lambda _: setattr(self, '_resolution_menu_popover_position', None))
         self.resolution_menu.bind('<Motion>', self._on_resolution_menu_motion)
-        self.resolution_menubutton = ttk.Menubutton(
+        self.resolution_menubutton = ttk.Combobox(
             self.resolution_frame, textvariable=self.resolution_display_var,
-            menu=self.resolution_menu, state='disabled')
+            state='disabled', width=10)
         self.resolution_menubutton.grid(row=0, column=0)
+        self.resolution_menubutton.bind('<Button-1>', self._post_resolution_menu)
+        self.resolution_menubutton.bind('<Alt-Down>', self._post_resolution_menu)
+        self.resolution_menubutton.bind('<F4>', self._post_resolution_menu)
         self.resolution_info_button = ttk.Label(
             self.resolution_frame, text='ⓘ', cursor='hand2')
         self.resolution_info_button.grid(row=0, column=1, padx=(5, 0))
@@ -1068,7 +1071,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             else:
                 self.resolution_display_var.set(
                     selected.label if selected else str(self.resolution_target.short_edge))
-        state = 'disabled' if self._conversion_controls_disabled else 'normal'
+        state = 'disabled' if self._conversion_controls_disabled else 'readonly'
         self.resolution_menubutton.config(state=state)
 
     def _select_resolution_target(
@@ -1105,6 +1108,17 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             event.x_root + self.resolution_menu.winfo_reqwidth() - event.x,
             event.y_root - event.y + self.resolution_menu.yposition(index),
         )
+
+    def _post_resolution_menu(self, event: tk.Event | None = None) -> str:  # type: ignore[type-arg]
+        """Post the resolution menu from its combobox-styled trigger."""
+        if self.resolution_menubutton.instate(['disabled']):
+            return 'break'
+        self.resolution_menu.tk_popup(
+            self.resolution_menubutton.winfo_rootx(),
+            self.resolution_menubutton.winfo_rooty()
+            + self.resolution_menubutton.winfo_height(),
+        )
+        return 'break'
 
     def _choose_custom_resolution(self) -> None:
         """Open the Pro custom-resolution dialog."""

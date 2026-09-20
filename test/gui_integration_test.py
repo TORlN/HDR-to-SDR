@@ -668,6 +668,13 @@ class TestStateAndLayout(_GuiTestBase):
         info = self.gui.display_image_checkbutton.grid_info()
         self.assertEqual(int(info['row']), 5)
 
+    def test_resolution_selector_has_space_after_tonemapper_info_icon(self):
+        self.gui.root.update_idletasks()
+        info_button = self.gui.tonemap_frame.grid_slaves(row=0, column=1)[0]
+        gap = (self.gui.resolution_frame.winfo_rootx()
+               - (info_button.winfo_rootx() + info_button.winfo_width()))
+        self.assertGreaterEqual(gap, 10)
+
     def test_set_inputs_enabled_false_disables_widgets(self):
         TkConversionView(self.gui, self.gui.progress_var,
                          self.gui.interactable_elements,

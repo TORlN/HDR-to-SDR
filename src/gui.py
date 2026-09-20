@@ -577,7 +577,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.bit_depth_frame.grid_remove()
 
         self.resolution_frame = ttk.Frame(self.tonemap_frame)
-        self.resolution_frame.grid(row=0, column=2, sticky=tk.W, padx=(0, 5))
+        self.resolution_frame.grid(row=0, column=2, sticky=tk.W, padx=(10, 5))
         self.resolution_menu = tk.Menu(
             self.resolution_frame, tearoff=False, background=FIELD,
             foreground=FG, activebackground=ACCENT, activeforeground=FG,

@@ -80,6 +80,7 @@ def apply_dark_theme(root):
     style.configure('TCombobox', fieldbackground=FIELD, background=BTN,
                     foreground=FG, arrowcolor=FG, bordercolor=BORDER, padding=4)
     style.map('TCombobox',
+              background=[('active', BTN_HOVER), ('pressed', BTN_HOVER)],
               fieldbackground=[('readonly', FIELD)],
               foreground=[('readonly', FG), ('disabled', DISABLED)],
               bordercolor=[('focus', ACCENT)],

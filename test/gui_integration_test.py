@@ -577,7 +577,7 @@ class TestDarkTheme(_GuiTestBase):
                 f"Horizontal.TScale {key} should be the accent color")
 
     def test_resolution_selector_and_popup_keep_text_readable_when_active(self):
-        from src.dark_theme import ACCENT, DISABLED, FG, FIELD
+        from src.dark_theme import ACCENT, BTN_HOVER, DISABLED, FG, FIELD
         style = ttk.Style(self.root)
         self.assertEqual(str(style.lookup('TCombobox', 'foreground')), FG)
         self.assertEqual(
@@ -591,6 +591,9 @@ class TestDarkTheme(_GuiTestBase):
         arrow_map = style.map('TCombobox', 'arrowcolor')
         self.assertIn(('active', FG), arrow_map)
         self.assertIn(('pressed', FG), arrow_map)
+        background_map = style.map('TCombobox', 'background')
+        self.assertIn(('active', BTN_HOVER), background_map)
+        self.assertIn(('pressed', BTN_HOVER), background_map)
 
 
 class TestBatchQueueWidgets(_GuiTestBase):

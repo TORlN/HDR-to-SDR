@@ -1090,7 +1090,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             if initial_dimensions is None:
                 initial_dimensions = (width, height)
         dialog = _CustomResolutionDialog(
-            self.root, initial_dimensions,
+            self.root, self.resolution_menubutton, initial_dimensions,
             self._custom_dimensions_for_value, self._apply_custom_resolution)
         dialog.width_entry.focus_set()
 

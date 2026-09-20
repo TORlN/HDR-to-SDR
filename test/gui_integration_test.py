@@ -1005,14 +1005,29 @@ class TestUserActions(_GuiTestBase):
         loading.assert_not_called()
         refresh.assert_not_called()
 
-    def test_custom_resolution_opens_dialog_without_expanding_control_row(self):
+    def test_custom_resolution_opens_adjacent_popover_without_reflowing_main_window(self):
         self.gui._licensed = True
         self._apply_resolution_metadata()
+        self.gui.root.deiconify()
+        self.addCleanup(self.gui.root.withdraw)
+        self.gui.root.update()
+        original_geometry = self.gui.root.winfo_geometry()
+        expected_position = (
+            self.gui.resolution_menubutton.winfo_rootx()
+            + self.gui.resolution_menubutton.winfo_width(),
+            self.gui.resolution_menubutton.winfo_rooty(),
+        )
         self.gui._choose_custom_resolution()
+        self.gui.root.update()
         dialogs = [widget for widget in self.gui.root.winfo_children()
                    if isinstance(widget, tk.Toplevel)]
         self.assertEqual(len(dialogs), 1)
         self.assertEqual(dialogs[0].title(), 'Custom Resolution')
+        self.assertEqual(
+            (dialogs[0].winfo_x(), dialogs[0].winfo_y()),
+            expected_position,
+        )
+        self.assertEqual(self.gui.root.winfo_geometry(), original_geometry)
         labels = [widget.cget('text') for widget in dialogs[0].winfo_children()
                   if isinstance(widget, tk.Label)]
         self.assertIn('Width', labels)
@@ -1038,25 +1053,6 @@ class TestUserActions(_GuiTestBase):
         for widget in self.gui.root.winfo_children():
             if isinstance(widget, tk.Toplevel):
                 widget.destroy()
-
-    def test_custom_resolution_dialog_recenters_when_main_window_reconfigures(self):
-        import dialogs
-        self.gui._licensed = True
-        self._apply_resolution_metadata()
-        with patch.object(dialogs, '_center_over_master',
-                          wraps=dialogs._center_over_master) as center:
-            self.gui._choose_custom_resolution()
-            dialog = next(widget for widget in self.gui.root.winfo_children()
-                          if isinstance(widget, tk.Toplevel))
-            initial_calls = center.call_count
-            self.gui.root.event_generate('<Configure>')
-            self.gui.root.update()
-            self.assertGreater(center.call_count, initial_calls)
-            dialog.destroy()
-            calls_after_destroy = center.call_count
-            self.gui.root.event_generate('<Configure>')
-            self.gui.root.update()
-            self.assertEqual(center.call_count, calls_after_destroy)
 
     def test_custom_resolution_dialog_locks_aspect_ratio_from_either_field(self):
         self.gui._licensed = True
@@ -1146,22 +1142,18 @@ class TestUserActions(_GuiTestBase):
         dialog.destroy()
 
     def test_custom_resolution_below_480p_preserves_last_valid_selection(self):
-        import dialogs
         self.gui._licensed = True
         self._apply_resolution_metadata()
         self.gui.resolution_target = ResolutionTarget(720)
-        with patch.object(dialogs, '_center_over_master',
-                          wraps=dialogs._center_over_master) as center:
-            self.gui._choose_custom_resolution()
-            dialogs = [widget for widget in self.gui.root.winfo_children()
-                       if isinstance(widget, tk.Toplevel)]
-            self.assertEqual(len(dialogs), 1)
-            dialog = dialogs[0]
-            dialog.width_var.set('800')
-            with patch.object(self.gui, '_reset_converted_preview_cache') as reset, \
-                    patch.object(self.gui, 'update_frame_preview') as refresh:
-                dialog.apply_button.invoke()
-            self.assertEqual(center.call_count, 2)
+        self.gui._choose_custom_resolution()
+        dialogs = [widget for widget in self.gui.root.winfo_children()
+                   if isinstance(widget, tk.Toplevel)]
+        self.assertEqual(len(dialogs), 1)
+        dialog = dialogs[0]
+        dialog.width_var.set('800')
+        with patch.object(self.gui, '_reset_converted_preview_cache') as reset, \
+                patch.object(self.gui, 'update_frame_preview') as refresh:
+            dialog.apply_button.invoke()
         self.assertEqual(dialog.error_var.get(), 'Custom resolution must be at least 480p.')
         self.assertEqual(self.gui.resolution_target, ResolutionTarget(720))
         reset.assert_not_called()

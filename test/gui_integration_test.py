@@ -1316,6 +1316,19 @@ class TestUserActions(_GuiTestBase):
         self.assertIsNone(self.gui.resolution_target)
         self.assertEqual(self.gui.resolution_display_var.get(), 'Resolution')
 
+    def test_reset_resolution_control_clears_unavailable_metadata_state(self):
+        self.gui.resolution_target = ResolutionTarget(720)
+        self.gui.resolution_display_var.set('720p')
+        self.gui.resolution_menu.add_command(label='720p')
+        self.gui.resolution_menubutton.config(state='readonly')
+
+        self.gui._reset_resolution_control()
+
+        self.assertIsNone(self.gui.resolution_target)
+        self.assertEqual(self.gui.resolution_display_var.get(), 'Resolution')
+        self.assertEqual(self._resolution_labels(), [])
+        self.assertTrue(self.gui.resolution_menubutton.instate(['disabled']))
+
     @patch('src.gui.filedialog.askopenfilename')
     def test_select_file_sets_paths_and_triggers_preview(self, mock_dialog):
         mock_dialog.return_value = 'movie.mp4'

@@ -906,11 +906,8 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         else:
             self._load_input_file(file_path)
 
-    def _load_input_file(self, file_path: str) -> None:
-        """Load a file into the input/output boxes and refresh the preview."""
-        self.input_path_var.set(file_path)
-        fmt = self._format_for_input(file_path) if self._licensed else 'MP4'
-        self.format_var.set(fmt)
+    def _reset_resolution_control(self) -> None:
+        """Clear resolution state until source metadata becomes available."""
         self.resolution_target = None
         if hasattr(self, 'resolution_display_var'):
             self.resolution_display_var.set('Resolution')
@@ -918,6 +915,13 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             self.resolution_menu.delete(0, 'end')
         if hasattr(self, 'resolution_menubutton'):
             self.resolution_menubutton.config(state='disabled')
+
+    def _load_input_file(self, file_path: str) -> None:
+        """Load a file into the input/output boxes and refresh the preview."""
+        self.input_path_var.set(file_path)
+        fmt = self._format_for_input(file_path) if self._licensed else 'MP4'
+        self.format_var.set(fmt)
+        self._reset_resolution_control()
         self._output_path_is_auto = True
         self.original_image = None
         self.converted_image_base = None
@@ -952,13 +956,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._metadata_pending = None
         self.input_path_var.set('')
         self.output_path_var.set('')
-        self.resolution_target = None
-        if hasattr(self, 'resolution_display_var'):
-            self.resolution_display_var.set('Resolution')
-        if hasattr(self, 'resolution_menu'):
-            self.resolution_menu.delete(0, 'end')
-        if hasattr(self, 'resolution_menubutton'):
-            self.resolution_menubutton.config(state='disabled')
+        self._reset_resolution_control()
         self._output_path_is_auto = True
         self.original_image = None
         self.converted_image_base = None

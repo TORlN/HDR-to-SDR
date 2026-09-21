@@ -589,7 +589,6 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self.resolution_menu = tk.Menu(
             self.resolution_frame, tearoff=False, background=FIELD,
             foreground=FG, activebackground=ACCENT, activeforeground=FG,
-            disabledforeground=DISABLED,
         )
         self._resolution_menu_popover_position: tuple[int, int] | None = None
         self.resolution_menu.bind(
@@ -1030,7 +1029,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._write_back_current_settings()
 
     def _rebuild_resolution_menu(self) -> None:
-        """Show allowed resolutions greatest-first and disable the selection."""
+        """Show allowed resolutions greatest-first and refresh the selector."""
         if not hasattr(self, 'resolution_menu'):
             return
         self.resolution_menu.delete(0, 'end')

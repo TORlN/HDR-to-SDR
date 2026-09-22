@@ -3,7 +3,7 @@ import os
 import sys
 import tkinter as tk
 import webbrowser
-from typing import Any, TypeVar
+from typing import Any, TypedDict, TypeVar
 from tkinter import filedialog, messagebox
 from tkinter import ttk
 from dark_theme import ACCENT, DISABLED, FG, FIELD, apply_dark_theme
@@ -24,6 +24,20 @@ from dialogs import _CustomResolutionDialog, _LicenseDialog, _UpdateDialog
 from preview import DEFAULT_MIN_SIZE, _PREVIEW_POOL_WORKERS, _HDRPreviewMixin
 from resolution import (PRESETS, ResolutionTarget, output_dimensions, output_suffix,
                         preset_for_short_edge, validate_target)
+
+
+class BatchSettings(TypedDict, total=False):
+    """Per-item conversion settings shared across the GUI and batch queue."""
+
+    gamma: float
+    quality_mode: str
+    quality: int
+    bitrate_fraction: float
+    tonemapper: str
+    bit_depth_choice: str
+    bitrate_customized: bool
+    lut_enabled: bool
+    resolution_target: ResolutionTarget | None
 # Imported as a module object, not `from pro.batch import _BatchMixin` --
 # a `from`-import of an unresolved module makes pyright bind the name to
 # the import declaration, not the free-edition `class` below (same trick
@@ -1224,7 +1238,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             return 12
         return 10
 
-    def _current_settings_dict(self) -> dict:  # type: ignore[type-arg]
+    def _current_settings_dict(self) -> BatchSettings:
         """Snapshot every per-file conversion control's live value. Used to
         seed a newly-queued item, to restore/compare a queued item's stored
         settings against what's currently shown, and as the source for
@@ -1242,7 +1256,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             'resolution_target': getattr(self, 'resolution_target', None),
         }
 
-    def _restore_settings_dict(self, settings: dict) -> None:  # type: ignore[type-arg]
+    def _restore_settings_dict(self, settings: BatchSettings) -> None:
         """Push a stored settings snapshot into the live controls (the
         counterpart to _current_settings_dict), then re-validate against the
         now-loaded file -- e.g. re-clamp Target Bitrate to its ceiling.

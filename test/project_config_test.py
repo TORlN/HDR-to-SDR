@@ -253,10 +253,8 @@ class TestCIExecutionInputsArePinned(unittest.TestCase):
     def test_ci_runs_vulkan_smoke_tests_on_lavapipe_and_requires_them(self):
         workflow = self._workflow()
         self.assertIn('mesa-vulkan-drivers', workflow)
-        self.assertIn(
-            'VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json',
-            workflow,
-        )
+        self.assertIn("-name 'lvp_icd*.json'", workflow)
+        self.assertIn('VK_ICD_FILENAMES=$lvp_icd', workflow)
         self.assertIn("HDR_VULKAN_SMOKE_MODE: 'require'", workflow)
         self.assertIn(
             'python -m unittest test.smoke_test.TestVulkanRgbaFrameRoundTrip -v',

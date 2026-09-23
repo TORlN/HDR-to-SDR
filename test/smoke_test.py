@@ -110,6 +110,7 @@ from src.utils import (
 from _recording_view import RecordingConversionView
 from src.conversion import ConversionManager, ConversionRequest
 from resolution import ResolutionTarget
+from _vulkan_smoke import resolve_vulkan_smoke
 
 
 def _req(input_path, output_path, **overrides) -> ConversionRequest:
@@ -142,7 +143,10 @@ _DOVI_OK = _FFMPEG_OK and os.path.exists(DOVI_VIDEO)
 _SDR_1_1_OK = _FFMPEG_OK and os.path.exists(SDR_1_1_VIDEO)
 _SDR_9_16_OK = _FFMPEG_OK and os.path.exists(SDR_9_16_VIDEO)
 
-_LIBPLACEBO_OK = _FFMPEG_OK and vulkan_libplacebo_available()
+_LIBPLACEBO_OK = resolve_vulkan_smoke(
+    os.environ.get('HDR_VULKAN_SMOKE_MODE', 'skip'),
+    lambda: _FFMPEG_OK and vulkan_libplacebo_available(),
+)
 
 
 def _x265_supports_12bit():

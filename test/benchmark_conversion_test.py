@@ -1,15 +1,17 @@
 import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
 from src.conversion import ConversionManager, ConversionRequest
 from tools.benchmark_conversion import (
-    FIXTURE_PATH, MODE_SETTINGS, _HeadlessView, build_command, build_request,
-    validate_mode_command,
+    FIXTURE_PATH, MODE_SETTINGS, RunResult, _HeadlessView, build_command,
+    build_request, read_progress, run_timed, validate_mode_command,
 )
 
 
@@ -163,6 +165,208 @@ class TestValidateModeCommand(unittest.TestCase):
         command = self._build_real_command('CPU accurate')
         command[command.index('-c:v') + 1] = 'hevc_nvenc'
         self.assertIsNotNone(validate_mode_command('CPU accurate', command))
+
+
+class TestReadProgress(unittest.TestCase):
+    def test_reads_complete_frame_records_from_a_path_with_spaces(self):
+        with tempfile.TemporaryDirectory(prefix='benchmark progress ') as folder:
+            progress = Path(folder) / 'progress file.txt'
+            progress.write_bytes(b'frame=24\nfps=30.0\nprogress=continue\n')
+
+            offset, frames = read_progress(progress, 0, 0)
+
+        self.assertEqual(offset, len(b'frame=24\nfps=30.0\nprogress=continue\n'))
+        self.assertEqual(frames, 24)
+
+    def test_leaves_an_incomplete_trailing_record_for_the_next_poll(self):
+        with tempfile.TemporaryDirectory() as folder:
+            progress = Path(folder) / 'progress.txt'
+            progress.write_bytes(b'frame=12')
+
+            offset, frames = read_progress(progress, 0, 12)
+
+        self.assertEqual((offset, frames), (0, 12))
+
+    def test_reads_appended_chunks_and_ignores_invalid_or_decreasing_counts(self):
+        with tempfile.TemporaryDirectory() as folder:
+            progress = Path(folder) / 'progress.txt'
+            progress.write_bytes(b'frame=18\n')
+            offset, frames = read_progress(progress, 0, 0)
+            with progress.open('ab') as stream:
+                stream.write(b'frame=18\nframe=4\nframe=nope\nframe=23')
+            offset, frames = read_progress(progress, offset, frames)
+
+        self.assertEqual(frames, 18)
+        self.assertEqual(
+            offset, len(b'frame=18\nframe=18\nframe=4\nframe=nope\n'))
+
+    def test_accepts_a_later_complete_count_after_an_incomplete_chunk(self):
+        with tempfile.TemporaryDirectory() as folder:
+            progress = Path(folder) / 'progress.txt'
+            progress.write_bytes(b'frame=7\nframe=')
+            offset, frames = read_progress(progress, 0, 0)
+            with progress.open('ab') as stream:
+                stream.write(b'11\nprogress=end\n')
+            offset, frames = read_progress(progress, offset, frames)
+
+        self.assertEqual(frames, 11)
+        self.assertEqual(offset, len(b'frame=7\nframe=11\nprogress=end\n'))
+
+
+class TestRunTimed(unittest.TestCase):
+    @staticmethod
+    def _command():
+        return ['ffmpeg.exe', '-progress', 'file:placeholder.txt', '-i', 'input.mp4']
+
+    @staticmethod
+    def _process(wait_effect=None, poll_return=None):
+        process = Mock()
+        process.stdin = Mock()
+        process.poll.return_value = poll_return
+        process.wait.side_effect = wait_effect or [0]
+        process.returncode = poll_return
+        return process
+
+    def test_freezes_frames_and_duration_at_cutoff_then_stops_and_cleans_files(self):
+        with tempfile.TemporaryDirectory(prefix='benchmark run ') as folder:
+            process = self._process(wait_effect=[0])
+
+            def launch(command, **kwargs):
+                progress_url = command[command.index('-progress') + 1]
+                Path(progress_url.removeprefix('file:')).write_bytes(b'frame=120\n')
+                self.assertIs(kwargs['stdin'], subprocess.PIPE)
+                self.assertIs(kwargs['stdout'], subprocess.DEVNULL)
+                self.assertEqual(kwargs['stderr'].mode, 'wb')
+                return process
+
+            def late_progress(_interval):
+                progress_url = popen.call_args.args[0][
+                    popen.call_args.args[0].index('-progress') + 1]
+                Path(progress_url.removeprefix('file:')).write_bytes(b'frame=999\n')
+
+            popen = Mock(side_effect=launch)
+            with (
+                patch('tools.benchmark_conversion.subprocess.Popen', popen),
+                patch('tools.benchmark_conversion.time.perf_counter',
+                      side_effect=[0.0, 0.0, 60.0]),
+                patch('tools.benchmark_conversion.time.sleep', side_effect=late_progress),
+            ):
+                result = run_timed(self._command(), 60.0, Path(folder))
+
+            self.assertIsInstance(result, RunResult)
+            self.assertEqual((result.status, result.frames, result.duration),
+                             ('SUCCESSFUL', 120, 60.0))
+            self.assertEqual(result.fps, 2.0)
+            process.stdin.write.assert_called_once_with(b'q\n')
+            process.wait.assert_called_once()
+            self.assertEqual(list(Path(folder).iterdir()), [])
+
+    def test_escalates_from_graceful_stop_to_terminate_and_kill(self):
+        with tempfile.TemporaryDirectory() as folder:
+            process = self._process(wait_effect=[
+                subprocess.TimeoutExpired('ffmpeg.exe', 1),
+                subprocess.TimeoutExpired('ffmpeg.exe', 1),
+                0,
+            ])
+            with (
+                patch('tools.benchmark_conversion.subprocess.Popen', return_value=process),
+                patch('tools.benchmark_conversion.time.perf_counter',
+                      side_effect=[0.0, 60.0]),
+                patch('tools.benchmark_conversion.time.sleep'),
+            ):
+                result = run_timed(self._command(), 60.0, Path(folder))
+
+        self.assertEqual(result.status, 'FAILED')
+        process.terminate.assert_called_once()
+        process.kill.assert_called_once()
+        self.assertEqual(process.wait.call_count, 3)
+
+    def test_early_exit_and_zero_frames_are_failed_runs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            early = self._process(poll_return=0)
+            with (
+                patch('tools.benchmark_conversion.subprocess.Popen', return_value=early),
+                patch('tools.benchmark_conversion.time.perf_counter',
+                      side_effect=[0.0, 0.0]),
+                patch('tools.benchmark_conversion.time.sleep'),
+            ):
+                early_result = run_timed(self._command(), 60.0, Path(folder))
+
+        with tempfile.TemporaryDirectory() as folder:
+            zero = self._process(wait_effect=[0])
+            with (
+                patch('tools.benchmark_conversion.subprocess.Popen', return_value=zero),
+                patch('tools.benchmark_conversion.time.perf_counter',
+                      side_effect=[0.0, 0.0, 60.0]),
+                patch('tools.benchmark_conversion.time.sleep'),
+            ):
+                zero_result = run_timed(self._command(), 60.0, Path(folder))
+
+        self.assertEqual(early_result.status, 'FAILED')
+        self.assertEqual(zero_result.status, 'FAILED')
+        self.assertEqual(zero_result.frames, 0)
+
+    def test_terminate_after_cutoff_retains_measured_sample(self):
+        with tempfile.TemporaryDirectory() as folder:
+            process = self._process(wait_effect=[
+                subprocess.TimeoutExpired('ffmpeg.exe', 1), 0,
+            ])
+
+            def launch(command, **_kwargs):
+                progress_url = command[command.index('-progress') + 1]
+                Path(progress_url.removeprefix('file:')).write_bytes(b'frame=42\n')
+                return process
+
+            with (
+                patch('tools.benchmark_conversion.subprocess.Popen', side_effect=launch),
+                patch('tools.benchmark_conversion.time.perf_counter',
+                      side_effect=[0.0, 0.0, 60.0]),
+                patch('tools.benchmark_conversion.time.sleep'),
+            ):
+                result = run_timed(self._command(), 60.0, Path(folder))
+
+        self.assertEqual((result.status, result.frames, result.duration),
+                         ('SUCCESSFUL', 42, 60.0))
+        self.assertIn('terminate', result.diagnostic)
+        process.terminate.assert_called_once()
+        process.kill.assert_not_called()
+
+    def test_keyboard_interrupt_stops_and_reaps_ffmpeg_before_cleanup(self):
+        with tempfile.TemporaryDirectory() as folder:
+            process = self._process(wait_effect=[0])
+            with (
+                patch('tools.benchmark_conversion.subprocess.Popen',
+                      return_value=process),
+                patch('tools.benchmark_conversion.time.perf_counter',
+                      side_effect=[0.0, 0.0]),
+                patch('tools.benchmark_conversion.time.sleep',
+                      side_effect=KeyboardInterrupt),
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    run_timed(self._command(), 60.0, Path(folder))
+
+            process.stdin.write.assert_called_once_with(b'q\n')
+            process.wait.assert_called_once()
+            self.assertEqual(list(Path(folder).iterdir()), [])
+
+    def test_keeps_temporary_files_if_ffmpeg_cannot_be_reaped(self):
+        with tempfile.TemporaryDirectory() as folder:
+            process = self._process()
+            process.wait.side_effect = OSError('wait failed')
+            with (
+                patch('tools.benchmark_conversion.subprocess.Popen',
+                      return_value=process),
+                patch('tools.benchmark_conversion.time.perf_counter',
+                      side_effect=[0.0, 60.0]),
+                patch('tools.benchmark_conversion.time.sleep'),
+            ):
+                result = run_timed(self._command(), 60.0, Path(folder))
+
+            leftovers = list(Path(folder).iterdir())
+            self.assertEqual(result.status, 'FAILED')
+            self.assertEqual(len(leftovers), 2)
+            for path in leftovers:
+                path.unlink()
 
 
 if __name__ == '__main__':

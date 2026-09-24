@@ -37,8 +37,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../s
 
 from src.conversion import ConversionManager, ConversionRequest  # noqa: E402
 from resolution import ResolutionTarget  # noqa: E402
-from src.utils import (FFMPEG_CONVERT_FILTER, FFMPEG_EXECUTABLE,  # noqa: E402
-                       get_lut_filter_path, build_libplacebo_filter)
+from utils import (FFMPEG_CONVERT_FILTER, FFMPEG_EXECUTABLE,  # noqa: E402
+                   get_lut_filter_path, build_libplacebo_filter)
 from _recording_view import RecordingConversionView  # noqa: E402
 
 
@@ -1843,7 +1843,6 @@ class TestFfmpegCommandGoldenMaster(unittest.TestCase):
         self.assertEqual(len(names), len(set(names)),
                          msg='duplicate case name -- subTest would silently '
                              'merge two different cases under one label')
-
 
 if __name__ == '__main__':
     unittest.main()

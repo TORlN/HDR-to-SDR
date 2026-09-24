@@ -264,6 +264,28 @@ class TestRunTimed(unittest.TestCase):
             process.wait.assert_called_once()
             self.assertEqual(list(Path(folder).iterdir()), [])
 
+    def test_reports_elapsed_time_and_frames_at_five_second_intervals(self):
+        with tempfile.TemporaryDirectory() as folder:
+            process = self._process(wait_effect=[0])
+
+            def launch(command, **_kwargs):
+                progress_url = command[command.index('-progress') + 1]
+                Path(progress_url.removeprefix('file:')).write_bytes(b'frame=120\n')
+                return process
+
+            progress = Mock()
+            with (
+                patch('tools.benchmark_conversion.subprocess.Popen', side_effect=launch),
+                patch('tools.benchmark_conversion.time.perf_counter',
+                      side_effect=[0.0, 0.0, 5.0, 60.0]),
+                patch('tools.benchmark_conversion.time.sleep'),
+            ):
+                result = run_timed(
+                    self._command(), 60.0, Path(folder), on_progress=progress)
+
+        self.assertEqual(result.status, 'SUCCESSFUL')
+        progress.assert_called_once_with(5.0, 120)
+
     def test_escalates_from_graceful_stop_to_terminate_and_kill(self):
         with tempfile.TemporaryDirectory() as folder:
             process = self._process(wait_effect=[
@@ -522,9 +544,12 @@ class TestBenchmarkMain(unittest.TestCase):
         run_results = warmups + measured
         run_calls = []
 
-        def record_run(command, duration, temp_dir):
+        def record_run(command, duration, temp_dir, *, on_progress=None):
             run_calls.append((command[1], duration))
-            return run_results[len(run_calls) - 1]
+            result = run_results[len(run_calls) - 1]
+            if on_progress is not None:
+                on_progress(min(5.0, duration), result.frames)
+            return result
 
         output = io.StringIO()
         with (
@@ -550,6 +575,11 @@ class TestBenchmarkMain(unittest.TestCase):
                          [10.0] * 3 + [60.0] * 9)
         self.assertEqual(result, 0)
         self.assertIn('simulated failure', output.getvalue())
+        self.assertIn('CPU accurate warm-up', output.getvalue())
+        self.assertIn('GPU fast measuring: 5.0/60s | 0 frames', output.getvalue())
+        self.assertIn('CPU accurate warm-up: 100 frames in 10.0s (SUCCESSFUL)',
+                      output.getvalue())
+        self.assertIn('GPU fast run: 0 frames in 60.0s (FAILED)', output.getvalue())
 
     def test_software_vulkan_marks_gpu_modes_unavailable_before_any_gpu_run(self):
         run_results = [RunResult('SUCCESSFUL', 100, 10.0)] + [
@@ -557,7 +587,7 @@ class TestBenchmarkMain(unittest.TestCase):
         ]
         run_calls = []
 
-        def record_run(command, duration, temp_dir):
+        def record_run(command, duration, temp_dir, *, on_progress=None):
             run_calls.append(command[1])
             return run_results[len(run_calls) - 1]
 
@@ -592,7 +622,7 @@ class TestBenchmarkMain(unittest.TestCase):
             *[RunResult('SUCCESSFUL', 600, 60.0) for _ in range(6)],
         ]
 
-        def record_run(command, duration, _temp_dir):
+        def record_run(command, duration, _temp_dir, *, on_progress=None):
             run_calls.append((command[1], duration))
             return run_results[len(run_calls) - 1]
 

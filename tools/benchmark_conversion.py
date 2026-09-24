@@ -32,6 +32,7 @@ MODE_SETTINGS: dict[str, tuple[bool, bool]] = {
 }
 FIXTURE_PATH = str(REPO_ROOT / 'test' / 'smoke_test_videos' / 'hdr10_10bit.mp4')
 PROGRESS_POLL_INTERVAL = 0.1
+PROGRESS_REPORT_INTERVAL = 5.0
 GRACEFUL_STOP_TIMEOUT = 5.0
 TERMINATE_TIMEOUT = 5.0
 WARMUP_SECONDS = 10.0
@@ -232,7 +233,8 @@ def _stop_process(process: subprocess.Popen[bytes]) -> tuple[int | None, str | N
 
 
 def run_timed(command: list[str], duration: float,
-              temp_dir: Path) -> RunResult:
+              temp_dir: Path,
+              on_progress: Callable[[float, int], None] | None = None) -> RunResult:
     """Measure one FFmpeg run, excluding shutdown and reaping time."""
     if duration <= 0:
         return RunResult('FAILED', 0, 0.0, 'Run duration must be positive')
@@ -272,6 +274,7 @@ def run_timed(command: list[str], duration: float,
 
         started_at = time.perf_counter()
         offset = 0
+        next_progress_at = PROGRESS_REPORT_INTERVAL
         while True:
             now = time.perf_counter()
             elapsed = now - started_at
@@ -303,6 +306,10 @@ def run_timed(command: list[str], duration: float,
                 measured_duration = elapsed
                 diagnostic = 'FFmpeg exited before the measurement cutoff'
                 break
+
+            if on_progress is not None and elapsed >= next_progress_at:
+                on_progress(elapsed, measured_frames)
+                next_progress_at = elapsed + PROGRESS_REPORT_INTERVAL
 
             time.sleep(min(PROGRESS_POLL_INTERVAL, duration - elapsed))
 
@@ -344,6 +351,15 @@ def run_timed(command: list[str], duration: float,
         status = 'FAILED'
         diagnostic = diagnostic or 'FFmpeg completed zero frames'
     return RunResult(status, measured_frames, measured_duration, diagnostic)
+
+
+def _progress_reporter(mode: str, phase: str, target: float) -> Callable[[float, int], None]:
+    def report(elapsed: float, frames: int) -> None:
+        print(
+            f'\r{mode} {phase}: {elapsed:.1f}/{target:.0f}s | {frames:,} frames',
+            end='', flush=True)
+
+    return report
 
 
 def median_fps(samples: list[RunResult]) -> float | None:
@@ -509,7 +525,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f'Benchmark failed: could not read fixture properties: {FIXTURE_PATH}')
         return 1
 
+    print('Checking for a physical Vulkan GPU...')
     vulkan_device, vulkan_diagnostic = probe_physical_vulkan()
+    if vulkan_device:
+        print(f'Physical Vulkan device: {vulkan_device}')
+    else:
+        print(f'GPU modes unavailable: {vulkan_diagnostic}')
     manager = ConversionManager()
     view = _HeadlessView()
     commands: dict[str, list[str]] = {}
@@ -522,6 +543,7 @@ def main(argv: list[str] | None = None) -> int:
             results[mode] = _placeholder(
                 'UNAVAILABLE', vulkan_diagnostic or 'Physical Vulkan device unavailable')
             continue
+        print(f'Preparing {mode} conversion...')
         try:
             command = build_command(
                 mode, FIXTURE_PATH, str(REPO_ROOT / 'benchmark-output.mp4'),
@@ -542,10 +564,16 @@ def main(argv: list[str] | None = None) -> int:
     for mode in MODE_SETTINGS:
         if mode not in commands:
             continue
+        print(f'{mode} warm-up started (10 seconds).')
         try:
-            warmup = run_timed(commands[mode], WARMUP_SECONDS, temp_dir)
+            warmup = run_timed(
+                commands[mode], WARMUP_SECONDS, temp_dir,
+                on_progress=_progress_reporter(mode, 'warm-up', WARMUP_SECONDS))
         except (OSError, subprocess.SubprocessError) as error:
             warmup = RunResult('FAILED', 0, 0.0, str(error))
+        print(
+            f'\r{mode} warm-up: {warmup.frames:,} frames in '
+            f'{warmup.duration:.1f}s ({warmup.status})')
         if warmup.status != 'SUCCESSFUL':
             warmup_failed.add(mode)
             results[mode] = _placeholder(
@@ -557,10 +585,16 @@ def main(argv: list[str] | None = None) -> int:
         for mode in round_modes:
             if mode not in commands or mode in warmup_failed:
                 continue
+            print(f'{mode} measured run started (60 seconds).')
             try:
-                result = run_timed(commands[mode], MEASURE_SECONDS, temp_dir)
+                result = run_timed(
+                    commands[mode], MEASURE_SECONDS, temp_dir,
+                    on_progress=_progress_reporter(mode, 'measuring', MEASURE_SECONDS))
             except (OSError, subprocess.SubprocessError) as error:
                 result = RunResult('FAILED', 0, 0.0, str(error))
+            print(
+                f'\r{mode} run: {result.frames:,} frames in '
+                f'{result.duration:.1f}s ({result.status})')
             results[mode].append(result)
 
     print(format_report(metadata, results))

@@ -110,7 +110,7 @@ from src.utils import (
 from _recording_view import RecordingConversionView
 from src.conversion import ConversionManager, ConversionRequest
 from resolution import ResolutionTarget
-from _vulkan_smoke import resolve_vulkan_smoke
+from _vulkan_smoke import is_physical_vulkan_device, resolve_vulkan_smoke
 
 
 def _req(input_path, output_path, **overrides) -> ConversionRequest:
@@ -143,9 +143,32 @@ _DOVI_OK = _FFMPEG_OK and os.path.exists(DOVI_VIDEO)
 _SDR_1_1_OK = _FFMPEG_OK and os.path.exists(SDR_1_1_VIDEO)
 _SDR_9_16_OK = _FFMPEG_OK and os.path.exists(SDR_9_16_VIDEO)
 
+_VULKAN_SMOKE_MODE = os.environ.get('HDR_VULKAN_SMOKE_MODE', 'skip')
+
+
+def _physical_vulkan_libplacebo_available():
+    if not _FFMPEG_OK:
+        return False
+    try:
+        result = subprocess.run(
+            [FFMPEG_EXECUTABLE, '-hide_banner', '-loglevel', 'verbose',
+             '-init_hw_device', 'vulkan=vk:0', '-filter_hw_device', 'vk',
+             '-f', 'lavfi', '-i', 'color=c=black:s=64x64,format=p010',
+             '-vf', 'hwupload,libplacebo=tonemapping=clip:format=nv12,hwdownload,format=nv12',
+             '-frames:v', '1', '-f', 'null', '-'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return (result.returncode == 0 and
+            is_physical_vulkan_device(result.stderr.decode('utf-8', 'replace')))
+
+
 _LIBPLACEBO_OK = resolve_vulkan_smoke(
-    os.environ.get('HDR_VULKAN_SMOKE_MODE', 'skip'),
-    lambda: _FFMPEG_OK and vulkan_libplacebo_available(),
+    _VULKAN_SMOKE_MODE,
+    _physical_vulkan_libplacebo_available
+    if _VULKAN_SMOKE_MODE == 'require-physical'
+    else lambda: _FFMPEG_OK and vulkan_libplacebo_available(),
 )
 
 

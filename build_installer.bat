@@ -121,8 +121,11 @@ if /I "%~1"=="--dev-skip-tests" (
 set "TEST_LOG=%REPO_ROOT%\build_test_run.log"
 if exist "%TEST_LOG%" del /q "%TEST_LOG%"
 
+set "HDR_VULKAN_SMOKE_MODE=require-physical"
+echo [INFO] Release validation requires a physical Vulkan GPU, not software Vulkan.
 python -m coverage run -m unittest discover -s test -p "*_test.py" -t . > "%TEST_LOG%" 2>&1
 set "PUBLIC_RC=!errorlevel!"
+set "HDR_VULKAN_SMOKE_MODE="
 if !PUBLIC_RC! neq 0 goto :tests_failed
 
 python -m coverage report >> "%TEST_LOG%" 2>&1

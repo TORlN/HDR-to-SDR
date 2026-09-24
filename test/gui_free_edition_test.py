@@ -193,7 +193,8 @@ class TestFreeEditionGui(unittest.TestCase):
         root.withdraw()
         self.addCleanup(_destroy_gui_root, root)
         with patch.object(gui.conversion_manager, 'is_gpu_acceleration_available',
-                           return_value=True):
+                           return_value=True), \
+             patch.object(gui, 'vulkan_libplacebo_available', return_value=True):
             app = gui.HDRConverterGUI(root, licensed=False)
         self.assertFalse(app._licensed)
 
@@ -205,7 +206,8 @@ class TestFreeEditionGui(unittest.TestCase):
         root.withdraw()
         self.addCleanup(_destroy_gui_root, root)
         with patch.object(gui.conversion_manager, 'is_gpu_acceleration_available',
-                           return_value=True):
+                           return_value=True), \
+             patch.object(gui, 'vulkan_libplacebo_available', return_value=True):
             app = gui.HDRConverterGUI(root, licensed=False)
         self.assertNotIn(app.quality_slider, app.interactable_elements)
         self.assertNotIn(app.quality_entry, app.interactable_elements)
@@ -223,7 +225,8 @@ class TestFreeEditionGui(unittest.TestCase):
         root.withdraw()
         self.addCleanup(_destroy_gui_root, root)
         with patch.object(gui.conversion_manager, 'is_gpu_acceleration_available',
-                           return_value=True):
+                           return_value=True), \
+             patch.object(gui, 'vulkan_libplacebo_available', return_value=True):
             app = gui.HDRConverterGUI(root, licensed=False)
         with patch.object(app, '_load_input_file') as mock_load:
             app.handle_file_drop(type('E', (), {'data': 'C:/v/a.mp4'})())
@@ -241,6 +244,7 @@ class TestFreeEditionGui(unittest.TestCase):
         root.withdraw()
         self.addCleanup(_destroy_gui_root, root)
         with patch.object(gui.conversion_manager, 'is_gpu_acceleration_available',
-                           return_value=True):
+                           return_value=True), \
+             patch.object(gui, 'vulkan_libplacebo_available', return_value=True):
             app = gui.HDRConverterGUI(root, licensed=False)
         app._write_back_current_settings()  # must not raise

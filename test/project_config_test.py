@@ -250,6 +250,17 @@ class TestCIExecutionInputsArePinned(unittest.TestCase):
             self._workflow(),
         )
 
+    def test_ci_runs_vulkan_smoke_tests_on_lavapipe_and_requires_them(self):
+        workflow = self._workflow()
+        self.assertIn('mesa-vulkan-drivers', workflow)
+        self.assertIn("-name 'lvp_icd*.json'", workflow)
+        self.assertIn('VK_ICD_FILENAMES=$lvp_icd', workflow)
+        self.assertIn("HDR_VULKAN_SMOKE_MODE: 'require'", workflow)
+        self.assertIn(
+            'python -m unittest test.smoke_test.TestVulkanRgbaFrameRoundTrip -v',
+            workflow,
+        )
+
 
 class TestProCompatibilityDispatch(unittest.TestCase):
     """Shared public changes must be checked against Pro without exposing it."""

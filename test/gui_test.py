@@ -53,6 +53,8 @@ class TestHDRConverterGUI(TestCase):
             'gpu_probe': patch(
                 'src.gui.conversion_manager.is_gpu_acceleration_available',
                 return_value=True),
+            'vulkan_probe': patch(
+                'src.gui.vulkan_libplacebo_available', return_value=True),
         }
 
         # Combine all patches
@@ -403,6 +405,8 @@ class TestWindowIcon(unittest.TestCase):
             'gpu_probe': patch(
                 'src.gui.conversion_manager.is_gpu_acceleration_available',
                 return_value=True),
+            'vulkan_probe': patch(
+                'src.gui.vulkan_libplacebo_available', return_value=True),
         }
         if extra_patches:
             patches.update(extra_patches)
@@ -493,6 +497,8 @@ class TestShowTooltip(TestCase):
             'gpu_probe': patch(
                 'src.gui.conversion_manager.is_gpu_acceleration_available',
                 return_value=True),
+            'vulkan_probe': patch(
+                'src.gui.vulkan_libplacebo_available', return_value=True),
         }
         self.patches = patches
         self.mocks = {name: p.start() for name, p in patches.items()}

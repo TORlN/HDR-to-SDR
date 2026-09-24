@@ -120,6 +120,9 @@ class _GuiTestBase(unittest.TestCase):
         self._gpu_patch = patch(
             'src.gui.conversion_manager.is_gpu_acceleration_available', return_value=True)
         self._gpu_patch.start()
+        self._vulkan_patch = patch(
+            'src.gui.vulkan_libplacebo_available', return_value=True)
+        self._vulkan_patch.start()
         # Reuse the module-level Tk — never destroy it between tests.
         # Destroying and recreating Tk forces Tcl to deinit/reinit, which is
         # unreliable on broken system Tcl installs.  Instead, destroy only the
@@ -128,7 +131,8 @@ class _GuiTestBase(unittest.TestCase):
         drain_after_timers(self.root)
         for w in self.root.winfo_children():
             w.destroy()
-        self.gui = HDRConverterGUI(self.root, licensed=True)
+        with no_real_subprocess('GUI integration fixture setup'):
+            self.gui = HDRConverterGUI(self.root, licensed=True)
 
     def tearDown(self):
         self._load_patch.stop()
@@ -136,6 +140,7 @@ class _GuiTestBase(unittest.TestCase):
         self._props_patch.stop()
         self._maxcll_patch.stop()
         self._gpu_patch.stop()
+        self._vulkan_patch.stop()
 
 
 class TestConstruction(_GuiTestBase):
@@ -539,6 +544,9 @@ class TestRestoringBitrateModeAtStartup(unittest.TestCase):
         self._gpu_patch = patch(
             'src.gui.conversion_manager.is_gpu_acceleration_available', return_value=True)
         self._gpu_patch.start()
+        self._vulkan_patch = patch(
+            'src.gui.vulkan_libplacebo_available', return_value=True)
+        self._vulkan_patch.start()
         self.root = _probe_root
         drain_after_timers(self.root)
         for w in self.root.winfo_children():
@@ -550,6 +558,7 @@ class TestRestoringBitrateModeAtStartup(unittest.TestCase):
         self._props_patch.stop()
         self._maxcll_patch.stop()
         self._gpu_patch.stop()
+        self._vulkan_patch.stop()
 
     def test_persisted_bitrate_survives_construction(self):
         gui = HDRConverterGUI(self.root, licensed=True)
@@ -1546,7 +1555,8 @@ class TestDropTargetAndClose(_GuiTestBase):
         # _probe_root is alive is safe — the Tcl library is already loaded.
         with patch('src.gui.load_settings', return_value=dict(DEFAULTS)), \
              patch('src.gui.save_settings'), \
-             patch('src.gui.conversion_manager.is_gpu_acceleration_available', return_value=True):
+             patch('src.gui.conversion_manager.is_gpu_acceleration_available', return_value=True), \
+             patch('src.gui.vulkan_libplacebo_available', return_value=True):
             tmp_root = TkinterDnD.Tk()
             tmp_root.withdraw()
             tmp_gui = HDRConverterGUI(tmp_root, licensed=True)
@@ -1571,10 +1581,12 @@ class _LicensingBase(unittest.TestCase):
         save_p = patch('src.gui.save_settings')
         gpu_p = patch(
             'src.gui.conversion_manager.is_gpu_acceleration_available', return_value=True)
+        vulkan_p = patch('src.gui.vulkan_libplacebo_available', return_value=True)
         load_p.start()
         save_p.start()
         gpu_p.start()
-        cls._class_patches = [load_p, save_p, gpu_p]
+        vulkan_p.start()
+        cls._class_patches = [load_p, save_p, gpu_p, vulkan_p]
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -1744,6 +1756,9 @@ class _FreshGuiTestBase(unittest.TestCase):
         self._gpu_patch = patch(
             'src.gui.conversion_manager.is_gpu_acceleration_available', return_value=True)
         self._gpu_patch.start()
+        self._vulkan_patch = patch(
+            'src.gui.vulkan_libplacebo_available', return_value=True)
+        self._vulkan_patch.start()
         drain_after_timers(_probe_root)
         for w in _probe_root.winfo_children():
             w.destroy()
@@ -1752,6 +1767,7 @@ class _FreshGuiTestBase(unittest.TestCase):
         self._load_patch.stop()
         self._save_patch.stop()
         self._gpu_patch.stop()
+        self._vulkan_patch.stop()
 
     def _make_gui(self, licensed: bool) -> HDRConverterGUI:
         return HDRConverterGUI(_probe_root, licensed=licensed)

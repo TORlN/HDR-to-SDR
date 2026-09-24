@@ -183,6 +183,16 @@ class TestSpecContent(unittest.TestCase):
         self.assertIn('--dev-skip-tests', bat)
         self.assertNotIn('if /I "%~1"=="--skip-tests"', bat)
 
+    def test_release_build_requires_physical_vulkan_for_smoke_tests(self):
+        with open(os.path.join(_ROOT, 'build_installer.bat'), encoding='utf-8') as f:
+            bat = f.read()
+        physical_gate = bat.find('set "HDR_VULKAN_SMOKE_MODE=require-physical"')
+        smoke_suite = bat.find('python -m coverage run -m unittest discover')
+        self.assertGreaterEqual(physical_gate, 0,
+                                'release validation must require a physical Vulkan device')
+        self.assertGreater(smoke_suite, physical_gate,
+                           'physical Vulkan mode must be set before the suite starts')
+
     def test_signed_release_verifies_both_authenticode_signatures(self):
         """A signing-tool success exit must not substitute for verification.
 

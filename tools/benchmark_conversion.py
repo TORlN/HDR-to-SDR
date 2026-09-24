@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import os
+import platform
+import re
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -19,7 +22,7 @@ for _directory in (REPO_ROOT, REPO_ROOT / 'src'):
 
 from conversion_view import ConversionView, Notice  # noqa: E402
 from src.conversion import ConversionManager, ConversionRequest  # noqa: E402
-from utils import get_video_properties  # noqa: E402
+from utils import FFMPEG_EXECUTABLE, get_video_properties  # noqa: E402
 
 
 MODE_SETTINGS: dict[str, tuple[bool, bool]] = {
@@ -31,6 +34,13 @@ FIXTURE_PATH = str(REPO_ROOT / 'test' / 'smoke_test_videos' / 'hdr10_10bit.mp4')
 PROGRESS_POLL_INTERVAL = 0.1
 GRACEFUL_STOP_TIMEOUT = 5.0
 TERMINATE_TIMEOUT = 5.0
+WARMUP_SECONDS = 10.0
+MEASURE_SECONDS = 60.0
+MEASURE_ORDER = (
+    ('CPU accurate', 'GPU accurate', 'GPU fast'),
+    ('GPU fast', 'CPU accurate', 'GPU accurate'),
+    ('GPU accurate', 'GPU fast', 'CPU accurate'),
+)
 
 
 @dataclass(frozen=True)
@@ -334,3 +344,228 @@ def run_timed(command: list[str], duration: float,
         status = 'FAILED'
         diagnostic = diagnostic or 'FFmpeg completed zero frames'
     return RunResult(status, measured_frames, measured_duration, diagnostic)
+
+
+def median_fps(samples: list[RunResult]) -> float | None:
+    successful = [sample.fps for sample in samples
+                  if sample.status == 'SUCCESSFUL' and sample.duration > 0]
+    return statistics.median(successful) if len(successful) >= 2 else None
+
+
+def _software_vulkan_hint() -> str | None:
+    for variable in ('VK_ICD_FILENAMES', 'VK_DRIVER_FILES', 'VK_ADD_DRIVER_FILES'):
+        value = os.environ.get(variable, '')
+        lowered = value.lower()
+        for token, label in (('lavapipe', 'lavapipe'), ('lvp', 'lavapipe'),
+                             ('llvmpipe', 'llvmpipe'),
+                             ('swiftshader', 'SwiftShader'),
+                             ('softpipe', 'softpipe')):
+            if token in lowered:
+                return f'{variable} selects {label} software Vulkan: {value}'
+    return None
+
+
+def probe_physical_vulkan() -> tuple[str | None, str | None]:
+    """Return a selected physical device name, or why GPU runs are unavailable."""
+    software_hint = _software_vulkan_hint()
+    if software_hint:
+        return None, software_hint
+    if not FFMPEG_EXECUTABLE:
+        return None, 'FFmpeg executable is unavailable for a Vulkan device probe'
+
+    command = [
+        FFMPEG_EXECUTABLE, '-hide_banner', '-loglevel', 'verbose',
+        '-init_hw_device', 'vulkan=vk:0', '-filter_hw_device', 'vk',
+        '-f', 'lavfi', '-i', 'color=c=black:s=64x64,format=p010',
+        '-vf', 'hwupload,libplacebo=tonemapping=clip:format=nv12,hwdownload,format=nv12',
+        '-frames:v', '1', '-f', 'null', '-',
+    ]
+    try:
+        probe = subprocess.run(
+            command, capture_output=True, text=True, timeout=20, check=False)
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, f'Physical Vulkan probe failed: {error}'
+
+    log = f'{probe.stdout}\n{probe.stderr}'
+    match = re.search(
+        r'Device\s+\d+\s+selected:\s*(.+?)\s*\((discrete|integrated)\)\s*\(0x[0-9a-f]+\)',
+        log, re.IGNORECASE)
+    if probe.returncode == 0 and match:
+        return f'{match.group(1)} ({match.group(2).lower()})', None
+    if re.search(r'lavapipe|llvmpipe|swiftshader|softpipe|software', log, re.I):
+        return None, 'FFmpeg selected a software Vulkan device'
+    if probe.returncode:
+        return None, f'FFmpeg Vulkan probe exited with status {probe.returncode}'
+    return None, 'FFmpeg did not confirm an integrated or discrete Vulkan device'
+
+
+def collect_metadata(properties: dict, vulkan_device: str | None,
+                     commands: dict[str, list[str]]) -> dict[str, str]:
+    def value(item) -> str:
+        return str(item) if item not in (None, '') else 'Unknown'
+
+    cpu = platform.processor()
+    ffmpeg_version = 'Unknown'
+    if FFMPEG_EXECUTABLE:
+        try:
+            version = subprocess.run(
+                [FFMPEG_EXECUTABLE, '-version'], capture_output=True, text=True,
+                timeout=10, check=False)
+            if version.returncode == 0:
+                version_lines = [line.strip() for line in version.stdout.splitlines()
+                                 if line.strip()]
+                ffmpeg_version = ' | '.join(version_lines[:2]) or 'Unknown'
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    encoders = []
+    for mode in MODE_SETTINGS:
+        command = commands.get(mode)
+        try:
+            encoder = command[command.index('-c:v') + 1] if command else None
+        except (ValueError, IndexError):
+            encoder = None
+        encoders.append(f'{mode}: {value(encoder)}')
+
+    fixture = 'x'.join(value(properties.get(key)) for key in ('width', 'height'))
+    fixture += (
+        f", {value(properties.get('codec_name'))}, "
+        f"{value(properties.get('bit_depth'))}-bit, "
+        f"{value(properties.get('color_primaries'))}/"
+        f"{value(properties.get('color_transfer'))}, "
+        f"{value(properties.get('frame_rate'))} FPS, "
+        f"{value(properties.get('duration'))}s"
+    )
+    return {
+        'Operating system': value(platform.platform()),
+        'CPU model': value(cpu),
+        'GPU model': value(vulkan_device),
+        'Selected encoders': '; '.join(encoders),
+        'FFmpeg version/build': value(ffmpeg_version),
+        'Fixture': fixture,
+        'Settings': (
+            'gamma 1.0, Reinhard, CQ 23, 10-bit, no scaling, looped input; '
+            '10s warm-up, 3 interleaved 60s runs per mode'
+        ),
+    }
+
+
+def format_report(metadata: dict[str, str],
+                  results: dict[str, list[RunResult]]) -> str:
+    lines = ['Conversion throughput benchmark', 'Metadata:']
+    lines.extend(f'  {key}: {value}' for key, value in metadata.items())
+    lines.extend([
+        '  Comparison limits: encoder selections may differ by mode; results apply only to the tested hardware and fixture.',
+        '',
+        'Measured runs:',
+    ])
+    for mode in MODE_SETTINGS:
+        samples = results.get(mode, [])
+        lines.append(f'{mode}:')
+        for index, sample in enumerate(samples, 1):
+            detail = (f'{sample.frames} frames / {sample.duration:.2f}s / '
+                      f'{sample.fps:.2f} FPS')
+            suffix = f' | {sample.diagnostic}' if sample.diagnostic else ''
+            lines.append(f'  Run {index}: {sample.status} | {detail}{suffix}')
+        successful = sum(sample.status == 'SUCCESSFUL' for sample in samples)
+        median = median_fps(samples)
+        if median is None:
+            lines.append(f'  Median: unavailable ({successful}/3 successful runs)')
+        else:
+            lines.append(f'  Median: {median:.2f} FPS ({successful}/3 successful runs)')
+
+    lines.extend(['', 'Pairwise median comparisons:'])
+    pairs = (('CPU accurate', 'GPU fast'),
+             ('CPU accurate', 'GPU accurate'),
+             ('GPU fast', 'GPU accurate'))
+    for first, second in pairs:
+        first_median = median_fps(results.get(first, []))
+        second_median = median_fps(results.get(second, []))
+        if first_median is None or second_median is None:
+            continue
+        higher, lower = ((first, second) if first_median >= second_median
+                         else (second, first))
+        high_value = max(first_median, second_median)
+        low_value = min(first_median, second_median)
+        ratio = high_value / low_value if low_value > 0 else float('inf')
+        delta = high_value - low_value
+        percent = (ratio - 1) * 100 if low_value > 0 else float('inf')
+        lines.append(
+            f'{first} vs {second}: {higher} completed {ratio:.2f}x the median '
+            f'throughput (+{delta:.2f} FPS, +{percent:.1f}% higher throughput).')
+    return '\n'.join(lines)
+
+
+def _placeholder(status: str, diagnostic: str) -> list[RunResult]:
+    return [RunResult(status, 0, 0.0, diagnostic) for _ in range(len(MEASURE_ORDER))]
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    argparse.ArgumentParser(description=__doc__).parse_args(argv)
+    properties = get_video_properties(FIXTURE_PATH)
+    if properties is None:
+        print(f'Benchmark failed: could not read fixture properties: {FIXTURE_PATH}')
+        return 1
+
+    vulkan_device, vulkan_diagnostic = probe_physical_vulkan()
+    manager = ConversionManager()
+    view = _HeadlessView()
+    commands: dict[str, list[str]] = {}
+    results: dict[str, list[RunResult]] = {}
+    warmup_failed: set[str] = set()
+    temp_dir = Path(tempfile.gettempdir())
+
+    for mode in MODE_SETTINGS:
+        if mode.startswith('GPU') and vulkan_device is None:
+            results[mode] = _placeholder(
+                'UNAVAILABLE', vulkan_diagnostic or 'Physical Vulkan device unavailable')
+            continue
+        try:
+            command = build_command(
+                mode, FIXTURE_PATH, str(REPO_ROOT / 'benchmark-output.mp4'),
+                str(temp_dir / 'benchmark-progress.txt'), manager, view)
+            diagnostic = validate_mode_command(mode, command)
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            results[mode] = _placeholder('FAILED', str(error))
+            continue
+        if diagnostic:
+            status = ('UNAVAILABLE' if mode.startswith('GPU') and
+                      'unavailable' in diagnostic.lower() else 'FAILED')
+            results[mode] = _placeholder(status, diagnostic)
+            continue
+        commands[mode] = command
+        results[mode] = []
+
+    metadata = collect_metadata(properties, vulkan_device, commands)
+    for mode in MODE_SETTINGS:
+        if mode not in commands:
+            continue
+        try:
+            warmup = run_timed(commands[mode], WARMUP_SECONDS, temp_dir)
+        except (OSError, subprocess.SubprocessError) as error:
+            warmup = RunResult('FAILED', 0, 0.0, str(error))
+        if warmup.status != 'SUCCESSFUL':
+            warmup_failed.add(mode)
+            results[mode] = _placeholder(
+                'FAILED',
+                f'Warm-up failed; measured runs skipped: '
+                f'{warmup.diagnostic or warmup.status}')
+
+    for round_modes in MEASURE_ORDER:
+        for mode in round_modes:
+            if mode not in commands or mode in warmup_failed:
+                continue
+            try:
+                result = run_timed(commands[mode], MEASURE_SECONDS, temp_dir)
+            except (OSError, subprocess.SubprocessError) as error:
+                result = RunResult('FAILED', 0, 0.0, str(error))
+            results[mode].append(result)
+
+    print(format_report(metadata, results))
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

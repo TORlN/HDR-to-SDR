@@ -1,3 +1,4 @@
+import io
 import os
 import subprocess
 import sys
@@ -10,8 +11,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../s
 
 from src.conversion import ConversionManager, ConversionRequest
 from tools.benchmark_conversion import (
-    FIXTURE_PATH, MODE_SETTINGS, RunResult, _HeadlessView, build_command,
-    build_request, read_progress, run_timed, validate_mode_command,
+    FIXTURE_PATH, MEASURE_ORDER, MODE_SETTINGS, RunResult, _HeadlessView,
+    build_command, build_request, collect_metadata, format_report, main,
+    median_fps, probe_physical_vulkan, read_progress, run_timed,
+    validate_mode_command,
 )
 
 
@@ -367,6 +370,251 @@ class TestRunTimed(unittest.TestCase):
             self.assertEqual(len(leftovers), 2)
             for path in leftovers:
                 path.unlink()
+
+
+class TestBenchmarkStatistics(unittest.TestCase):
+    @staticmethod
+    def _run(fps, status='SUCCESSFUL'):
+        return RunResult(status, fps * 60, 60.0)
+
+    def test_median_requires_two_successful_measured_runs(self):
+        samples = [self._run(10), self._run(20, 'FAILED'), self._run(30)]
+        self.assertEqual(median_fps(samples), 20.0)
+        self.assertIsNone(median_fps([self._run(10), self._run(20, 'FAILED')]))
+        self.assertIsNone(median_fps([self._run(10, 'FAILED')]))
+        self.assertIsNone(median_fps([]))
+
+    def test_report_has_run_details_and_all_pairwise_median_comparisons(self):
+        results = {
+            'CPU accurate': [self._run(10), self._run(10), self._run(10)],
+            'GPU accurate': [self._run(15), self._run(15), self._run(15)],
+            'GPU fast': [self._run(12), self._run(12), self._run(12)],
+        }
+        report = format_report({'GPU model': 'Example GPU'}, results)
+
+        self.assertIn('Run 1', report)
+        self.assertIn('Run 2', report)
+        self.assertIn('Run 3', report)
+        self.assertIn('600 frames / 60.00s / 10.00 FPS', report)
+        self.assertIn('Median: 15.00 FPS (3/3 successful runs)', report)
+        self.assertIn('1.50x', report)
+        self.assertIn('+5.00 FPS', report)
+        self.assertIn('+50.0% higher throughput', report)
+        self.assertIn('1.25x', report)
+        self.assertIn('1.20x', report)
+        self.assertIn('GPU model: Example GPU', report)
+        self.assertIn('results apply only to the tested hardware and fixture', report)
+        self.assertNotIn('faster', report.lower())
+
+    def test_report_labels_partial_runs_and_omits_invalid_pairwise_results(self):
+        results = {
+            'CPU accurate': [self._run(10), self._run(20), self._run(30, 'FAILED')],
+            'GPU accurate': [self._run(15), self._run(20, 'FAILED'), self._run(30, 'FAILED')],
+            'GPU fast': [self._run(12, 'UNAVAILABLE') for _ in range(3)],
+        }
+        report = format_report({}, results)
+
+        self.assertIn('Median: 15.00 FPS (2/3 successful runs)', report)
+        self.assertIn('Median: unavailable (1/3 successful runs)', report)
+        self.assertIn('UNAVAILABLE', report)
+        self.assertIn('FAILED', report)
+        self.assertNotIn('CPU accurate vs GPU accurate:', report)
+        self.assertNotIn('GPU accurate vs GPU fast:', report)
+        self.assertNotIn('CPU accurate vs GPU fast:', report)
+
+    def test_missing_optional_metadata_is_reported_as_unknown(self):
+        with (
+            patch('tools.benchmark_conversion.platform.platform', return_value='Test OS'),
+            patch('tools.benchmark_conversion.platform.processor', return_value=''),
+            patch('tools.benchmark_conversion.FFMPEG_EXECUTABLE', None),
+        ):
+            metadata = collect_metadata({}, None, {})
+
+        self.assertEqual(metadata['Operating system'], 'Test OS')
+        self.assertEqual(metadata['CPU model'], 'Unknown')
+        self.assertEqual(metadata['GPU model'], 'Unknown')
+        self.assertEqual(metadata['FFmpeg version/build'], 'Unknown')
+
+    def test_metadata_records_fixture_settings_and_selected_encoders(self):
+        version = Mock(returncode=0, stdout=(
+            'ffmpeg version N-12345\nbuilt with gcc 15\nconfiguration: --enable-vulkan\n'))
+        commands = {
+            'CPU accurate': ['ffmpeg.exe', '-c:v', 'libx265'],
+            'GPU accurate': ['ffmpeg.exe', '-c:v', 'hevc_nvenc'],
+        }
+        properties = {
+            'width': 960,
+            'height': 540,
+            'codec_name': 'hevc',
+            'bit_depth': 10,
+            'color_primaries': 'bt2020',
+            'color_transfer': 'smpte2084',
+            'frame_rate': 24.0,
+            'duration': 2.0,
+        }
+        with (
+            patch('tools.benchmark_conversion.platform.platform', return_value='Windows test'),
+            patch('tools.benchmark_conversion.platform.processor', return_value='CPU test'),
+            patch('tools.benchmark_conversion.FFMPEG_EXECUTABLE', 'ffmpeg.exe'),
+            patch('tools.benchmark_conversion.subprocess.run', return_value=version),
+        ):
+            metadata = collect_metadata(properties, 'GPU test (discrete)', commands)
+
+        self.assertEqual(metadata['FFmpeg version/build'],
+                         'ffmpeg version N-12345 | built with gcc 15')
+        self.assertIn('960x540, hevc, 10-bit, bt2020/smpte2084', metadata['Fixture'])
+        self.assertIn('CPU accurate: libx265', metadata['Selected encoders'])
+        self.assertIn('GPU accurate: hevc_nvenc', metadata['Selected encoders'])
+        self.assertIn('10s warm-up, 3 interleaved 60s runs per mode', metadata['Settings'])
+
+
+class TestPhysicalVulkanProbe(unittest.TestCase):
+    def test_rejects_lavapipe_selected_by_active_icd_without_running_probe(self):
+        with (
+            patch.dict(os.environ, {
+                'VK_ICD_FILENAMES': '/usr/share/vulkan/icd.d/lvp_icd.json',
+            }),
+            patch('tools.benchmark_conversion.subprocess.run') as run,
+        ):
+            device, diagnostic = probe_physical_vulkan()
+
+        self.assertIsNone(device)
+        self.assertIn('lavapipe', diagnostic.lower())
+        run.assert_not_called()
+
+    def test_accepts_physical_ffmpeg_device_and_rejects_software_log(self):
+        physical = Mock(returncode=0, stderr=(
+            'Device 0 selected: NVIDIA Example GPU (discrete) (0x10de)\n'))
+        software = Mock(returncode=0, stderr=(
+            'Device 0 selected: llvmpipe (software) (0x0)\n'))
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch('tools.benchmark_conversion.subprocess.run',
+                  side_effect=[physical, software]),
+            patch('tools.benchmark_conversion.FFMPEG_EXECUTABLE', 'ffmpeg.exe'),
+        ):
+            device, diagnostic = probe_physical_vulkan()
+            software_device, software_diagnostic = probe_physical_vulkan()
+
+        self.assertEqual(device, 'NVIDIA Example GPU (discrete)')
+        self.assertIsNone(diagnostic)
+        self.assertIsNone(software_device)
+        self.assertIn('software', software_diagnostic.lower())
+
+
+class TestBenchmarkMain(unittest.TestCase):
+    _PROPERTIES = {
+        'width': 960,
+        'height': 540,
+        'bit_rate': 1_000_000,
+        'frame_rate': 24.0,
+        'codec_name': 'hevc',
+        'bit_depth': 10,
+        'color_transfer': 'smpte2084',
+        'color_primaries': 'bt2020',
+        'is_dolby_vision': False,
+    }
+
+    def test_warms_up_then_runs_exact_interleaved_schedule_after_failures(self):
+        warmups = [RunResult('SUCCESSFUL', 100, 10.0) for _ in range(3)]
+        measured = [RunResult('SUCCESSFUL', 600, 60.0) for _ in range(9)]
+        measured[2] = RunResult('FAILED', 0, 60.0, 'simulated failure')
+        run_results = warmups + measured
+        run_calls = []
+
+        def record_run(command, duration, temp_dir):
+            run_calls.append((command[1], duration))
+            return run_results[len(run_calls) - 1]
+
+        output = io.StringIO()
+        with (
+            patch('tools.benchmark_conversion.get_video_properties',
+                  return_value=self._PROPERTIES),
+            patch('tools.benchmark_conversion.probe_physical_vulkan',
+                  return_value=('NVIDIA Example GPU (discrete)', None)),
+            patch('tools.benchmark_conversion.build_command',
+                  side_effect=lambda mode, *_args: ['ffmpeg.exe', mode]),
+            patch('tools.benchmark_conversion.validate_mode_command', return_value=None),
+            patch('tools.benchmark_conversion.collect_metadata', return_value={}),
+            patch('tools.benchmark_conversion.run_timed', side_effect=record_run),
+            patch('sys.stdout', output),
+        ):
+            result = main([])
+
+        expected_modes = [
+            'CPU accurate', 'GPU accurate', 'GPU fast',
+            *MEASURE_ORDER[0], *MEASURE_ORDER[1], *MEASURE_ORDER[2],
+        ]
+        self.assertEqual([mode for mode, _ in run_calls], expected_modes)
+        self.assertEqual([duration for _, duration in run_calls],
+                         [10.0] * 3 + [60.0] * 9)
+        self.assertEqual(result, 0)
+        self.assertIn('simulated failure', output.getvalue())
+
+    def test_software_vulkan_marks_gpu_modes_unavailable_before_any_gpu_run(self):
+        run_results = [RunResult('SUCCESSFUL', 100, 10.0)] + [
+            RunResult('SUCCESSFUL', 600, 60.0) for _ in range(3)
+        ]
+        run_calls = []
+
+        def record_run(command, duration, temp_dir):
+            run_calls.append(command[1])
+            return run_results[len(run_calls) - 1]
+
+        output = io.StringIO()
+        with (
+            patch('tools.benchmark_conversion.get_video_properties',
+                  return_value=self._PROPERTIES),
+            patch('tools.benchmark_conversion.probe_physical_vulkan',
+                  return_value=(None, 'Software Vulkan selected: lavapipe')),
+            patch('tools.benchmark_conversion.build_command',
+                  side_effect=lambda mode, *_args: ['ffmpeg.exe', mode]) as builder,
+            patch('tools.benchmark_conversion.validate_mode_command', return_value=None),
+            patch('tools.benchmark_conversion.collect_metadata', return_value={}),
+            patch('tools.benchmark_conversion.run_timed', side_effect=record_run),
+            patch('sys.stdout', output),
+        ):
+            result = main([])
+
+        self.assertEqual([call.args[0] for call in builder.call_args_list],
+                         ['CPU accurate'])
+        self.assertEqual(run_calls, ['CPU accurate'] * 4)
+        self.assertEqual(result, 0)
+        self.assertIn('UNAVAILABLE', output.getvalue())
+        self.assertIn('lavapipe', output.getvalue())
+
+    def test_failed_warmup_skips_only_that_modes_measured_runs(self):
+        run_calls = []
+        run_results = [
+            RunResult('FAILED', 0, 10.0, 'warm-up failure'),
+            RunResult('SUCCESSFUL', 100, 10.0),
+            RunResult('SUCCESSFUL', 100, 10.0),
+            *[RunResult('SUCCESSFUL', 600, 60.0) for _ in range(6)],
+        ]
+
+        def record_run(command, duration, _temp_dir):
+            run_calls.append((command[1], duration))
+            return run_results[len(run_calls) - 1]
+
+        output = io.StringIO()
+        with (
+            patch('tools.benchmark_conversion.get_video_properties',
+                  return_value=self._PROPERTIES),
+            patch('tools.benchmark_conversion.probe_physical_vulkan',
+                  return_value=('NVIDIA Example GPU (discrete)', None)),
+            patch('tools.benchmark_conversion.build_command',
+                  side_effect=lambda mode, *_args: ['ffmpeg.exe', mode]),
+            patch('tools.benchmark_conversion.validate_mode_command', return_value=None),
+            patch('tools.benchmark_conversion.collect_metadata', return_value={}),
+            patch('tools.benchmark_conversion.run_timed', side_effect=record_run),
+            patch('sys.stdout', output),
+        ):
+            result = main([])
+
+        self.assertEqual(result, 0)
+        self.assertEqual(sum(mode == 'CPU accurate' for mode, _ in run_calls), 1)
+        self.assertEqual(len(run_calls), 9)
+        self.assertIn('Warm-up failed; measured runs skipped: warm-up failure', output.getvalue())
 
 
 if __name__ == '__main__':

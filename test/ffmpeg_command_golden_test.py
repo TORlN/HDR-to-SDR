@@ -37,8 +37,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../s
 
 from src.conversion import ConversionManager, ConversionRequest  # noqa: E402
 from resolution import ResolutionTarget  # noqa: E402
-from src.utils import (FFMPEG_CONVERT_FILTER, FFMPEG_EXECUTABLE,  # noqa: E402
-                       get_lut_filter_path, build_libplacebo_filter)
+from utils import (FFMPEG_CONVERT_FILTER, FFMPEG_EXECUTABLE,  # noqa: E402
+                   get_lut_filter_path, build_libplacebo_filter)
 from _recording_view import RecordingConversionView  # noqa: E402
 
 
@@ -1830,12 +1830,7 @@ class TestFfmpegCommandGoldenMaster(unittest.TestCase):
                 self.assertEqual(str(ctx.exception), case.expect_raises, msg=case.name)
             else:
                 cmd = manager.construct_ffmpeg_command(request, properties, view)
-                actual = list(cmd)
-                expected = list(case.expect)
-                if os.name == 'nt':
-                    actual[0] = os.path.normcase(actual[0])
-                    expected[0] = os.path.normcase(expected[0])
-                self.assertEqual(actual, expected, msg=case.name)
+                self.assertEqual(cmd, case.expect, msg=case.name)
         self.assertEqual(len(view.notices), case.expect_notices, msg=case.name)
 
     def test_golden_cases(self) -> None:
@@ -1848,15 +1843,6 @@ class TestFfmpegCommandGoldenMaster(unittest.TestCase):
         self.assertEqual(len(names), len(set(names)),
                          msg='duplicate case name -- subTest would silently '
                              'merge two different cases under one label')
-
-    @unittest.skipUnless(os.name == 'nt', 'Windows executable paths are case-insensitive')
-    def test_golden_comparison_ignores_executable_drive_letter_case(self) -> None:
-        case = CASES[0]
-        executable = case.expect[0]
-        different_drive_case = executable[0].swapcase() + executable[1:]
-        with patch('ffmpeg_command.FFMPEG_EXECUTABLE', different_drive_case):
-            self._run(case)
-
 
 if __name__ == '__main__':
     unittest.main()

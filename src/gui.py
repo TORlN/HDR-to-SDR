@@ -236,6 +236,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._preview_thread: Future | None = None
         self._converted_preview_base: Image.Image | None = None
         self._duration_cache: tuple[str, tuple[int, int, int] | None, float] | None = None
+        self._preview_profile5_path: str | None = None
         self._source_bit_depth: int = 8
         self._preview_cache_original: dict = {}
         self._preview_cache_converted: dict = {}
@@ -1714,6 +1715,11 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
         self._source_bit_depth = props.get('bit_depth', 8) if props else 8
         self._update_bit_depth_choice()
         self._cached_props = props
+        if hasattr(self, 'original_title_label'):
+            title = ('Original (Dolby Vision, SDR view):'
+                     if props and props.get('is_dolby_vision')
+                     and props.get('dovi_profile') == 5 else 'Original (HDR):')
+            self.original_title_label.config(text=title)
         self._cached_maxcll = maxcll
         self._metadata_pending = None
         already_restoring = getattr(self, '_restoring_batch_item_settings', False)

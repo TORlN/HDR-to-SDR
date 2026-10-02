@@ -248,6 +248,82 @@ class TestPreviewUsesGpuTonemapWhenActive(unittest.TestCase):
         mock_gpu_conv.assert_called_once()
         mock_cpu_conv.assert_called_once()
 
+    def test_profile5_uses_rpu_aware_gpu_for_both_panes_with_gpu_toggle_off(self):
+        gui = self._gui(gpu_accel=False)
+        with patch('preview.get_video_properties', return_value={
+                'duration': 12.0, 'is_dolby_vision': True, 'dovi_profile': 5}), \
+             patch('preview.vulkan_libplacebo_available', return_value=True), \
+             patch('preview.extract_frame') as raw, \
+             patch('preview.extract_frame_with_conversion') as cpu, \
+             patch('preview.extract_frame_with_gpu_conversion',
+                   side_effect=['source', 'converted']) as gpu:
+            gui._get_duration('v.mp4')
+            self.assertEqual(gui._extract_preview_images('v.mp4', 1.0, 'mobius'),
+                             ('source', 'converted'))
+        self.assertEqual([call.kwargs['tonemapper'] for call in gpu.call_args_list],
+                         ['clip', 'mobius'])
+        self.assertTrue(gpu.call_args_list[0].kwargs['lut_enabled'])
+        raw.assert_not_called()
+        cpu.assert_not_called()
+
+    def test_profile5_prewarm_uses_same_rpu_aware_route_and_cache(self):
+        gui = self._gui(gpu_accel=False)
+        gui._preview_cache_original = {}
+        gui._preview_cache_converted = {}
+        with patch('preview.get_video_properties', return_value={
+                'duration': 12.0, 'is_dolby_vision': True, 'dovi_profile': 5}), \
+             patch('preview.vulkan_libplacebo_available', return_value=True), \
+             patch('preview.extract_frames_batch') as raw_batch, \
+             patch('preview.extract_frames_with_conversion_batch') as cpu_batch, \
+             patch('preview.extract_frames_with_gpu_conversion_batch',
+                   side_effect=[['source'], ['converted']]) as gpu_batch, \
+             patch('preview.extract_frame') as raw_single, \
+             patch('preview.extract_frame_with_conversion') as cpu_single, \
+             patch('preview.extract_frame_with_gpu_conversion') as gpu_single:
+            gui._get_duration('v.mp4')
+            gui._prewarm_batch_originals('v.mp4', [1.0], generation=1)
+            gui._prewarm_batch_converted('v.mp4', [1.0], 'mobius', generation=1)
+            self.assertIn(('v.mp4', 1.0), gui._preview_cache_original)
+            self.assertIn(('v.mp4', 1.0, 'mobius', True, True, None),
+                          gui._preview_cache_converted)
+            self.assertEqual(gui._extract_preview_images('v.mp4', 1.0, 'mobius'),
+                             ('source', 'converted'))
+        self.assertEqual([call.args[3] for call in gpu_batch.call_args_list],
+                         ['clip', 'mobius'])
+        raw_batch.assert_not_called()
+        cpu_batch.assert_not_called()
+        raw_single.assert_not_called()
+        cpu_single.assert_not_called()
+        gpu_single.assert_not_called()
+
+    def test_profile5_without_libplacebo_does_not_show_raw_green_frame(self):
+        gui = self._gui(gpu_accel=False)
+        with patch('preview.get_video_properties', return_value={
+                'duration': 12.0, 'is_dolby_vision': True, 'dovi_profile': 5}), \
+             patch('preview.vulkan_libplacebo_available', return_value=False), \
+             patch('preview.extract_frame') as raw, \
+             patch('preview.extract_frame_with_conversion') as cpu:
+            gui._get_duration('v.mp4')
+            with self.assertRaisesRegex(ValueError, 'Dolby Vision profile 5.*GPU'):
+                gui._extract_preview_images('v.mp4', 1.0, 'mobius')
+        raw.assert_not_called()
+        cpu.assert_not_called()
+
+    def test_profile7_keeps_raw_source_and_cpu_route_when_gpu_off(self):
+        gui = self._gui(gpu_accel=False)
+        with patch('preview.get_video_properties', return_value={
+                'duration': 12.0, 'is_dolby_vision': True, 'dovi_profile': 7}), \
+             patch('preview.extract_frame', return_value='source') as raw, \
+             patch('preview.extract_frame_with_conversion',
+                   return_value='converted') as cpu, \
+             patch('preview.extract_frame_with_gpu_conversion') as gpu:
+            gui._get_duration('v.mp4')
+            self.assertEqual(gui._extract_preview_images('v.mp4', 1.0, 'mobius'),
+                             ('source', 'converted'))
+        raw.assert_called_once()
+        cpu.assert_called_once()
+        gpu.assert_not_called()
+
 
 class TestDisplayFramesReadsLutExportVar(unittest.TestCase):
     """display_frames must read the permanent lut_export_var (the "Accurate

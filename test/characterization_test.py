@@ -3172,6 +3172,17 @@ class TestUpdateInfoLabel(unittest.TestCase):
             self._finish_metadata_probe(gui)
         self.assertEqual(gui._refresh_info_label_text.call_count, 2)
 
+    def test_profile5_metadata_labels_original_as_sdr_view(self):
+        gui = self._gui_with_queued_metadata_probe()
+        gui.original_title_label = MagicMock()
+        props = {'bit_depth': 10, 'is_dolby_vision': True, 'dovi_profile': 5}
+        with patch('src.gui.get_video_properties', return_value=props), \
+             patch('src.gui.get_maxcll', return_value=None):
+            gui._update_info_label('clip.mkv')
+            self._finish_metadata_probe(gui)
+        gui.original_title_label.config.assert_called_with(
+            text='Original (Dolby Vision, SDR view):')
+
     def test_hides_label_when_probe_fails(self):
         gui = self._gui_with_queued_metadata_probe('bad.mkv')
         with patch('src.gui.get_video_properties', return_value=None):

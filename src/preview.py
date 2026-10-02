@@ -584,6 +584,7 @@ class _HDRPreviewMixin:
                 self._preview_cache_original = {}
                 self._active_preview_cache_position = None
                 self._duration_cache = None
+                self._preview_profile5_path = None
         for future in futures:
             future.cancel()
         for process in processes:
@@ -864,12 +865,19 @@ class _HDRPreviewMixin:
             return False
         return vulkan_libplacebo_available()
 
-    def _use_gpu_extraction(self, tonemapper: str) -> bool:
+    def _use_gpu_extraction(self, tonemapper: str, video_path: str) -> bool:
         """Whether preview should extract this tonemapper's converted frame via
         the GPU (libplacebo) path rather than CPU zscale. Unconditional for
         GPU-only tonemappers (BT.2390/Spline have no CPU implementation at
         all); otherwise follows _gpu_tonemap_active so CPU-capable
-        tonemappers match real export's choice too."""
+        tonemappers match real export's choice too. Profile 5 always needs
+        libplacebo to apply its RPU, matching real export."""
+        if getattr(self, '_preview_profile5_path', None) == video_path:
+            if not vulkan_libplacebo_available():
+                raise ValueError(
+                    'Dolby Vision profile 5 preview requires GPU tonemapping '
+                    '(Vulkan/libplacebo).')
+            return True
         return is_gpu_only_tonemapper(tonemapper) or self._gpu_tonemap_active()
 
     def _preview_in_cache(self, video_path: str) -> bool:
@@ -887,7 +895,7 @@ class _HDRPreviewMixin:
         time_key = round(time_position, 3)
         tonemapper = self.tonemap_var.get().lower()
         lut_enabled = self._effective_lut_enabled()
-        use_gpu = self._use_gpu_extraction(tonemapper)
+        use_gpu = self._use_gpu_extraction(tonemapper, video_path)
         return (
             (video_path, time_key) in self._preview_cache_original
             and (video_path, time_key, tonemapper, lut_enabled, use_gpu,
@@ -920,6 +928,9 @@ class _HDRPreviewMixin:
         if not properties or not properties.get('duration'):
             raise ValueError("Failed to retrieve video properties.")
         duration = float(properties['duration'])
+        self._preview_profile5_path = (
+            video_path if properties.get('is_dolby_vision')
+            and properties.get('dovi_profile') == 5 else None)
         self._duration_cache = (video_path, identity, duration)
         return duration
 
@@ -972,18 +983,25 @@ class _HDRPreviewMixin:
         time_key = round(time_position, 3)
         preview_width, preview_height = self._preview_extraction_dimensions()
         original_key = (video_path, time_key)
+        use_gpu = self._use_gpu_extraction(tonemapper, video_path)
         original = self._preview_cache_original.get(original_key)
         if original is None:
-            original = extract_frame(video_path, time_position=time_position,
-                                     width=preview_width, height=preview_height,
-                                     process_started=process_started)
+            if getattr(self, '_preview_profile5_path', None) == video_path:
+                original = extract_frame_with_gpu_conversion(
+                    video_path, gamma=1.0, tonemapper='clip',
+                    time_position=time_position, width=preview_width,
+                    height=preview_height, lut_enabled=True,
+                    process_started=process_started)
+            else:
+                original = extract_frame(video_path, time_position=time_position,
+                                         width=preview_width, height=preview_height,
+                                         process_started=process_started)
             self._cache_store(
                 self._preview_cache_original, original_key, original,
                 protected_position=original_key, file_generation=file_generation)
 
         if file_generation != getattr(self, '_preview_file_generation', 0):
             raise CancelledError()
-        use_gpu = self._use_gpu_extraction(tonemapper)
         converted_key = (video_path, time_key, tonemapper, lut_enabled, use_gpu, target)
         converted = self._preview_cache_converted.get(converted_key)
         if converted is None:
@@ -1014,9 +1032,16 @@ class _HDRPreviewMixin:
             return
         try:
             preview_width, preview_height = self._preview_extraction_dimensions()
-            originals = extract_frames_batch(
-                video_path, positions, preview_width, preview_height,
-                process_started=lambda process: self._register_preview_process(file_generation, process))
+            if getattr(self, '_preview_profile5_path', None) == video_path:
+                self._use_gpu_extraction('clip', video_path)
+                originals = extract_frames_with_gpu_conversion_batch(
+                    video_path, positions, 1.0, 'clip', preview_width,
+                    preview_height, lut_enabled=True,
+                    process_started=lambda process: self._register_preview_process(file_generation, process))
+            else:
+                originals = extract_frames_batch(
+                    video_path, positions, preview_width, preview_height,
+                    process_started=lambda process: self._register_preview_process(file_generation, process))
             for t, img in zip(positions, originals):
                 self._cache_store(
                     self._preview_cache_original, (video_path, round(t, 3)), img,
@@ -1044,7 +1069,7 @@ class _HDRPreviewMixin:
             return
         try:
             preview_width, preview_height = self._preview_extraction_dimensions()
-            use_gpu = self._use_gpu_extraction(tonemapper)
+            use_gpu = self._use_gpu_extraction(tonemapper, video_path)
             target = getattr(self, 'resolution_target', None)
             output_size = self._preview_output_size(video_path, target)
             if use_gpu:
@@ -1088,7 +1113,7 @@ class _HDRPreviewMixin:
             self._preview_cache_original = {}
             self._preview_cache_converted = {}
 
-        use_gpu = self._use_gpu_extraction(tonemapper)
+        use_gpu = self._use_gpu_extraction(tonemapper, video_path)
 
         target = getattr(self, 'resolution_target', None)
         original_positions: list[float] = []
@@ -1141,7 +1166,7 @@ class _HDRPreviewMixin:
                 duration = self._get_duration(video_path)
                 time_position = self._preview_time_position(duration)
                 time_key = round(time_position, 3)
-                use_gpu = self._use_gpu_extraction(tonemapper)
+                use_gpu = self._use_gpu_extraction(tonemapper, video_path)
                 original, converted = self._extract_preview_images(
                     video_path, time_position, tonemapper, lut_enabled,
                     process_started=lambda process: self._register_preview_process(file_generation, process),

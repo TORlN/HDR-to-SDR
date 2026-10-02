@@ -59,4 +59,33 @@ _pre_configure(){
         echo "ERROR: vulkan-host-transfer: unrecognized source, review tools/ffmpeg-patches/README.md"
         exit 1
     fi
+
+    # target-peak: expose the output display peak to libplacebo. The app uses
+    # 100 cd/m2 for SDR; zero keeps the upstream filter's inferred default.
+    local p=libavfilter/vf_libplacebo.c
+    if [[ ! -f $p ]]; then
+        echo "ERROR: target-peak: missing $p"
+        exit 1
+    elif grep -Fq 'float target_peak;' "$p"; then
+        if grep -Fq 'target.color.hdr.max_luma = s->target_peak;' "$p" &&
+           grep -Fq '{"target_peak", "Output display peak luminance' "$p"; then
+            echo "target-peak: already patched"
+        else
+            echo "ERROR: target-peak: partial patch, review $p"
+            exit 1
+        fi
+    elif grep -Fxq '    int color_trc;' "$p" &&
+         grep -Fxq '    struct pl_frame orig_target = target;' "$p" &&
+         grep -Fq '    {"color_trc", "select color transfer"' "$p"; then
+        sed -i.bak \
+            -e 's/^    int color_trc;$/    float target_peak;\n    int color_trc;/' \
+            -e 's/^    struct pl_frame orig_target = target;$/    if (s->target_peak > 0)\n        target.color.hdr.max_luma = s->target_peak;\n\n    struct pl_frame orig_target = target;/' \
+            -e 's/^    {"color_trc", "select color transfer"/    {"target_peak", "Output display peak luminance in cd per m2 (0 keeps libplacebo default)", OFFSET(target_peak), AV_OPT_TYPE_FLOAT, {.dbl=0.0}, 0.0, 10000.0, STATIC },\n    {"color_trc", "select color transfer"/' \
+            "$p" || exit 1
+        rm -f "$p.bak"
+        echo "target-peak: exposed libplacebo output peak override"
+    else
+        echo "ERROR: target-peak: unrecognized source, review tools/ffmpeg-patches/README.md"
+        exit 1
+    fi
 }

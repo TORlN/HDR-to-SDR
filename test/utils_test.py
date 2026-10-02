@@ -663,6 +663,14 @@ class TestInitializeFfmpeg(unittest.TestCase):
 class TestBuildLibplaceboFilter(unittest.TestCase):
     """The libplacebo (GPU) tonemap filter builder."""
 
+    def test_gpu_filter_targets_100_nit_sdr_on_windows(self):
+        for platform in ('win32', 'linux'):
+            for lut_enabled in (False, True):
+                with self.subTest(platform=platform, lut_enabled=lut_enabled):
+                    with patch('sys.platform', platform):
+                        f = build_libplacebo_filter(1.0, 'clip', lut_enabled=lut_enabled)
+                    self.assertEqual('target_peak=100' in f, platform == 'win32')
+
     def test_always_enables_peak_detection(self):
         f = build_libplacebo_filter(2.2, 'reinhard')
         self.assertIn('libplacebo=', f)
@@ -1802,6 +1810,7 @@ class TestExtractFrameWithGpuConversion(unittest.TestCase):
             extract_frame_with_gpu_conversion(
                 'input.mp4', gamma=1.0, tonemapper='spline', time_position=1.0)
 
+    @patch('sys.platform', 'win32')
     @patch('src.utils.get_lut_filter_path', return_value='FAKE_LUT_PATH')
     @patch('src.utils.run_ffmpeg_command', return_value=_VALID_PNG)
     @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
@@ -1818,13 +1827,14 @@ class TestExtractFrameWithGpuConversion(unittest.TestCase):
             'libplacebo=w=1920:h=1080:'
             'upscaler=ewa_lanczos:downscaler=ewa_lanczos:'
             'tonemapping=bt.2390:colorspace=bt709:color_primaries=auto:'
-            'color_trc=bt709:range=tv:peak_detect=1:format=rgba,'
+            'color_trc=bt709:range=tv:target_peak=100:peak_detect=1:format=rgba,'
             'hwdownload,format=rgba,'
             'lut3d=file=FAKE_LUT_PATH:interp=tetrahedral,'
             'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709,'
             'scale=960:540:force_original_aspect_ratio=decrease'
         ))
 
+    @patch('sys.platform', 'win32')
     @patch('src.utils.get_lut_filter_path', return_value='FAKE_LUT_PATH')
     @patch('src.utils.run_ffmpeg_command', return_value=_VALID_PNG)
     @patch('src.utils.get_video_properties', return_value={'duration': 90.0})
@@ -1840,7 +1850,7 @@ class TestExtractFrameWithGpuConversion(unittest.TestCase):
             'format=p010,hwupload,'
             'libplacebo=w=960:h=540:'
             'tonemapping=bt.2390:colorspace=bt709:color_primaries=auto:'
-            'color_trc=bt709:range=tv:peak_detect=1:format=rgba,'
+            'color_trc=bt709:range=tv:target_peak=100:peak_detect=1:format=rgba,'
             'hwdownload,format=rgba,'
             'lut3d=file=FAKE_LUT_PATH:interp=tetrahedral,'
             'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709'

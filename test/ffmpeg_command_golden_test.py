@@ -81,6 +81,9 @@ _HDR_SDR_FILTER_SUFFIX = (
     ',sidedata=mode=delete:type=DYNAMIC_HDR_PLUS'
 )
 
+# Linux CI uses distro FFmpeg, which has no project-specific output peak option.
+_TARGET_PEAK_OPTION = 'target_peak=100:' if sys.platform == 'win32' else ''
+
 
 @dataclass(frozen=True)
 class Case:
@@ -172,7 +175,7 @@ CASES = [
             _FC('hwmap=derive_device=vulkan,'
                 'libplacebo=w=3840:h=2160:upscaler=ewa_lanczos:downscaler=ewa_lanczos:'
                 'tonemapping=reinhard:colorspace=bt709:color_primaries=auto:'
-                'color_trc=bt709:range=tv:peak_detect=1:format=rgba,'
+                f'color_trc=bt709:range=tv:{_TARGET_PEAK_OPTION}peak_detect=1:format=rgba,'
                 'hwdownload,format=rgba,'
                 f'lut3d=file={get_lut_filter_path()}:interp=tetrahedral,'
                 'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709'),

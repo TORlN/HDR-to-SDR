@@ -172,7 +172,7 @@ CASES = [
             _FC('hwmap=derive_device=vulkan,'
                 'libplacebo=w=3840:h=2160:upscaler=ewa_lanczos:downscaler=ewa_lanczos:'
                 'tonemapping=reinhard:colorspace=bt709:color_primaries=auto:'
-                'color_trc=bt709:range=tv:peak_detect=1:format=rgba,'
+                'color_trc=bt709:range=tv:target_peak=100:peak_detect=1:format=rgba,'
                 'hwdownload,format=rgba,'
                 f'lut3d=file={get_lut_filter_path()}:interp=tetrahedral,'
                 'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709'),

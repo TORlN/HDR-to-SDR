@@ -125,6 +125,22 @@ Confirmed via one-shot debug instrumentation added directly around
 format/config (confirming that patch's irrelevance here) while
 `HOST_TRANSFER_BIT_EXT` (`0x400000`, part of `0x40000f`) was.
 
+## target-peak
+
+Adds a `target_peak` option to FFmpeg's `libplacebo` filter. Zero leaves
+libplacebo's inferred output luminance unchanged. A positive value sets the
+output frame's `color.hdr.max_luma` in cd/m2 after FFmpeg maps the frame and
+before libplacebo renders it. The app requests 100 for its SDR GPU path,
+matching its CPU `zscale` nominal peak and a conventional 100-nit SDR target.
+This is an output target, not an adjustment to source MaxCLL or a gamma gain.
+
+The hook checks the exact source locations before editing and recognizes a
+fully patched file on later runs. If FFmpeg changes those locations or only
+part of the patch is present, the build stops for review. After rebuilding,
+confirm the option in `ffmpeg -h filter=libplacebo` and measure known-nit
+neutral bars plus natural footage on a physical Vulkan GPU. A present option
+alone does not prove the intended luminance mapping or highlight behavior.
+
 ## Release input pinning
 
 The exact `src/ffmpeg.exe` and `src/ffprobe.exe` release inputs are tracked

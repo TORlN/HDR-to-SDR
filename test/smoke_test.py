@@ -255,6 +255,14 @@ class TestVulkanRgbaFrameRoundTrip(unittest.TestCase):
     C:\\MABS\\build\\ffmpeg_extra.sh on this dev machine); this must fail
     loudly if a future ffmpeg rebuild drops that patch."""
 
+    @unittest.skipUnless(sys.platform == 'win32', "custom bundled FFmpeg is Windows-only")
+    def test_libplacebo_exposes_target_peak(self):
+        out = subprocess.check_output(
+            [FFMPEG_EXECUTABLE, '-hide_banner', '-h', 'filter=libplacebo'],
+            stderr=subprocess.STDOUT, timeout=10,
+        ).decode('utf-8', 'replace')
+        self.assertIn('target_peak', out, msg=out)
+
     def test_rgba_hwupload_hwdownload_round_trip_succeeds(self):
         result = subprocess.run(
             [FFMPEG_EXECUTABLE, '-hide_banner', '-loglevel', 'error',

@@ -418,7 +418,7 @@ def build_libplacebo_filter(gamma, tonemapper, width: 'int | str' = 'iw',
     libplacebo = (
         f'libplacebo=w={width}:h={height}:{scaling}tonemapping={tm}:'
         f'colorspace=bt709:color_primaries={primaries}:color_trc=bt709:range=tv:'
-        f'peak_detect=1:format={download_fmt}'
+        f'target_peak=100:peak_detect=1:format={download_fmt}'
     )
     gamma_is_identity = abs(gamma - 1.0) < 1e-9
     if lut_enabled:

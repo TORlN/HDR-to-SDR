@@ -663,6 +663,12 @@ class TestInitializeFfmpeg(unittest.TestCase):
 class TestBuildLibplaceboFilter(unittest.TestCase):
     """The libplacebo (GPU) tonemap filter builder."""
 
+    def test_gpu_filter_targets_100_nit_sdr(self):
+        for lut_enabled in (False, True):
+            with self.subTest(lut_enabled=lut_enabled):
+                f = build_libplacebo_filter(1.0, 'clip', lut_enabled=lut_enabled)
+                self.assertIn('target_peak=100', f)
+
     def test_always_enables_peak_detection(self):
         f = build_libplacebo_filter(2.2, 'reinhard')
         self.assertIn('libplacebo=', f)

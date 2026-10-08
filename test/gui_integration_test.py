@@ -1340,12 +1340,18 @@ class TestUserActions(_GuiTestBase):
 
     @patch('src.gui.filedialog.askopenfilename')
     def test_select_file_sets_paths_and_triggers_preview(self, mock_dialog):
-        mock_dialog.return_value = 'movie.mp4'
-        with patch.object(self.gui, 'update_frame_preview') as mock_update:
-            self.gui.select_file()
-        self.assertEqual(self.gui.input_path_var.get(), 'movie.mp4')
-        self.assertEqual(self.gui.output_path_var.get(), 'movie_sdr.mp4')
-        mock_update.assert_called_once()
+        for path, expected in (
+                ('movie.mp4', 'movie_sdr.mp4'),
+                ('movie.mkv', 'movie_sdr.mkv'),
+                ('Dead.Poets.Society.test-sample.mkv',
+                 'Dead.Poets.Society.test-sample_sdr.mkv')):
+            with self.subTest(path=path):
+                mock_dialog.return_value = path
+                with patch.object(self.gui, 'update_frame_preview') as mock_update:
+                    self.gui.select_file()
+                self.assertEqual(self.gui.input_path_var.get(), path)
+                self.assertEqual(self.gui.output_path_var.get(), expected)
+                mock_update.assert_called_once()
 
     @patch('src.gui.filedialog.askopenfilename')
     def test_select_file_webm_output_redirected_to_mkv(self, mock_dialog):
@@ -1990,10 +1996,21 @@ class TestDropToQueue(_FreshGuiTestBase):
 
     def test_single_drop_unlicensed_only_loads(self):
         gui = self._make_gui(licensed=False)
-        with patch.object(gui, '_load_input_file') as mock_load:
-            gui.handle_file_drop(MagicMock(data='{C:/a.mkv}'))
-        self.assertEqual(gui.batch_items, [])
-        mock_load.assert_called_once_with('C:/a.mkv')
+        for path, expected in (
+                ('C:/a.mkv', 'C:/a_sdr.mp4'),
+                ('C:/movie.mp4', 'C:/movie_sdr.mp4'),
+                ('C:/Dead.Poets.Society.test-sample.mkv',
+                 'C:/Dead.Poets.Society.test-sample_sdr.mp4')):
+            with self.subTest(path=path), \
+                    patch('src.gui.get_video_properties', return_value=None), \
+                    patch('src.gui.get_maxcll', return_value=None), \
+                    patch.object(gui, 'update_frame_preview'), \
+                    patch.object(gui, '_load_input_file', wraps=gui._load_input_file) as mock_load:
+                gui.handle_file_drop(MagicMock(data=f'{{{path}}}'))
+                self.assertEqual(gui.batch_items, [])
+                self.assertEqual(gui.input_path_var.get(), path)
+                self.assertEqual(gui.output_path_var.get(), expected)
+                mock_load.assert_called_once_with(path)
 
 
 class TestCenterOverMaster(unittest.TestCase):

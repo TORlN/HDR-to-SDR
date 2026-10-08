@@ -1109,6 +1109,29 @@ class TestOutputFormat(unittest.TestCase):
         self.assertEqual(
             HDRConverterGUI._output_path_with_format('C:/v/movie_sdr.mkv', 'MP4'),
             'C:/v/movie_sdr.mp4')
+        self.assertEqual(
+            HDRConverterGUI._output_path_with_format('C:/v/client.cut.mkv', 'MOV'),
+            'C:/v/client.cut.mov')
+
+    def test_default_output_path_preserves_stem_and_resolution_suffix(self):
+        gui = _bare_gui()
+        gui._cached_props = {'width': 1920, 'height': 1080}
+        cases = (
+            ('movie.mkv', 'MKV', None, 'movie_sdr.mkv'),
+            ('movie.mp4', 'MP4', None, 'movie_sdr.mp4'),
+            ('My Movie.MOV', 'MOV', None, 'My Movie_sdr.mov'),
+            ('C:/v.videos/movie.mp4', 'MP4', ResolutionTarget(720),
+             'C:/v.videos/movie_sdr_720p.mp4'),
+            ('Dead.Poets.Society.test-sample.mkv', 'MKV', None,
+             'Dead.Poets.Society.test-sample_sdr.mkv'),
+            ('movie.part1.mkv', 'MP4', ResolutionTarget(720),
+             'movie.part1_sdr_720p.mp4'),
+            ('movie.part2.mkv', 'MKV', ResolutionTarget(900, custom=True),
+             'movie.part2_sdr_1600x900.mkv'),
+        )
+        for path, fmt, target, expected in cases:
+            with self.subTest(path=path, fmt=fmt, target=target):
+                self.assertEqual(gui._default_output_path(path, fmt, target), expected)
 
     def test_format_defaults_match_input_container(self):
         self.assertEqual(HDRConverterGUI._format_for_input('a.mp4'), 'MP4')

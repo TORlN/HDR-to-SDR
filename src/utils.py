@@ -415,10 +415,12 @@ def build_libplacebo_filter(gamma, tonemapper, width: 'int | str' = 'iw',
     download_fmt = ('rgba64le' if ten_bit_output else 'rgba') if lut_enabled else (
         'p010le' if ten_bit_output else 'nv12')
     scaling = f'upscaler={scaler}:downscaler={scaler}:' if scaler is not None else ''
+    # Only the bundled Windows FFmpeg has this project-specific libplacebo option.
+    target_peak = 'target_peak=100:' if sys.platform == 'win32' else ''
     libplacebo = (
         f'libplacebo=w={width}:h={height}:{scaling}tonemapping={tm}:'
         f'colorspace=bt709:color_primaries={primaries}:color_trc=bt709:range=tv:'
-        f'peak_detect=1:format={download_fmt}'
+        f'{target_peak}peak_detect=1:format={download_fmt}'
     )
     gamma_is_identity = abs(gamma - 1.0) < 1e-9
     if lut_enabled:

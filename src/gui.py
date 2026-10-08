@@ -1014,7 +1014,7 @@ class HDRConverterGUI(_BatchMixin, _HDRPreviewMixin):
             suffix = output_suffix(
                 int(props['width']), int(props['height']), target)
         stem = f'{base}_sdr' + (f'_{suffix}' if suffix else '')
-        return self._output_path_with_format(stem, format_name)
+        return f'{stem}.{format_name.lower()}'
 
     @classmethod
     def _format_for_input(cls, input_path: str) -> str:
